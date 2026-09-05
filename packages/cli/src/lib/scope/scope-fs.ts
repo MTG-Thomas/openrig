@@ -315,10 +315,10 @@ export function listSlices(
   }
   out.sort((a, b) => (a.nn ?? Number.MAX_SAFE_INTEGER) - (b.nn ?? Number.MAX_SAFE_INTEGER) || a.name.localeCompare(b.name));
   if (state === "active") {
-    // active = not in closed/, but also not shipped status.
+    // active = not in closed/, and not already delivered in-place.
     return out.filter((s) => {
       const st = (s.status ?? "").toLowerCase();
-      return !st.startsWith("closed") && !st.startsWith("shipped");
+      return st !== "done" && !st.startsWith("closed") && !st.startsWith("shipped");
     });
   }
   if (state === "shipped") {

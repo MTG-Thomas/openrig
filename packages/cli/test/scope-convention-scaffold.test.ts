@@ -362,13 +362,20 @@ describe("scope mission graph — depends_on is an advisory sibling-ordering edg
     const missionPath = path.join(substrate.missionsRoot, "release-0.4.4");
     fs.writeFileSync(path.join(missionPath, "PROGRESS.md"), "# Progress\n", "utf8");
     fs.writeFileSync(path.join(missionPath, "NOTES.md"), "# Notes\n", "utf8");
-    const writeSlice = (bucket: "slices" | "closed", name: string, id: string, dependsOn: string[] | string) => {
+    const writeSlice = (
+      bucket: "slices" | "closed",
+      name: string,
+      id: string,
+      dependsOn: string[] | string,
+      status?: string,
+    ) => {
       const slicePath = path.join(missionPath, bucket, name);
       fs.mkdirSync(slicePath, { recursive: true });
       fs.writeFileSync(path.join(slicePath, "SPEC.md"), [
         "---",
         `id: ${id}`,
         `intent: ${name}`,
+        ...(status ? [`status: ${status}`] : []),
         `depends_on: ${Array.isArray(dependsOn) ? `[${dependsOn.join(", ")}]` : dependsOn}`,
         "---",
         `# ${name}`,
@@ -381,6 +388,8 @@ describe("scope mission graph — depends_on is an advisory sibling-ordering edg
     writeSlice("slices", "04-active-dependency", "OPR.0.4.4.4", []);
     writeSlice("slices", "05-stale-edge", "OPR.0.4.4.5", ["OPR.0.4.4.999", "OPR.0.5.0.1"]);
     writeSlice("slices", "06-malformed-edge", "OPR.0.4.4.6", "not-a-list");
+    writeSlice("slices", "07-done-dependency", "OPR.0.4.4.7", [], "done");
+    writeSlice("slices", "08-after-done", "OPR.0.4.4.8", ["OPR.0.4.4.7"]);
   });
   afterEach(() => { fs.rmSync(substrate.root, { recursive: true, force: true }); });
 
@@ -388,8 +397,9 @@ describe("scope mission graph — depends_on is an advisory sibling-ordering edg
     const r = await run(["mission", "graph", "release-0.4.4", "--json"], substrate.missionsRoot);
     expect(r.exitCode).toBe(0);
     const graph = JSON.parse(r.stdout).graph;
-    expect(graph.ready).toEqual(["OPR.0.4.4.2", "OPR.0.4.4.4", "OPR.0.4.4.5", "OPR.0.4.4.6"]);
+    expect(graph.ready).toEqual(["OPR.0.4.4.2", "OPR.0.4.4.4", "OPR.0.4.4.5", "OPR.0.4.4.6", "OPR.0.4.4.8"]);
     expect(graph.waiting).toEqual([{ id: "OPR.0.4.4.3", on: ["OPR.0.4.4.4"] }]);
+    expect(graph.nodes.map((node: { id: string }) => node.id)).not.toContain("OPR.0.4.4.7");
     expect(graph.advisories).toEqual([
       expect.objectContaining({ id: "OPR.0.4.4.5", dependency: "OPR.0.4.4.999", kind: "missing_sibling" }),
       expect.objectContaining({ id: "OPR.0.4.4.5", dependency: "OPR.0.5.0.1", kind: "outside_parent" }),
