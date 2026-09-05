@@ -942,6 +942,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
   });
   const { HealthProjectionService, LiveContextHealthSource } = await import("./domain/health-detectors.js");
   const healthProjection = new HealthProjectionService(new LiveContextHealthSource({
+    db,
     rigRepo,
     sessionRegistry,
     contextUsageStore,

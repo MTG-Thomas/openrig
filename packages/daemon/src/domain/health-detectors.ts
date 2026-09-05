@@ -1,3 +1,4 @@
+import type Database from "better-sqlite3";
 import {
   adaptContextUsageEvidence,
   boundHealthEvidence,
@@ -15,6 +16,7 @@ import {
 import type { ContextUsageStore } from "./context-usage-store.js";
 import type { RigRepository } from "./rig-repository.js";
 import type { SessionRegistry } from "./session-registry.js";
+import { queryUsageSeries } from "./usage-series.js";
 
 const CEREMONY_MIN_TRANSITIONS = 20;
 const CEREMONY_MIN_RATIO = 12;
@@ -146,6 +148,7 @@ export class HealthProjectionService {
  * current tables cannot express without inference. Replay sources can supply them. */
 export class LiveContextHealthSource implements HealthObservationSource {
   constructor(private readonly deps: {
+    db: Database.Database;
     rigRepo: RigRepository;
     sessionRegistry: SessionRegistry;
     contextUsageStore: ContextUsageStore;
@@ -172,7 +175,37 @@ export class LiveContextHealthSource implements HealthObservationSource {
       for (const node of liveNodes) {
         const usage = usageByNode.get(node.id);
         if (!usage) continue;
-        const evidence = adaptContextUsageEvidence(node.id, usage, 0);
+        const currentEvidence = adaptContextUsageEvidence(node.id, usage, 0);
+        const liveSession = liveByNode.get(node.id)!;
+        const tenureStartedAt = this.deps.sessionRegistry.currentOccupantTenure(node.id)?.bootAt ?? startedAt;
+        const evidence = usage.availability === "known"
+          && usage.usedPercentage !== null
+          && usage.sampledAt !== null
+          ? selectContextEpisodeEvidence([
+              ...queryUsageSeries(this.deps.db, {
+                seatSession: liveSession.sessionName,
+                lane: "context",
+                sinceIso: startedAt,
+                limit: 10_000,
+              })
+                .filter((sample) => sample.nodeId === node.id
+                  && sample.sampledAt !== null
+                  && Date.parse(sample.sampledAt) >= sqliteTimestampMs(tenureStartedAt)
+                  && Date.parse(sample.sampledAt) <= Date.parse(usage.sampledAt!))
+                .map((sample, sourceOrder): HealthEvidenceReference => ({
+                  type: "context-usage",
+                  sourceOrder,
+                  observedAt: sample.sampledAt,
+                  nodeId: node.id,
+                  sessionId: liveSession.sessionId,
+                  usedPercentage: sample.usedPercentage,
+                  available: true,
+                  fresh: Date.parse(evaluatedAt) - Date.parse(sample.sampledAt!)
+                    <= LIVE_CONTEXT_FRESHNESS_SECONDS * 1000,
+                })),
+              { ...currentEvidence, sourceOrder: Number.MAX_SAFE_INTEGER },
+            ])
+          : [currentEvidence];
         const freshness = deriveHealthSourceFreshness({
           evaluatedAt,
           newestSourceAt: usage.sampledAt,
@@ -186,11 +219,11 @@ export class LiveContextHealthSource implements HealthObservationSource {
           lastObservedAt: usage.sampledAt ?? evaluatedAt,
           sourceName: usage.source,
           continuity: node.continuityOutcome ?? "unavailable",
-          source: boundHealthEvidence([evidence], {
+          source: boundHealthEvidence(evidence, {
             source: "context-usage",
             startedAt,
             endedAt: evaluatedAt,
-            limit: 1,
+            limit: 3,
             retentionSeconds: LIVE_CONTEXT_RETENTION_SECONDS,
           }, freshness),
         });
@@ -198,6 +231,43 @@ export class LiveContextHealthSource implements HealthObservationSource {
     }
     return observations;
   }
+}
+
+function selectContextEpisodeEvidence(
+  evidence: readonly HealthEvidenceReference[],
+): HealthEvidenceReference[] {
+  const byTimestamp = new Map<string, Extract<HealthEvidenceReference, { type: "context-usage" }>>();
+  for (const item of evidence) {
+    if (item.type === "context-usage"
+      && item.available
+      && item.usedPercentage !== null
+      && item.observedAt !== null) byTimestamp.set(item.observedAt, item);
+  }
+  const samples = [...byTimestamp.values()]
+    .sort((a, b) => a.observedAt!.localeCompare(b.observedAt!, "en-US"));
+  const latest = samples.at(-1);
+  if (!latest || latest.usedPercentage === null) return latest ? [latest] : [];
+
+  let episodeEnd = latest.usedPercentage >= CONTEXT_PRESSURE_PERCENT ? samples.length - 1 : samples.length - 2;
+  while (episodeEnd >= 0 && (samples[episodeEnd]!.usedPercentage ?? -Infinity) < CONTEXT_PRESSURE_PERCENT) {
+    episodeEnd -= 1;
+  }
+  if (episodeEnd < 0) return [latest];
+  let episodeStart = episodeEnd;
+  while (episodeStart > 0 && (samples[episodeStart - 1]!.usedPercentage ?? -Infinity) >= CONTEXT_PRESSURE_PERCENT) {
+    episodeStart -= 1;
+  }
+  let peak = samples[episodeStart]!;
+  for (let index = episodeStart + 1; index <= episodeEnd; index += 1) {
+    if ((samples[index]!.usedPercentage ?? -Infinity) > (peak.usedPercentage ?? -Infinity)) peak = samples[index]!;
+  }
+  return [...new Set([samples[episodeStart]!, peak, latest])]
+    .sort((a, b) => a.observedAt!.localeCompare(b.observedAt!, "en-US"))
+    .map((item, sourceOrder) => ({ ...item, sourceOrder }));
+}
+
+function sqliteTimestampMs(value: string): number {
+  return Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
 }
 
 export function healthScopeId(scope: HealthScope): string {

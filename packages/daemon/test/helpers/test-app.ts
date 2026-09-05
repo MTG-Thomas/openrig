@@ -346,6 +346,7 @@ export function createTestApp(
   const rigLifecycleService = new RigLifecycleService({ db, rigRepo, sessionRegistry, discoveryRepo, eventBus, queueRepo, tmuxAdapter: tmux });
   const contextUsageStore = new ContextUsageStore(db, { stateDir: "/tmp/openrig-test" });
   const healthProjection = new HealthProjectionService(new LiveContextHealthSource({
+    db,
     rigRepo,
     sessionRegistry,
     contextUsageStore,

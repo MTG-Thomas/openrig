@@ -18,6 +18,8 @@ import {
   evaluateHealthDetectors,
   type HealthDetectorObservation,
 } from "../src/health-detectors-surface.js";
+import { usageSamplesSchema } from "../src/db/migrations/062_usage_samples.js";
+import { UsageSamplesStore } from "../src/domain/usage-samples-store.js";
 import { createFullTestDb, createTestApp } from "./helpers/test-app.js";
 
 interface ReplayCorpus {
@@ -510,20 +512,52 @@ describe("daemon health projection route", () => {
   it("exposes bounded list/detail reads from live context telemetry and no write verb", async () => {
     const db = createFullTestDb();
     try {
+      db.exec(usageSamplesSchema.sql);
       const setup = createTestApp(db);
       const rig = setup.rigRepo.createRig("health-route-rig");
       const node = setup.rigRepo.addNode(rig.id, "worker", { role: "worker" });
       const session = setup.sessionRegistry.registerSession(node.id, "worker@health-route-rig");
       setup.sessionRegistry.updateStatus(session.id, "running");
-      const sampledAt = new Date().toISOString();
-      db.prepare(`INSERT INTO context_usage (
-        node_id, session_id, session_name, availability, reason, source,
-        used_percentage, remaining_percentage, context_window_size,
-        total_input_tokens, total_output_tokens, current_usage,
-        transcript_path, sampled_at, updated_at
-      ) VALUES (?, ?, ?, 'known', NULL, 'codex_token_count_jsonl', 84, 16, 250000,
-        205000, 5000, NULL, NULL, ?, ?)`)
-        .run(node.id, session.id, session.sessionName, sampledAt, sampledAt);
+      const baseMs = Date.now() - 60_000;
+      const sampleAt = (offsetSeconds: number) => new Date(baseMs + offsetSeconds * 1000).toISOString();
+      db.prepare("UPDATE occupant_tenures SET boot_at = ? WHERE node_id = ?")
+        .run(sampleAt(-10), node.id);
+      const samples = new UsageSamplesStore(db);
+      const writeUsage = (usedPercentage: number, offsetSeconds: number) => {
+        const sampledAt = sampleAt(offsetSeconds);
+        db.prepare(`INSERT INTO context_usage (
+          node_id, session_id, session_name, availability, reason, source,
+          used_percentage, remaining_percentage, context_window_size,
+          total_input_tokens, total_output_tokens, current_usage,
+          transcript_path, sampled_at, updated_at
+        ) VALUES (?, ?, ?, 'known', NULL, 'codex_token_count_jsonl', ?, ?, 250000,
+          205000, 5000, NULL, NULL, ?, ?)
+        ON CONFLICT(node_id) DO UPDATE SET
+          used_percentage = excluded.used_percentage,
+          remaining_percentage = excluded.remaining_percentage,
+          sampled_at = excluded.sampled_at,
+          updated_at = excluded.updated_at`)
+          .run(node.id, session.id, session.sessionName, usedPercentage, 100 - usedPercentage, sampledAt, sampledAt);
+        samples.appendContextSample({
+          nodeId: node.id,
+          seatSession: session.sessionName,
+          source: "codex_token_count_jsonl",
+          sampledAt,
+          totalInputTokens: 205000,
+          totalOutputTokens: 5000,
+          usedPercentage,
+        }, sampledAt);
+      };
+      samples.appendContextSample({
+        nodeId: node.id,
+        seatSession: session.sessionName,
+        source: "codex_token_count_jsonl",
+        sampledAt: sampleAt(-20),
+        totalInputTokens: 200000,
+        totalOutputTokens: 5000,
+        usedPercentage: 99,
+      }, sampleAt(-20));
+      writeUsage(84, 0);
 
       const list = await setup.app.request(`/api/health?scope_type=seat&scope_id=${node.id}&limit=1`);
       expect(list.status).toBe(200);
@@ -532,7 +566,14 @@ describe("daemon health projection route", () => {
         total: number;
         limit: number;
         truncated: boolean;
-        records: Array<{ id: string; detector: string; scope: HealthScope }>;
+        records: Array<{
+          id: string;
+          detector: string;
+          scope: HealthScope;
+          status: string;
+          severity: string;
+          startedAt: string;
+        }>;
       };
       expect(body).toMatchObject({
         schema: "openrig.health-list/v0alpha1",
@@ -540,15 +581,46 @@ describe("daemon health projection route", () => {
         limit: 1,
         truncated: false,
       });
-      expect(body.records[0]).toMatchObject({ detector: "context.pressure", scope: { type: "seat", seatId: node.id } });
+      expect(body.records[0]).toMatchObject({
+        detector: "context.pressure",
+        scope: { type: "seat", seatId: node.id },
+        status: "active",
+        severity: "warning",
+        startedAt: sampleAt(0),
+      });
 
-      const detail = await setup.app.request(`/api/health/${body.records[0]!.id}`);
+      const first = body.records[0]!;
+      writeUsage(85, 10);
+      const continuing = (await (await setup.app.request(
+        `/api/health?scope_type=seat&scope_id=${node.id}`,
+      )).json()) as typeof body;
+      expect(continuing.records[0]).toMatchObject({
+        id: first.id,
+        startedAt: first.startedAt,
+        status: "active",
+        severity: "warning",
+      });
+
+      const detail = await setup.app.request(`/api/health/${first.id}`);
       expect(detail.status).toBe(200);
       expect(await detail.json()).toMatchObject({
-        id: body.records[0]!.id,
-        detector: body.records[0]!.detector,
-        scope: body.records[0]!.scope,
+        id: first.id,
+        detector: first.detector,
+        scope: first.scope,
       });
+
+      writeUsage(30, 20);
+      const cleared = (await (await setup.app.request(
+        `/api/health?scope_type=seat&scope_id=${node.id}`,
+      )).json()) as typeof body;
+      expect(cleared.records[0]).toMatchObject({ id: first.id, status: "cleared" });
+
+      writeUsage(90, 30);
+      const restarted = (await (await setup.app.request(
+        `/api/health?scope_type=seat&scope_id=${node.id}`,
+      )).json()) as typeof body;
+      expect(restarted.records[0]).toMatchObject({ status: "active", severity: "warning" });
+      expect(restarted.records[0]!.id).not.toBe(first.id);
       expect((await setup.app.request("/api/health/missing")).status).toBe(404);
       expect((await setup.app.request("/api/health", { method: "POST" })).status).toBe(404);
       expect((await setup.app.request("/api/health?limit=0")).status).toBe(400);
