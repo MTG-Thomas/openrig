@@ -48,6 +48,10 @@
     "./project-lifecycle": {
       "types": "./dist/project-lifecycle-surface.d.ts",
       "import": "./dist/project-lifecycle-surface.js"
+    },
+    "./health-projection": {
+      "types": "./dist/health-projection-surface.d.ts",
+      "import": "./dist/health-projection-surface.js"
     }
   },
   "scripts": {
