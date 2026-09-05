@@ -123,7 +123,7 @@ function responseError(status: number, data: unknown): HealthCliError {
 }
 
 async function readyClient(deps: HealthDeps, json: boolean): Promise<DaemonClient | null> {
-  const status = await getDaemonStatus(deps.lifecycleDeps);
+  const status = await getDaemonStatus(deps.lifecycleDeps, { cleanupStaleState: false });
   if (status.state !== "running" || status.healthy === false) {
     emitError(daemonError(statusGuardMessage(status)), json);
     return null;

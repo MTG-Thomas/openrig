@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { healthCommand, type HealthDeps } from "../src/commands/health.js";
 import { DaemonClient } from "../src/client.js";
@@ -41,7 +42,7 @@ function stoppedDeps(identity: HealthDeps["resolveIdentity"] = () => ({ sessionN
   };
 }
 
-async function run(args: string[], deps: HealthDeps): Promise<{ logs: string[]; errors: string[]; exitCode: number | undefined }> {
+async function run(args: string[], deps?: HealthDeps): Promise<{ logs: string[]; errors: string[]; exitCode: number | undefined }> {
   const logs: string[] = [];
   const errors: string[] = [];
   const originalLog = console.log;
@@ -264,5 +265,50 @@ describe("rig health — daemon-backed read-only projection", () => {
       error: "health_projection_unavailable",
       nextInspection: "rig --version",
     });
+  });
+
+  it("keeps a real stale daemon state byte-identical for both list and explain", async () => {
+    const originalState = existsSync(STATE_FILE) ? readFileSync(STATE_FILE, "utf8") : null;
+    const staleState = `${JSON.stringify({
+      pid: 999_999_999,
+      port: 1,
+      db: "stale.sqlite",
+      startedAt: "2026-09-05T00:00:00Z",
+    })}\n`;
+
+    try {
+      const results: Array<{ present: boolean; bytes: string | null; output: unknown }> = [];
+      for (const args of [["--instance", "--json"], ["explain", "health-stale", "--json"]]) {
+        writeFileSync(STATE_FILE, staleState, "utf8");
+        const result = await run(args);
+        results.push({
+          present: existsSync(STATE_FILE),
+          bytes: existsSync(STATE_FILE) ? readFileSync(STATE_FILE, "utf8") : null,
+          output: JSON.parse(result.logs.join("\n")),
+        });
+      }
+
+      expect(results).toEqual([
+        {
+          present: true,
+          bytes: staleState,
+          output: expect.objectContaining({
+            schema: "openrig.health-error/v0alpha1",
+            error: "health_daemon_unavailable",
+          }),
+        },
+        {
+          present: true,
+          bytes: staleState,
+          output: expect.objectContaining({
+            schema: "openrig.health-error/v0alpha1",
+            error: "health_daemon_unavailable",
+          }),
+        },
+      ]);
+    } finally {
+      if (originalState === null) rmSync(STATE_FILE, { force: true });
+      else writeFileSync(STATE_FILE, originalState, "utf8");
+    }
   });
 });

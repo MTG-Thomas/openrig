@@ -57,6 +57,11 @@ export interface DaemonStatus {
   eventLoop?: DaemonEventLoopEvidence;
 }
 
+export interface GetDaemonStatusOptions {
+  /** Preserve stale daemon state for observational callers. Lifecycle callers clean it by default. */
+  cleanupStaleState?: boolean;
+}
+
 /** Build the daemon HTTP URL from status. Uses persisted host or defaults to 127.0.0.1. */
 export function getDaemonUrl(status: DaemonStatus): string {
   return `http://${status.host ?? DEFAULT_HOST}:${status.port}`;
@@ -813,7 +818,10 @@ function findSiblingHome(deps: LifecycleDeps): DaemonStatus["siblingHint"] {
   return undefined;
 }
 
-export async function getDaemonStatus(deps: LifecycleDeps): Promise<DaemonStatus> {
+export async function getDaemonStatus(
+  deps: LifecycleDeps,
+  options: GetDaemonStatusOptions = {},
+): Promise<DaemonStatus> {
   // If OPENRIG_URL is set, bypass daemon.json and probe that URL directly
   const openrigUrl = readOpenRigEnv("OPENRIG_URL", "RIGGED_URL");
   if (openrigUrl) {
@@ -853,7 +861,9 @@ export async function getDaemonStatus(deps: LifecycleDeps): Promise<DaemonStatus
 
   if (!deps.isProcessAlive(state.pid)) {
     // Process dead — stale state
-    deps.removeFile(resolveLifecycleFile(deps, "daemon.json"));
+    if (options.cleanupStaleState !== false) {
+      deps.removeFile(resolveLifecycleFile(deps, "daemon.json"));
+    }
     return { state: "stale" };
   }
 
