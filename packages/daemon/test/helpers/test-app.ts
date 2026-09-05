@@ -71,6 +71,7 @@ import { ClaimService } from "../../src/domain/claim-service.js";
 import { SelfAttachService } from "../../src/domain/self-attach-service.js";
 import { RigExpansionService } from "../../src/domain/rig-expansion-service.js";
 import { ContextUsageStore } from "../../src/domain/context-usage-store.js";
+import { HealthProjectionService, LiveContextHealthSource } from "../../src/domain/health-detectors.js";
 import { WhoamiService } from "../../src/domain/whoami-service.js";
 import { TranscriptStore } from "../../src/domain/transcript-store.js";
 import { RigLifecycleService } from "../../src/domain/rig-lifecycle-service.js";
@@ -344,6 +345,11 @@ export function createTestApp(
   const rigExpansionService = new RigExpansionService({ db, rigRepo, eventBus, nodeLauncher, podInstantiator, sessionRegistry });
   const rigLifecycleService = new RigLifecycleService({ db, rigRepo, sessionRegistry, discoveryRepo, eventBus, queueRepo, tmuxAdapter: tmux });
   const contextUsageStore = new ContextUsageStore(db, { stateDir: "/tmp/openrig-test" });
+  const healthProjection = new HealthProjectionService(new LiveContextHealthSource({
+    rigRepo,
+    sessionRegistry,
+    contextUsageStore,
+  }));
   const whoamiService = new WhoamiService({ db, rigRepo, sessionRegistry, transcriptStore, contextUsageStore });
   const cmuxTmux = { ...tmux, hasSession: vi.fn(async () => true) } as unknown as TmuxAdapter;
   const nodeCmuxService = new NodeCmuxService(rigRepo, sessionRegistry, cmux, cmuxTmux);
@@ -390,6 +396,7 @@ export function createTestApp(
     podInstantiator,
     podBundleSourceResolver,
     contextUsageStore,
+    healthProjection,
     whoamiService,
     nodeCmuxService,
     agentActivityStore,

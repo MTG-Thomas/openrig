@@ -1,0 +1,402 @@
+import {
+  adaptContextUsageEvidence,
+  boundHealthEvidence,
+  canonicalHealthJson,
+  deriveHealthSourceFreshness,
+  projectHealthRecord,
+  type BoundedHealthEvidence,
+  type HealthConfidence,
+  type HealthEvidenceReference,
+  type HealthRecord,
+  type HealthScope,
+  type HealthSeverity,
+  type HealthStatus,
+} from "./health-projection.js";
+import type { ContextUsageStore } from "./context-usage-store.js";
+import type { RigRepository } from "./rig-repository.js";
+import type { SessionRegistry } from "./session-registry.js";
+
+const CEREMONY_MIN_TRANSITIONS = 20;
+const CEREMONY_MIN_RATIO = 12;
+const REVIEW_CAROUSEL_MIN_RETURNS = 4;
+const REDUNDANT_WAKE_MIN_COUNT = 4;
+const CONTEXT_PRESSURE_PERCENT = 80;
+const CONTEXT_CRITICAL_PERCENT = 95;
+const LIVE_CONTEXT_RETENTION_SECONDS = 86_400;
+const LIVE_CONTEXT_FRESHNESS_SECONDS = 600;
+export const HEALTH_LIST_SCHEMA = "openrig.health-list/v0alpha1" as const;
+
+interface ObservationBase {
+  scope: HealthScope;
+  episodeStartedAt: string;
+  lastObservedAt: string;
+  source: BoundedHealthEvidence;
+}
+
+export type HealthDetectorObservation =
+  | (ObservationBase & {
+      kind: "coordination-lineage";
+      lineageId: string;
+      coordinationTransitions: number;
+      productStateChanges: number;
+      boundedAuthority: boolean;
+      reviewReturns: number;
+      candidateChanges: number;
+      newRiskClasses: number;
+    })
+  | (ObservationBase & {
+      kind: "wake-lineage";
+      lineageId: string;
+      wakeCount: number;
+      rescueWakeCount: number;
+      existingNextAction: boolean;
+    })
+  | (ObservationBase & {
+      kind: "directive";
+      directiveId: string;
+      declaredPhase: string | null;
+      currentPhase: string | null;
+      declaredRigor: string | null;
+      currentRigor: string | null;
+      conflictSourceAddress: string | null;
+    })
+  | (ObservationBase & {
+      kind: "scope-admission";
+      sliceId: string;
+      missionActive: boolean;
+      buildable: boolean;
+      requiredAuthority: string | null;
+      admissionAuthority: string | null;
+      admissionState: "present" | "missing" | "contradictory" | "unavailable";
+      authoritySourceAddress: string | null;
+    })
+  | (ObservationBase & {
+      kind: "context-pressure";
+      sourceName: string | null;
+      continuity: string | null;
+    });
+
+export interface HealthObservationSource {
+  read(): readonly HealthDetectorObservation[];
+}
+
+export interface HealthListQuery {
+  limit?: number;
+  scopeType?: HealthScope["type"];
+  scopeId?: string;
+  severity?: HealthSeverity;
+  status?: HealthStatus;
+}
+
+export interface HealthListProjection {
+  schema: typeof HEALTH_LIST_SCHEMA;
+  evaluatedAt: string | null;
+  total: number;
+  limit: number;
+  truncated: boolean;
+  records: HealthRecord[];
+}
+
+export function evaluateHealthDetectors(observations: readonly HealthDetectorObservation[]): HealthRecord[] {
+  const records = observations.flatMap(evaluateObservation);
+  const episodes = new Map<string, HealthRecord>();
+  for (const record of records) {
+    const previous = episodes.get(record.id);
+    if (!previous || compareRecordRecency(record, previous) > 0) episodes.set(record.id, record);
+  }
+  return [...episodes.values()].sort((a, b) =>
+    a.detector.localeCompare(b.detector, "en-US") || a.id.localeCompare(b.id, "en-US"));
+}
+
+export function canonicalDetectorJson(records: readonly HealthRecord[]): string {
+  return canonicalHealthJson(records);
+}
+
+export class HealthProjectionService {
+  constructor(private readonly source: HealthObservationSource) {}
+
+  list(query: HealthListQuery = {}): HealthListProjection {
+    const limit = query.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error("limit must be an integer from 1 to 200");
+    }
+    const evaluated = evaluateHealthDetectors(this.source.read());
+    const filtered = evaluated.filter((record) =>
+      (query.scopeType === undefined || record.scope.type === query.scopeType)
+      && (query.scopeId === undefined || healthScopeId(record.scope) === query.scopeId)
+      && (query.severity === undefined || record.severity === query.severity)
+      && (query.status === undefined || record.status === query.status));
+    return {
+      schema: HEALTH_LIST_SCHEMA,
+      evaluatedAt: newestEvaluatedAt(evaluated),
+      total: filtered.length,
+      limit,
+      truncated: filtered.length > limit,
+      records: filtered.slice(0, limit),
+    };
+  }
+
+  get(id: string): HealthRecord | null {
+    return evaluateHealthDetectors(this.source.read()).find((record) => record.id === id) ?? null;
+  }
+}
+
+/** The live v1 adapter intentionally supplies only context observations. The other
+ * detectors require structured product-change, directive, or admission facts that
+ * current tables cannot express without inference. Replay sources can supply them. */
+export class LiveContextHealthSource implements HealthObservationSource {
+  constructor(private readonly deps: {
+    rigRepo: RigRepository;
+    sessionRegistry: SessionRegistry;
+    contextUsageStore: ContextUsageStore;
+    now?: () => Date;
+  }) {}
+
+  read(): HealthDetectorObservation[] {
+    const evaluatedAt = (this.deps.now ?? (() => new Date()))().toISOString();
+    const startedAt = new Date(Date.parse(evaluatedAt) - LIVE_CONTEXT_RETENTION_SECONDS * 1000).toISOString();
+    const observations: HealthDetectorObservation[] = [];
+
+    for (const rig of this.deps.rigRepo.listRigs()) {
+      const detail = this.deps.rigRepo.getRig(rig.id);
+      if (!detail) continue;
+      const liveByNode = new Map(
+        this.deps.sessionRegistry.getLatestLiveSessions(rig.id).map((session) => [session.nodeId, session]),
+      );
+      const liveNodes = detail.nodes.filter((node) => liveByNode.has(node.id));
+      const usageByNode = this.deps.contextUsageStore.getForNodes(liveNodes.map((node) => ({
+        nodeId: node.id,
+        currentSessionName: liveByNode.get(node.id)?.sessionName ?? null,
+      })));
+
+      for (const node of liveNodes) {
+        const usage = usageByNode.get(node.id);
+        if (!usage) continue;
+        const evidence = adaptContextUsageEvidence(node.id, usage, 0);
+        const freshness = deriveHealthSourceFreshness({
+          evaluatedAt,
+          newestSourceAt: usage.sampledAt,
+          maxAgeSeconds: LIVE_CONTEXT_FRESHNESS_SECONDS,
+          available: usage.availability === "known",
+        });
+        observations.push({
+          kind: "context-pressure",
+          scope: { type: "seat", rigId: rig.id, seatId: node.id },
+          episodeStartedAt: usage.sampledAt ?? startedAt,
+          lastObservedAt: usage.sampledAt ?? evaluatedAt,
+          sourceName: usage.source,
+          continuity: node.continuityOutcome ?? "unavailable",
+          source: boundHealthEvidence([evidence], {
+            source: "context-usage",
+            startedAt,
+            endedAt: evaluatedAt,
+            limit: 1,
+            retentionSeconds: LIVE_CONTEXT_RETENTION_SECONDS,
+          }, freshness),
+        });
+      }
+    }
+    return observations;
+  }
+}
+
+export function healthScopeId(scope: HealthScope): string {
+  switch (scope.type) {
+    case "instance": return scope.instanceId;
+    case "rig": return scope.rigId;
+    case "seat": return scope.seatId;
+    case "mission": return scope.missionId;
+    case "slice": return scope.sliceId;
+  }
+}
+
+function evaluateObservation(observation: HealthDetectorObservation): HealthRecord[] {
+  switch (observation.kind) {
+    case "coordination-lineage": return evaluateCoordination(observation);
+    case "wake-lineage": return evaluateWake(observation);
+    case "directive": return evaluateDirective(observation);
+    case "scope-admission": return evaluateAdmission(observation);
+    case "context-pressure": return evaluateContext(observation);
+  }
+}
+
+function evaluateCoordination(
+  observation: Extract<HealthDetectorObservation, { kind: "coordination-lineage" }>,
+): HealthRecord[] {
+  const records: HealthRecord[] = [];
+  const denominator = Math.max(observation.productStateChanges, 1);
+  const ratio = observation.coordinationTransitions / denominator;
+  if (!observation.boundedAuthority
+    && observation.coordinationTransitions >= CEREMONY_MIN_TRANSITIONS
+    && ratio >= CEREMONY_MIN_RATIO) {
+    records.push(record(observation, {
+      detector: "process.ceremony-amplification",
+      category: "process",
+      severity: "warning",
+      summary: `Coordination activity is disproportionate for ${observation.lineageId}.`,
+      threshold: `coordinationTransitions >= ${CEREMONY_MIN_TRANSITIONS} AND coordinationTransitions / max(productStateChanges, 1) >= ${CEREMONY_MIN_RATIO} AND boundedAuthority = false`,
+      explanation: `${observation.coordinationTransitions} coordination transitions for ${observation.productStateChanges} product-state change${observation.productStateChanges === 1 ? "" : "s"} in one lineage (${ratio.toFixed(1)}:1).`,
+      suggestedInspection: `Inspect queue transitions and product checkpoints for ${observation.lineageId}.`,
+    }));
+  }
+  if (observation.reviewReturns >= REVIEW_CAROUSEL_MIN_RETURNS
+    && observation.candidateChanges === 0
+    && observation.newRiskClasses === 0) {
+    records.push(record(observation, {
+      detector: "process.review-carousel",
+      category: "process",
+      severity: "warning",
+      summary: `Review repeatedly returned the unchanged ${observation.lineageId} lineage.`,
+      threshold: `reviewReturns >= ${REVIEW_CAROUSEL_MIN_RETURNS} AND candidateChanges = 0 AND newRiskClasses = 0`,
+      explanation: `${observation.reviewReturns} review returns occurred with no candidate change and no newly recorded risk class.`,
+      suggestedInspection: `Inspect the review return sequence for ${observation.lineageId}.`,
+    }));
+  }
+  return records;
+}
+
+function evaluateWake(
+  observation: Extract<HealthDetectorObservation, { kind: "wake-lineage" }>,
+): HealthRecord[] {
+  const redundant = Math.max(0, observation.wakeCount - observation.rescueWakeCount);
+  if (!observation.existingNextAction || redundant < REDUNDANT_WAKE_MIN_COUNT) return [];
+  return [record(observation, {
+    detector: "process.redundant-wake-storm",
+    category: "process",
+    severity: "warning",
+    summary: `Repeated wakes duplicated an existing next action for ${observation.lineageId}.`,
+    threshold: `wakeCount - rescueWakeCount >= ${REDUNDANT_WAKE_MIN_COUNT} AND existingNextAction = true`,
+    explanation: `${observation.wakeCount} wakes minus ${observation.rescueWakeCount} liveness rescues left ${redundant} redundant wakes while a next action was already recorded.`,
+    suggestedInspection: `Inspect watchdog and queue wake receipts for ${observation.lineageId}.`,
+  })];
+}
+
+function evaluateDirective(
+  observation: Extract<HealthDetectorObservation, { kind: "directive" }>,
+): HealthRecord[] {
+  if (!observation.conflictSourceAddress) return [];
+  const phaseConflict = observation.declaredPhase !== null
+    && observation.currentPhase !== null
+    && observation.declaredPhase !== observation.currentPhase;
+  const rigorConflict = observation.declaredRigor !== null
+    && observation.currentRigor !== null
+    && observation.declaredRigor !== observation.currentRigor;
+  if (!phaseConflict && !rigorConflict) return [];
+  const conflicts = [
+    phaseConflict ? `phase ${observation.declaredPhase} != ${observation.currentPhase}` : null,
+    rigorConflict ? `rigor ${observation.declaredRigor} != ${observation.currentRigor}` : null,
+  ].filter((item): item is string => item !== null);
+  return [record(observation, {
+    detector: "governance.stale-directive",
+    category: "governance",
+    severity: "warning",
+    summary: `Directive ${observation.directiveId} conflicts with current structured state.`,
+    threshold: "a declared phase or rigor differs from newer structured state and both sources are addressable",
+    explanation: `${conflicts.join("; ")}; current state is addressed by ${observation.conflictSourceAddress}. Age alone was not used.`,
+    suggestedInspection: `Compare directive ${observation.directiveId} with ${observation.conflictSourceAddress}.`,
+  })];
+}
+
+function evaluateAdmission(
+  observation: Extract<HealthDetectorObservation, { kind: "scope-admission" }>,
+): HealthRecord[] {
+  if (!observation.missionActive
+    || !observation.buildable
+    || !observation.requiredAuthority
+    || !observation.authoritySourceAddress
+    || observation.admissionState === "unavailable") return [];
+  const authorityMismatch = observation.admissionState === "present"
+    && observation.admissionAuthority !== observation.requiredAuthority;
+  if (observation.admissionState === "present" && !authorityMismatch) return [];
+  return [record(observation, {
+    detector: "governance.scope-admission-drift",
+    category: "governance",
+    severity: "warning",
+    summary: `Buildable slice ${observation.sliceId} lacks its mission's required admission.`,
+    threshold: "missionActive = true AND buildable = true AND a governing authority rule is available AND admission is missing or contradictory",
+    explanation: `The mission requires ${observation.requiredAuthority}; admission is ${observation.admissionState}${observation.admissionAuthority ? ` from ${observation.admissionAuthority}` : ""}.`,
+    suggestedInspection: `Inspect ${observation.authoritySourceAddress} and the admission record for ${observation.sliceId}.`,
+  })];
+}
+
+function evaluateContext(
+  observation: Extract<HealthDetectorObservation, { kind: "context-pressure" }>,
+): HealthRecord[] {
+  const samples = observation.source.evidence
+    .filter((item): item is Extract<HealthEvidenceReference, { type: "context-usage" }> => item.type === "context-usage")
+    .filter((item) => item.available && item.usedPercentage !== null && item.observedAt !== null)
+    .sort((a, b) => a.sourceOrder - b.sourceOrder || a.observedAt!.localeCompare(b.observedAt!, "en-US"));
+  if (samples.length === 0) return [];
+  const latest = samples.at(-1)!;
+  const active = latest.usedPercentage! >= CONTEXT_PRESSURE_PERCENT;
+  let pressureIndex = active ? samples.length - 1 : samples.length - 2;
+  while (pressureIndex >= 0 && samples[pressureIndex]!.usedPercentage! < CONTEXT_PRESSURE_PERCENT) {
+    pressureIndex -= 1;
+  }
+  if (pressureIndex < 0) return [];
+  while (pressureIndex > 0 && samples[pressureIndex - 1]!.usedPercentage! >= CONTEXT_PRESSURE_PERCENT) {
+    pressureIndex -= 1;
+  }
+  const firstPressure = samples[pressureIndex]!;
+  const status: HealthStatus = active ? "active" : "cleared";
+  const severity: HealthSeverity = Math.max(...samples.map((sample) => sample.usedPercentage!)) >= CONTEXT_CRITICAL_PERCENT
+    ? "critical"
+    : "warning";
+  return [record({
+    ...observation,
+    episodeStartedAt: firstPressure.observedAt!,
+    lastObservedAt: latest.observedAt!,
+  }, {
+    detector: "context.pressure",
+    category: "context",
+    severity,
+    status,
+    summary: active
+      ? `Seat context utilization reached ${latest.usedPercentage}%.`
+      : `Seat context pressure cleared naturally at ${latest.usedPercentage}%.`,
+    threshold: `fresh context utilization >= ${CONTEXT_PRESSURE_PERCENT}%`,
+    explanation: `The latest ${observation.sourceName ?? "unknown"} sample reports ${latest.usedPercentage}% utilization; source freshness is ${observation.source.freshness.state}; continuity is ${observation.continuity ?? "unavailable"}.`,
+    suggestedInspection: "Inspect the seat's context source, recency, and continuity state.",
+  })];
+}
+
+function record(
+  observation: ObservationBase,
+  fields: {
+    detector: string;
+    category: "process" | "governance" | "context";
+    severity: HealthSeverity;
+    status?: HealthStatus;
+    confidence?: HealthConfidence;
+    summary: string;
+    threshold: string;
+    explanation: string;
+    suggestedInspection: string;
+  },
+): HealthRecord {
+  return projectHealthRecord({
+    detector: fields.detector,
+    category: fields.category,
+    scope: observation.scope,
+    severity: fields.severity,
+    confidence: fields.confidence ?? "high",
+    status: fields.status ?? "active",
+    startedAt: observation.episodeStartedAt,
+    lastObservedAt: observation.lastObservedAt,
+    summary: fields.summary,
+    threshold: fields.threshold,
+    explanation: fields.explanation,
+    suggestedInspection: fields.suggestedInspection,
+    source: observation.source,
+  });
+}
+
+function compareRecordRecency(a: HealthRecord, b: HealthRecord): number {
+  const time = Date.parse(a.lastObservedAt ?? "") - Date.parse(b.lastObservedAt ?? "");
+  if (Number.isFinite(time) && time !== 0) return time;
+  return canonicalHealthJson([a]).localeCompare(canonicalHealthJson([b]), "en-US");
+}
+
+function newestEvaluatedAt(records: readonly HealthRecord[]): string | null {
+  return records.map((record) => record.freshness.evaluatedAt).sort().at(-1) ?? null;
+}

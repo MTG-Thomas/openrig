@@ -940,6 +940,12 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
     // generation) so a frozen pre-handover sample can't drive the threshold. null = UNKNOWN (inert).
     resolveOccupantBootAt: (nodeId) => sessionRegistry.currentOccupantTenure(nodeId)?.bootAt ?? null,
   });
+  const { HealthProjectionService, LiveContextHealthSource } = await import("./domain/health-detectors.js");
+  const healthProjection = new HealthProjectionService(new LiveContextHealthSource({
+    rigRepo,
+    sessionRegistry,
+    contextUsageStore,
+  }));
   // OPR.0.4.3.20 FR-4 — inject contextUsageStore so refresh() can null-fill a
   // Claude token from the sidecar during periodic/manual snapshot refresh.
   const resumeMetadataRefresher = new ResumeMetadataRefresher({ sessionRegistry, tmuxAdapter, contextUsageStore });
@@ -1165,6 +1171,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
     seatAttentionReconciler,
     activityHookToken: resolvedActivityHookToken,
     contextUsageStore,
+    healthProjection,
     serviceOrchestrator,
     composeAdapter,
     kernelBootTracker,

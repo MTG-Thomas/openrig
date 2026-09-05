@@ -113,6 +113,7 @@ import { registerTerminalWs } from "./routes/terminal-ws.js";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { steeringRoutes } from "./routes/steering.js";
 import { healthSummaryRoutes } from "./routes/health-summary.js";
+import { healthRoutes } from "./routes/health.js";
 import { gatewayRoutes } from "./routes/gateway.js";
 import type { StreamStore } from "./domain/stream-store.js";
 import { createSlowOpRequestMiddleware, type SlowOperationInstrumentation } from "./domain/slow-op-recorder.js";
@@ -307,6 +308,8 @@ export interface AppDeps {
   /** W3 single-seat, read-only runtime-policy observer. */
   permissionDriftObserver?: PermissionDriftReader;
   contextUsageStore?: import("./domain/context-usage-store.js").ContextUsageStore;
+  /** 0.5.10 S04 — one on-demand, read-only health projection shared by consumers. */
+  healthProjection?: import("./domain/health-detectors.js").HealthProjectionService;
   contextMonitor?: { pollOnce(): Promise<void> };
   /**
    * OPR.0.4.3.14 — Claude compaction enforcer, exposed to routes for the manual
@@ -557,6 +560,7 @@ export function createApp(deps: AppDeps): Hono {
     c.set("whoamiService" as never, deps.whoamiService);
     c.set("permissionDriftObserver" as never, permissionDriftObserver);
     c.set("contextUsageStore" as never, deps.contextUsageStore);
+    c.set("healthProjection" as never, deps.healthProjection);
     c.set("contextMonitor" as never, deps.contextMonitor);
     c.set("compactionEnforcer" as never, deps.compactionEnforcer);
     c.set("occupantInvalidator" as never, deps.occupantInvalidator);
@@ -760,6 +764,7 @@ export function createApp(deps: AppDeps): Hono {
   // Operator Surface Reconciliation v0 — steering composition + health summary.
   app.route("/api/steering", steeringRoutes());
   app.route("/api/health-summary", healthSummaryRoutes());
+  app.route("/api/health", healthRoutes());
   // S10 — gateway subsystem admin (slack enable/disable with the seeding rule preserved).
   app.route("/api/gateway", gatewayRoutes());
   app.route("/api/rigs/:rigId/env", envRoutes());

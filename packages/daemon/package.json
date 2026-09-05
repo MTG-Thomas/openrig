@@ -52,6 +52,10 @@
     "./health-projection": {
       "types": "./dist/health-projection-surface.d.ts",
       "import": "./dist/health-projection-surface.js"
+    },
+    "./health-detectors": {
+      "types": "./dist/health-detectors-surface.d.ts",
+      "import": "./dist/health-detectors-surface.js"
     }
   },
   "scripts": {
