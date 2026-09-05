@@ -73,6 +73,7 @@ Keys:
   context.system_world   default System World, replacement manifest path, or disabled
   skills.root            versioned skill catalog (default $OPENRIG_HOME/skills)
   onboarding.default_pack.enabled  deliver the two-part fresh-seat mental-model pack (default on)
+  health.context_pressure.*        context-pressure warning/critical percentages (defaults 95/99)
   files.allowlist        name:/abs/path,name:/abs/path
   progress.scan_roots    name:/abs/path,name:/abs/path
   ui.preview.*           refresh_interval_seconds, max_pins, default_lines

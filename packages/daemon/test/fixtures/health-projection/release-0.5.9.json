@@ -199,7 +199,7 @@
         "id": "stale-context",
         "kind": "context-usage",
         "events": [
-          { "sourceOrder": 0, "observedAt": "2026-08-01T10:00:00Z", "usedPercentage": 82, "fresh": false }
+          { "sourceOrder": 0, "observedAt": "2026-08-01T10:00:00Z", "usedPercentage": 96, "fresh": false }
         ]
       },
       {

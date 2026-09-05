@@ -154,16 +154,18 @@ export function healthSummaryLine(snap: FleetSnapshot, scope: HealthDisplayScope
   };
   const categories = new Map<string, number>();
   for (const record of active) categories.set(record.category, (categories.get(record.category) ?? 0) + 1);
-  const categoryText = categories.size > 0
-    ? [...categories].sort(([a], [b]) => a.localeCompare(b, "en-US")).map(([name, count]) => `${name} ${count}`).join(" ")
-    : `${records.filter((record) => record.status === "indeterminate").length} indeterminate · ${records.filter((record) => record.status === "cleared").length} cleared`;
+  const categoryText = [...categories].sort(([a], [b]) => a.localeCompare(b, "en-US")).map(([name, count]) => `${name} ${count}`).join(" ");
+  const indeterminate = records.filter((record) => record.status === "indeterminate").length;
   const top = records[0]!;
+  const compact = width < 80;
   return fitLine([
     { text: "HEALTH  ", token: "bright", bold: true },
+    { text: compact ? "ACTIVE " : "ACTIVE · ", token: "bright", bold: true },
     { text: `CRIT ${counts.critical}`, token: counts.critical ? "error" : "dim", bold: counts.critical > 0 },
     { text: `  WARN ${counts.warning}`, token: counts.warning ? "warn" : "dim", bold: counts.warning > 0 },
-    { text: `  INFO ${counts.info}`, token: counts.info ? "info" : "dim" },
-    { text: ` · ${categoryText}`, token: "bright" },
+    ...(!compact ? [{ text: `  INFO ${counts.info}`, token: counts.info ? "info" as const : "dim" as const }] : []),
+    ...(indeterminate > 0 ? [{ text: compact ? ` · INDET ${indeterminate}` : ` · INDETERMINATE ${indeterminate}`, token: "warn" as const, bold: true }] : []),
+    ...(categoryText ? [{ text: compact ? ` · TYPE ${categoryText}` : ` · BY TYPE ${categoryText}`, token: "bright" as const }] : []),
     { text: ` · ${stateLabel(top)} ${top.summary}`, token: tokenFor(top) },
     ...(snap.health?.truncated ? [{ text: " · PARTIAL", token: "warn" as const, bold: true }] : []),
   ], width, { type: "tab", tab: "health" });
@@ -265,6 +267,7 @@ export function healthDetailLines(snap: FleetSnapshot, findingId: string, width:
     { text: "" },
     sectionRule("SIGNAL", width),
     ...wrap("summary", record.summary, width),
+    ...wrap("finding id", record.id, width),
     ...wrap("scope", scopeName(record, snap), width),
     ...wrap("category", record.category, width),
     ...wrap("severity", record.severity, width, tokenFor(record)),

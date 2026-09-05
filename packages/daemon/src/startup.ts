@@ -941,11 +941,13 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
     resolveOccupantBootAt: (nodeId) => sessionRegistry.currentOccupantTenure(nodeId)?.bootAt ?? null,
   });
   const { HealthProjectionService, LiveContextHealthSource } = await import("./domain/health-detectors.js");
+  const healthSettingsStore = new ContextPackSettingsStore();
   const healthProjection = new HealthProjectionService(new LiveContextHealthSource({
     db,
     rigRepo,
     sessionRegistry,
     contextUsageStore,
+    resolveContextPressurePolicy: () => healthSettingsStore.resolveContextPressurePolicy(),
   }));
   // OPR.0.4.3.20 FR-4 — inject contextUsageStore so refresh() can null-fill a
   // Claude token from the sidecar during periodic/manual snapshot refresh.

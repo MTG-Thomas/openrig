@@ -22,8 +22,8 @@ const CEREMONY_MIN_TRANSITIONS = 20;
 const CEREMONY_MIN_RATIO = 12;
 const REVIEW_CAROUSEL_MIN_RETURNS = 4;
 const REDUNDANT_WAKE_MIN_COUNT = 4;
-const CONTEXT_PRESSURE_PERCENT = 80;
-const CONTEXT_CRITICAL_PERCENT = 95;
+const CONTEXT_PRESSURE_PERCENT = 95;
+const CONTEXT_CRITICAL_PERCENT = 99;
 const LIVE_CONTEXT_RETENTION_SECONDS = 86_400;
 const LIVE_CONTEXT_FRESHNESS_SECONDS = 600;
 export const HEALTH_LIST_SCHEMA = "openrig.health-list/v0alpha1" as const;
@@ -76,6 +76,8 @@ export type HealthDetectorObservation =
       kind: "context-pressure";
       sourceName: string | null;
       continuity: string | null;
+      warningPercent?: number;
+      criticalPercent?: number;
     });
 
 export interface HealthObservationSource {
@@ -152,6 +154,7 @@ export class LiveContextHealthSource implements HealthObservationSource {
     rigRepo: RigRepository;
     sessionRegistry: SessionRegistry;
     contextUsageStore: ContextUsageStore;
+    resolveContextPressurePolicy?: () => { warningPercent: number; criticalPercent: number };
     now?: () => Date;
   }) {}
 
@@ -159,6 +162,10 @@ export class LiveContextHealthSource implements HealthObservationSource {
     const evaluatedAt = (this.deps.now ?? (() => new Date()))().toISOString();
     const startedAt = new Date(Date.parse(evaluatedAt) - LIVE_CONTEXT_RETENTION_SECONDS * 1000).toISOString();
     const observations: HealthDetectorObservation[] = [];
+    const contextPressurePolicy = this.deps.resolveContextPressurePolicy?.() ?? {
+      warningPercent: CONTEXT_PRESSURE_PERCENT,
+      criticalPercent: CONTEXT_CRITICAL_PERCENT,
+    };
 
     for (const rig of this.deps.rigRepo.listRigs()) {
       const detail = this.deps.rigRepo.getRig(rig.id);
@@ -204,7 +211,7 @@ export class LiveContextHealthSource implements HealthObservationSource {
                     <= LIVE_CONTEXT_FRESHNESS_SECONDS * 1000,
                 })),
               { ...currentEvidence, sourceOrder: Number.MAX_SAFE_INTEGER },
-            ])
+            ], contextPressurePolicy.warningPercent)
           : [currentEvidence];
         const freshness = deriveHealthSourceFreshness({
           evaluatedAt,
@@ -219,6 +226,8 @@ export class LiveContextHealthSource implements HealthObservationSource {
           lastObservedAt: usage.sampledAt ?? evaluatedAt,
           sourceName: usage.source,
           continuity: node.continuityOutcome ?? "unavailable",
+          warningPercent: contextPressurePolicy.warningPercent,
+          criticalPercent: contextPressurePolicy.criticalPercent,
           source: boundHealthEvidence(evidence, {
             source: "context-usage",
             startedAt,
@@ -235,6 +244,7 @@ export class LiveContextHealthSource implements HealthObservationSource {
 
 function selectContextEpisodeEvidence(
   evidence: readonly HealthEvidenceReference[],
+  warningPercent = CONTEXT_PRESSURE_PERCENT,
 ): HealthEvidenceReference[] {
   const byTimestamp = new Map<string, Extract<HealthEvidenceReference, { type: "context-usage" }>>();
   for (const item of evidence) {
@@ -248,13 +258,13 @@ function selectContextEpisodeEvidence(
   const latest = samples.at(-1);
   if (!latest || latest.usedPercentage === null) return latest ? [latest] : [];
 
-  let episodeEnd = latest.usedPercentage >= CONTEXT_PRESSURE_PERCENT ? samples.length - 1 : samples.length - 2;
-  while (episodeEnd >= 0 && (samples[episodeEnd]!.usedPercentage ?? -Infinity) < CONTEXT_PRESSURE_PERCENT) {
+  let episodeEnd = latest.usedPercentage >= warningPercent ? samples.length - 1 : samples.length - 2;
+  while (episodeEnd >= 0 && (samples[episodeEnd]!.usedPercentage ?? -Infinity) < warningPercent) {
     episodeEnd -= 1;
   }
   if (episodeEnd < 0) return [latest];
   let episodeStart = episodeEnd;
-  while (episodeStart > 0 && (samples[episodeStart - 1]!.usedPercentage ?? -Infinity) >= CONTEXT_PRESSURE_PERCENT) {
+  while (episodeStart > 0 && (samples[episodeStart - 1]!.usedPercentage ?? -Infinity) >= warningPercent) {
     episodeStart -= 1;
   }
   let peak = samples[episodeStart]!;
@@ -397,19 +407,21 @@ function evaluateContext(
     .filter((item) => item.available && item.usedPercentage !== null && item.observedAt !== null)
     .sort((a, b) => a.sourceOrder - b.sourceOrder || a.observedAt!.localeCompare(b.observedAt!, "en-US"));
   if (samples.length === 0) return [];
+  const warningPercent = observation.warningPercent ?? CONTEXT_PRESSURE_PERCENT;
+  const criticalPercent = observation.criticalPercent ?? CONTEXT_CRITICAL_PERCENT;
   const latest = samples.at(-1)!;
-  const active = latest.usedPercentage! >= CONTEXT_PRESSURE_PERCENT;
+  const active = latest.usedPercentage! >= warningPercent;
   let pressureIndex = active ? samples.length - 1 : samples.length - 2;
-  while (pressureIndex >= 0 && samples[pressureIndex]!.usedPercentage! < CONTEXT_PRESSURE_PERCENT) {
+  while (pressureIndex >= 0 && samples[pressureIndex]!.usedPercentage! < warningPercent) {
     pressureIndex -= 1;
   }
   if (pressureIndex < 0) return [];
-  while (pressureIndex > 0 && samples[pressureIndex - 1]!.usedPercentage! >= CONTEXT_PRESSURE_PERCENT) {
+  while (pressureIndex > 0 && samples[pressureIndex - 1]!.usedPercentage! >= warningPercent) {
     pressureIndex -= 1;
   }
   const firstPressure = samples[pressureIndex]!;
   const status: HealthStatus = active ? "active" : "cleared";
-  const severity: HealthSeverity = Math.max(...samples.slice(pressureIndex).map((sample) => sample.usedPercentage!)) >= CONTEXT_CRITICAL_PERCENT
+  const severity: HealthSeverity = Math.max(...samples.slice(pressureIndex).map((sample) => sample.usedPercentage!)) >= criticalPercent
     ? "critical"
     : "warning";
   return [record({
@@ -424,7 +436,7 @@ function evaluateContext(
     summary: active
       ? `Seat context utilization reached ${latest.usedPercentage}%.`
       : `Seat context pressure cleared naturally at ${latest.usedPercentage}%.`,
-    threshold: `fresh context utilization >= ${CONTEXT_PRESSURE_PERCENT}%`,
+    threshold: `fresh context utilization >= ${warningPercent}% (critical at >= ${criticalPercent}%)`,
     explanation: `The latest ${observation.sourceName ?? "unknown"} sample reports ${latest.usedPercentage}% utilization; source freshness is ${observation.source.freshness.state}; continuity is ${observation.continuity ?? "unavailable"}.`,
     suggestedInspection: "Inspect the seat's context source, recency, and continuity state.",
   })];

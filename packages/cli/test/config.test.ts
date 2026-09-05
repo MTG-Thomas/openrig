@@ -285,6 +285,19 @@ describe("Config CLI", () => {
     expect(parsed.daemon).toBeDefined();
     expect(parsed.daemon.port).toBe(7433);
     expect(parsed.transcripts).toBeDefined();
+    expect(parsed.health.contextPressure).toEqual({ warningPercent: 95, criticalPercent: 99 });
+  });
+
+  it("rig config get exposes context-pressure policy provenance", async () => {
+    const cmd = configCommand(join(tmpDir, "config.json"));
+    const prog = new Command();
+    prog.exitOverride();
+    prog.addCommand(cmd);
+
+    const { logs } = await captureLogs(async () => {
+      await prog.parseAsync(["node", "rig", "config", "get", "health.context_pressure.warning_percent", "--json"]);
+    });
+    expect(JSON.parse(logs.join("\n"))).toEqual({ value: 95, source: "default", defaultValue: 95 });
   });
 
   // Test 9

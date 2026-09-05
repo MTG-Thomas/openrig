@@ -52,6 +52,8 @@ function clearEnv(): () => void {
     "OPENRIG_WORKSPACE_SPECS_ROOT", "OPENRIG_DOGFOOD_EVIDENCE_ROOT",
     "OPENRIG_WORKSPACE_PROJECTS_ROOT", "OPENRIG_WORKSPACE_CATALOG_PATH",
     "OPENRIG_CONTEXT_ROOT", "OPENRIG_CONTEXT_SYSTEM_WORLD", "OPENRIG_CONTEXT_PACKS_ROOT",
+    "OPENRIG_HEALTH_CONTEXT_PRESSURE_WARNING_PERCENT",
+    "OPENRIG_HEALTH_CONTEXT_PRESSURE_CRITICAL_PERCENT",
     "OPENRIG_FILES_ALLOWLIST", "OPENRIG_PROGRESS_SCAN_ROOTS",
     "OPENRIG_UI_PREVIEW_REFRESH_INTERVAL_SECONDS",
     "OPENRIG_UI_PREVIEW_MAX_PINS", "OPENRIG_UI_PREVIEW_DEFAULT_LINES",
@@ -126,6 +128,8 @@ describe("ConfigStore — extended namespaces (User Settings v0)", () => {
       "context.system_world",
       "skills.root",
       "onboarding.default_pack.enabled",
+      "health.context_pressure.warning_percent",
+      "health.context_pressure.critical_percent",
       "files.allowlist", "progress.scan_roots",
       "ui.preview.refresh_interval_seconds", "ui.preview.max_pins", "ui.preview.default_lines",
       "recovery.auto_drive_provider_prompts",
@@ -232,6 +236,35 @@ describe("ConfigStore — extended namespaces (User Settings v0)", () => {
       "queue.pickup_stall_threshold_minutes" as never,
     );
     expect(setting).toMatchObject({ value: 3, source: "default", defaultValue: 3 });
+  });
+
+  it("exposes mutable 95/99 context-pressure thresholds with strict ordering and provenance", () => {
+    const store = new ConfigStore(configPath);
+    expect(store.resolveWithSource("health.context_pressure.warning_percent")).toMatchObject({
+      value: 95,
+      source: "default",
+      defaultValue: 95,
+    });
+    expect(store.resolveWithSource("health.context_pressure.critical_percent")).toMatchObject({
+      value: 99,
+      source: "default",
+      defaultValue: 99,
+    });
+    expect(store.resolve().health.contextPressure).toEqual({ warningPercent: 95, criticalPercent: 99 });
+
+    store.set("health.context_pressure.critical_percent", "100");
+    store.set("health.context_pressure.warning_percent", "97");
+    expect(store.resolve().health.contextPressure).toEqual({ warningPercent: 97, criticalPercent: 100 });
+    expect(store.resolveWithSource("health.context_pressure.warning_percent").source).toBe("file");
+    expect(() => store.set("health.context_pressure.critical_percent", "97")).toThrow(/warning.*critical/i);
+
+    for (const raw of ["0", "101", "95.5", "95junk"]) {
+      expect(() => store.set("health.context_pressure.warning_percent", raw)).toThrow(/integer/i);
+    }
+
+    store.reset("health.context_pressure.warning_percent");
+    store.reset("health.context_pressure.critical_percent");
+    expect(store.resolve().health.contextPressure).toEqual({ warningPercent: 95, criticalPercent: 99 });
   });
 
   it("S01 wake ladder exposes retry cadence, cap, unconfirmed window, and swap grace defaults", () => {

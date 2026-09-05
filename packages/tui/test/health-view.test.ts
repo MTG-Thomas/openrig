@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { demoSnapshot } from "../src/demo-data.js";
 import { parseCommand } from "../src/grammar.js";
-import { healthListLines } from "../src/health/health-model.js";
+import { healthListLines, healthSummaryLine } from "../src/health/health-model.js";
 import { resolveEscapeAction } from "../src/input.js";
 import { renderScreen } from "../src/render.js";
 import { createViewState } from "../src/state.js";
@@ -32,7 +32,7 @@ function record(input: {
     freshness: { state: input.freshness ?? "fresh", evaluatedAt: "2026-09-05T12:00:00.000Z", newestSourceAt: "2026-09-05T11:59:00.000Z", maxAgeSeconds: 600, ageSeconds: 60 },
     summary: input.summary,
     evidence: [{ type: "context-usage", sourceOrder: 0, observedAt: "2026-09-05T11:59:00.000Z", nodeId: input.seatId, sessionId: "session-1", usedPercentage: 96, available: true, fresh: true }],
-    threshold: "fresh context utilization >= 80%",
+    threshold: "fresh context utilization >= 95% (critical at >= 99%)",
     explanation: "The latest source sample reports sustained context pressure.",
     suggestedInspection: "Inspect the seat's context source, recency, and continuity state.",
     indeterminateReason: input.status === "indeterminate" ? "source freshness is unavailable" : null,
@@ -70,6 +70,27 @@ afterEach(() => {
 });
 
 describe("fleet/system health TUI", () => {
+  it.each([129, 89, 58])("makes active severity, type counts, and indeterminate totals self-defining at content width %i", (width) => {
+    const snap = healthSnapshot();
+    snap.health!.records.push(record({
+      id: "health-indeterminate",
+      seatId: "node-driver",
+      status: "indeterminate",
+      summary: "Driver telemetry is contradictory.",
+    }));
+    const text = healthSummaryLine(
+      snap,
+      { kind: "rig", rigId: "openrig-build", rigName: "openrig-build", local: true },
+      width,
+    ).text;
+
+    expect(text).toContain("ACTIVE");
+    expect(text).toMatch(/CRIT\s+1\s+WARN\s+1/);
+    expect(text).toMatch(/INDET(?:ERMINATE)?\s+1/);
+    expect(text).toMatch(/TYPE\s+context\s+2/i);
+    expect(text.length).toBeLessThanOrEqual(width);
+  });
+
   it.each([[160, 42], [120, 34], [84, 28]])("keeps a compact scoped TABLE signal and reachable HEALTH tab at %ix%i", (cols, rows) => {
     const snap = healthSnapshot();
     const view = open(snap, "host vm-host");
@@ -111,7 +132,8 @@ describe("fleet/system health TUI", () => {
       screen = renderScreen(view.get(), snap, { cols: 160, rows: 80, colorMode: "none" });
       const detail = screen.lines.join("\n");
       expect(detail).toContain("EXPLANATION");
-      expect(detail).toContain("fresh context utilization >= 80%");
+      expect(detail).toMatch(/finding id:\s+health-critical/i);
+      expect(detail).toContain("fresh context utilization >= 95% (critical at >= 99%)");
       expect(detail).toContain("context-usage");
       expect(detail).toContain("node-guard");
       expect(resolveEscapeAction({ type: "key", key: "escape" }, view.get())).toEqual({ type: "health-close" });

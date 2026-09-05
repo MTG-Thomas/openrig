@@ -325,7 +325,7 @@ describe("deterministic health detectors", () => {
     const scope = { type: "seat", rigId: "rig-a", seatId: "seat-a" } as const;
     const freshPressure = adaptContextUsageEvidence("seat-a", {
       availability: "known", reason: null, source: "codex_token_count_jsonl",
-      usedPercentage: 97, remainingPercentage: 3, contextWindowSize: 250_000,
+      usedPercentage: 96, remainingPercentage: 4, contextWindowSize: 250_000,
       totalInputTokens: 205_000, totalOutputTokens: 5_000, currentUsage: null,
       transcriptPath: null, sessionId: "session-a", sessionName: "seat-a@rig-a",
       sampledAt: "2026-09-03T10:30:00Z", fresh: true,
@@ -335,13 +335,36 @@ describe("deterministic health detectors", () => {
       kind: "context-pressure" as const,
       sourceName: "codex_token_count_jsonl",
       continuity: "resumed",
+      warningPercent: 95,
+      criticalPercent: 99,
     };
     const active = evaluateHealthDetectors([base]);
     expect(active).toHaveLength(1);
     expect(active[0]).toMatchObject({ detector: "context.pressure", status: "active", category: "context" });
-    expect(active[0]).toMatchObject({ severity: "critical" });
-    expect(active[0]?.explanation).toContain("97%");
+    expect(active[0]).toMatchObject({ severity: "warning" });
+    expect(active[0]?.threshold).toContain("95%");
+    expect(active[0]?.threshold).toContain("99%");
+    expect(active[0]?.explanation).toContain("96%");
     expect(active[0]?.explanation).toContain("continuity is resumed");
+
+    const criticalEvidence = adaptContextUsageEvidence("seat-a", {
+      availability: "known", reason: null, source: "codex_token_count_jsonl",
+      usedPercentage: 99, remainingPercentage: 1, contextWindowSize: 250_000,
+      totalInputTokens: 240_000, totalOutputTokens: 5_000, currentUsage: null,
+      transcriptPath: null, sessionId: "session-a", sessionName: "seat-a@rig-a",
+      sampledAt: "2026-09-03T10:40:00Z", fresh: true,
+    }, 1);
+    const criticalSource = boundedSource({
+      evidence: [freshPressure, criticalEvidence],
+      startedAt: "2026-09-03T10:00:00Z",
+      endedAt: "2026-09-03T11:00:00Z",
+    });
+    const critical = evaluateHealthDetectors([{
+      ...base,
+      source: criticalSource,
+      lastObservedAt: "2026-09-03T10:40:00Z",
+    }])[0]!;
+    expect(critical).toMatchObject({ id: active[0]!.id, status: "active", severity: "critical" });
 
     const clearedEvidence = adaptContextUsageEvidence("seat-a", {
       availability: "known", reason: null, source: "codex_token_count_jsonl",
@@ -349,9 +372,9 @@ describe("deterministic health detectors", () => {
       totalInputTokens: 70_000, totalOutputTokens: 5_000, currentUsage: null,
       transcriptPath: null, sessionId: "session-a", sessionName: "seat-a@rig-a",
       sampledAt: "2026-09-03T10:50:00Z", fresh: true,
-    }, 1);
+    }, 2);
     const clearSource = boundedSource({
-      evidence: [freshPressure, clearedEvidence],
+      evidence: [freshPressure, criticalEvidence, clearedEvidence],
       startedAt: "2026-09-03T10:00:00Z",
       endedAt: "2026-09-03T11:00:00Z",
     });
@@ -360,13 +383,13 @@ describe("deterministic health detectors", () => {
 
     const laterPressure = adaptContextUsageEvidence("seat-a", {
       availability: "known", reason: null, source: "codex_token_count_jsonl",
-      usedPercentage: 90, remainingPercentage: 10, contextWindowSize: 250_000,
+      usedPercentage: 96, remainingPercentage: 4, contextWindowSize: 250_000,
       totalInputTokens: 220_000, totalOutputTokens: 5_000, currentUsage: null,
       transcriptPath: null, sessionId: "session-a", sessionName: "seat-a@rig-a",
       sampledAt: "2026-09-03T10:55:00Z", fresh: true,
-    }, 2);
+    }, 3);
     const restartedSource = boundedSource({
-      evidence: [freshPressure, clearedEvidence, laterPressure],
+      evidence: [freshPressure, criticalEvidence, clearedEvidence, laterPressure],
       startedAt: "2026-09-03T10:00:00Z",
       endedAt: "2026-09-03T11:00:00Z",
     });
@@ -557,7 +580,7 @@ describe("daemon health projection route", () => {
         totalOutputTokens: 5000,
         usedPercentage: 99,
       }, sampleAt(-20));
-      writeUsage(84, 0);
+      writeUsage(96, 0);
 
       const list = await setup.app.request(`/api/health?scope_type=seat&scope_id=${node.id}&limit=1`);
       expect(list.status).toBe(200);
@@ -590,7 +613,7 @@ describe("daemon health projection route", () => {
       });
 
       const first = body.records[0]!;
-      writeUsage(85, 10);
+      writeUsage(97, 10);
       const continuing = (await (await setup.app.request(
         `/api/health?scope_type=seat&scope_id=${node.id}`,
       )).json()) as typeof body;
@@ -601,6 +624,17 @@ describe("daemon health projection route", () => {
         severity: "warning",
       });
 
+      writeUsage(99, 20);
+      const critical = (await (await setup.app.request(
+        `/api/health?scope_type=seat&scope_id=${node.id}`,
+      )).json()) as typeof body;
+      expect(critical.records[0]).toMatchObject({
+        id: first.id,
+        startedAt: first.startedAt,
+        status: "active",
+        severity: "critical",
+      });
+
       const detail = await setup.app.request(`/api/health/${first.id}`);
       expect(detail.status).toBe(200);
       expect(await detail.json()).toMatchObject({
@@ -609,13 +643,13 @@ describe("daemon health projection route", () => {
         scope: first.scope,
       });
 
-      writeUsage(30, 20);
+      writeUsage(30, 30);
       const cleared = (await (await setup.app.request(
         `/api/health?scope_type=seat&scope_id=${node.id}`,
       )).json()) as typeof body;
       expect(cleared.records[0]).toMatchObject({ id: first.id, status: "cleared" });
 
-      writeUsage(90, 30);
+      writeUsage(96, 40);
       const restarted = (await (await setup.app.request(
         `/api/health?scope_type=seat&scope_id=${node.id}`,
       )).json()) as typeof body;

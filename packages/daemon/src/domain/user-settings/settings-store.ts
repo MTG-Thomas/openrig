@@ -106,6 +106,8 @@ export const SETTINGS_VALID_KEYS = [
   "context.system_world",
   "skills.root",
   "onboarding.default_pack.enabled",
+  "health.context_pressure.warning_percent",
+  "health.context_pressure.critical_percent",
   "files.allowlist",
   "progress.scan_roots",
   "ui.preview.refresh_interval_seconds",
@@ -232,6 +234,8 @@ const ENV_MAP: Record<SettingsValidKey, { primary: string; legacy?: string }> = 
   "context.system_world": { primary: "OPENRIG_CONTEXT_SYSTEM_WORLD" },
   "skills.root": { primary: "OPENRIG_SKILLS_ROOT" },
   "onboarding.default_pack.enabled": { primary: "OPENRIG_ONBOARDING_DEFAULT_PACK_ENABLED" },
+  "health.context_pressure.warning_percent": { primary: "OPENRIG_HEALTH_CONTEXT_PRESSURE_WARNING_PERCENT" },
+  "health.context_pressure.critical_percent": { primary: "OPENRIG_HEALTH_CONTEXT_PRESSURE_CRITICAL_PERCENT" },
   "files.allowlist": { primary: "OPENRIG_FILES_ALLOWLIST" },
   "progress.scan_roots": { primary: "OPENRIG_PROGRESS_SCAN_ROOTS" },
   "ui.preview.refresh_interval_seconds": { primary: "OPENRIG_UI_PREVIEW_REFRESH_INTERVAL_SECONDS" },
@@ -310,6 +314,8 @@ const KEY_TO_PATH: Record<SettingsValidKey, string[]> = {
   "context.system_world": ["context", "systemWorld"],
   "skills.root": ["skills", "root"],
   "onboarding.default_pack.enabled": ["onboarding", "defaultPack", "enabled"],
+  "health.context_pressure.warning_percent": ["health", "contextPressure", "warningPercent"],
+  "health.context_pressure.critical_percent": ["health", "contextPressure", "criticalPercent"],
   "files.allowlist": ["files", "allowlist"],
   "progress.scan_roots": ["progress", "scanRoots"],
   "ui.preview.refresh_interval_seconds": ["ui", "preview", "refreshIntervalSeconds"],
@@ -566,6 +572,8 @@ function getDefaultValue(key: SettingsValidKey, workspaceRoot: string): string |
     case "context.system_world": return "default";
     case "skills.root": return DEFAULT_SKILLS_ROOT;
     case "onboarding.default_pack.enabled": return true;
+    case "health.context_pressure.warning_percent": return 95;
+    case "health.context_pressure.critical_percent": return 99;
     // Preview Terminal v0 (PL-018) defaults — match cli/src/config-store.ts.
     case "ui.preview.refresh_interval_seconds": return 3;
     case "ui.preview.max_pins": return 4;
@@ -661,7 +669,21 @@ function positiveIntegerConstraint(key: string) {
   };
 }
 
+function percentageConstraint(key: string) {
+  return (raw: string, coerced: string | number | boolean): void => {
+    if (!/^\d+$/.test((raw ?? "").trim())
+      || typeof coerced !== "number"
+      || !Number.isInteger(coerced)
+      || coerced < 1
+      || coerced > 100) {
+      throw new Error(`Invalid value for ${key}: must be an integer in [1, 100], got "${raw}"`);
+    }
+  };
+}
+
 const KEY_CONSTRAINTS: Partial<Record<SettingsValidKey, (raw: string, coerced: string | number | boolean) => void>> = {
+  "health.context_pressure.warning_percent": percentageConstraint("health.context_pressure.warning_percent"),
+  "health.context_pressure.critical_percent": percentageConstraint("health.context_pressure.critical_percent"),
   "policies.idle_gate_qitem.scan_interval_seconds": positiveIntegerConstraint("policies.idle_gate_qitem.scan_interval_seconds"),
   "policies.idle_gate_qitem.active_wake_interval_seconds": positiveIntegerConstraint("policies.idle_gate_qitem.active_wake_interval_seconds"),
   "policies.idle_gate_qitem.auto_register": (raw) => {
@@ -794,6 +816,11 @@ export interface ClaudeCompactionPolicy {
   postRestoreAuditInstruction: string;
 }
 
+export interface ContextPressurePolicy {
+  warningPercent: number;
+  criticalPercent: number;
+}
+
 export interface ResolvedConfig {
   skillsRoot: string;
   contextRoot: string;
@@ -831,6 +858,33 @@ export class SettingsStore {
     const fc = fileConfig ?? this.readConfigFile();
     assertNoRemovedContextSetting(fc);
     const wr = workspaceRoot ?? this.resolveWorkspaceRootRaw(fc);
+    if (key === "health.context_pressure.warning_percent" || key === "health.context_pressure.critical_percent") {
+      return this.resolveContextPressurePair(fc, wr)[key];
+    }
+    return this.resolveOneUnpaired(key, fc, wr);
+  }
+
+  private resolveContextPressurePair(
+    fileConfig: Record<string, unknown>,
+    workspaceRoot: string,
+  ): Record<"health.context_pressure.warning_percent" | "health.context_pressure.critical_percent", ResolvedSetting> {
+    const warningKey = "health.context_pressure.warning_percent" as const;
+    const criticalKey = "health.context_pressure.critical_percent" as const;
+    const warning = this.resolveOneUnpaired(warningKey, fileConfig, workspaceRoot);
+    const critical = this.resolveOneUnpaired(criticalKey, fileConfig, workspaceRoot);
+    if ((warning.value as number) < (critical.value as number)) {
+      return { [warningKey]: warning, [criticalKey]: critical };
+    }
+    process.stderr.write(
+      `[openrig-settings] context-pressure policy rejected: warning (${warning.value}) must be less than critical (${critical.value}); falling back to 95/99 defaults\n`,
+    );
+    return {
+      [warningKey]: { value: 95, source: "default", defaultValue: 95 },
+      [criticalKey]: { value: 99, source: "default", defaultValue: 99 },
+    };
+  }
+
+  private resolveOneUnpaired(key: SettingsValidKey, fc: Record<string, unknown>, wr: string): ResolvedSetting {
     const defaultValue = getDefaultValue(key, wr);
     // Slice 27 BLOCKING-FIX-2 — env override is validated; on invalid
     // env, drop the override + warn so the operator sees the
@@ -924,6 +978,17 @@ export class SettingsStore {
     };
   }
 
+  /** Fresh-read context-pressure detector policy; changes apply to the next projection. */
+  resolveContextPressurePolicy(): ContextPressurePolicy {
+    const fc = this.readConfigFile();
+    const wr = this.resolveWorkspaceRootRaw(fc);
+    const pair = this.resolveContextPressurePair(fc, wr);
+    return {
+      warningPercent: pair["health.context_pressure.warning_percent"].value as number,
+      criticalPercent: pair["health.context_pressure.critical_percent"].value as number,
+    };
+  }
+
   // GHOST-STAGE (d) twin of the CLI ConfigStore guard: verify-readback + fail-loud. After a write,
   // re-read this.configPath (the canonical config) and confirm the value persisted; a mismatch means
   // the write silently did not take, so REFUSE loudly rather than report a phantom success
@@ -969,6 +1034,15 @@ export class SettingsStore {
     const wr = this.resolveWorkspaceRootRaw(fc);
     const coerced = coerceAndValidate(key, value, wr);
     setNestedValue(fc, KEY_TO_PATH[key], coerced);
+    if (key === "health.context_pressure.warning_percent" || key === "health.context_pressure.critical_percent") {
+      const warning = getNestedValue(fc, KEY_TO_PATH["health.context_pressure.warning_percent"])
+        ?? getDefaultValue("health.context_pressure.warning_percent", wr);
+      const critical = getNestedValue(fc, KEY_TO_PATH["health.context_pressure.critical_percent"])
+        ?? getDefaultValue("health.context_pressure.critical_percent", wr);
+      if ((warning as number) >= (critical as number)) {
+        throw new Error(`Invalid context-pressure policy: warning (${warning}) must be less than critical (${critical})`);
+      }
+    }
     mkdirSync(path.dirname(this.configPath), { recursive: true });
     writeFileSync(this.configPath, JSON.stringify(fc, null, 2) + "\n", "utf-8");
     this.verifyPersisted(KEY_TO_PATH[key], coerced);

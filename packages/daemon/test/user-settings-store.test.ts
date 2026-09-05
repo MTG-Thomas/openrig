@@ -33,6 +33,8 @@ function clearEnv(): () => void {
     "OPENRIG_WORKSPACE_SPECS_ROOT", "OPENRIG_DOGFOOD_EVIDENCE_ROOT",
     "OPENRIG_WORKSPACE_PROJECTS_ROOT", "OPENRIG_WORKSPACE_CATALOG_PATH",
     "OPENRIG_CONTEXT_ROOT", "OPENRIG_CONTEXT_SYSTEM_WORLD", "OPENRIG_CONTEXT_PACKS_ROOT",
+    "OPENRIG_HEALTH_CONTEXT_PRESSURE_WARNING_PERCENT",
+    "OPENRIG_HEALTH_CONTEXT_PRESSURE_CRITICAL_PERCENT",
     "OPENRIG_SKILLS_ROOT",
     "OPENRIG_FILES_ALLOWLIST", "OPENRIG_PROGRESS_SCAN_ROOTS",
     "OPENRIG_UI_PREVIEW_REFRESH_INTERVAL_SECONDS",
@@ -106,6 +108,8 @@ describe("SettingsStore (User Settings v0)", () => {
       "context.system_world",
       "skills.root",
       "onboarding.default_pack.enabled",
+      "health.context_pressure.warning_percent",
+      "health.context_pressure.critical_percent",
       "files.allowlist", "progress.scan_roots",
       "ui.preview.refresh_interval_seconds", "ui.preview.max_pins", "ui.preview.default_lines",
       // OPR.0.4.0.1 — global live-terminal cap.
@@ -181,6 +185,28 @@ describe("SettingsStore (User Settings v0)", () => {
     writeFileSync(configPath, "{}\n");
     process.env["OPENRIG_CONTEXT_PACKS_ROOT"] = "/legacy-env";
     expect(() => store.resolveOne("context.root")).toThrow(/OPENRIG_CONTEXT_PACKS_ROOT.*OPENRIG_CONTEXT_ROOT/i);
+  });
+
+  it("resolves mutable 95/99 context-pressure thresholds and rejects invalid order", () => {
+    const store = new SettingsStore(configPath);
+    expect(store.resolveContextPressurePolicy()).toEqual({ warningPercent: 95, criticalPercent: 99 });
+    expect(store.resolveOne("health.context_pressure.warning_percent")).toMatchObject({
+      value: 95,
+      source: "default",
+      defaultValue: 95,
+    });
+
+    store.set("health.context_pressure.critical_percent", "100");
+    store.set("health.context_pressure.warning_percent", "97");
+    expect(store.resolveContextPressurePolicy()).toEqual({ warningPercent: 97, criticalPercent: 100 });
+    expect(() => store.set("health.context_pressure.critical_percent", "97")).toThrow(/warning.*critical/i);
+    for (const raw of ["0", "101", "95.5", "95junk"]) {
+      expect(() => store.set("health.context_pressure.warning_percent", raw)).toThrow(/integer/i);
+    }
+
+    store.reset("health.context_pressure.warning_percent");
+    store.reset("health.context_pressure.critical_percent");
+    expect(store.resolveContextPressurePolicy()).toEqual({ warningPercent: 95, criticalPercent: 99 });
   });
 
   it("resolves the System World selector through default, file, and env provenance", () => {

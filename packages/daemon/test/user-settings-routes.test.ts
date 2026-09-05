@@ -102,9 +102,20 @@ describe("config routes (User Settings v0)", () => {
     // + 4 S01 (queue.wake_retry_interval_seconds / wake_retry_cap /
     //   wake_unconfirmed_window_minutes / wake_swap_grace_seconds)
     // + 1 OPR.0.5.9.4 (skills.root)
-    // + 1 OPR.0.5.9.5 (context.system_world) → 66 total.
-    expect(Object.keys(body.settings).length).toBe(66);
+    // + 1 OPR.0.5.9.5 (context.system_world)
+    // + 2 OPR.0.5.10.7 context-pressure policy thresholds → 68 total.
+    expect(Object.keys(body.settings).length).toBe(68);
     expect(body.settings["daemon.port"]?.source).toBe("default");
+    expect(body.settings["health.context_pressure.warning_percent"]).toMatchObject({
+      value: 95,
+      source: "default",
+      defaultValue: 95,
+    });
+    expect(body.settings["health.context_pressure.critical_percent"]).toMatchObject({
+      value: 99,
+      source: "default",
+      defaultValue: 99,
+    });
     expect(body.settings["ui.preview.refresh_interval_seconds"]?.value).toBe(3);
     expect(body.settings["ui.preview.max_pins"]?.value).toBe(4);
     expect(body.settings["ui.preview.default_lines"]?.value).toBe(50);
