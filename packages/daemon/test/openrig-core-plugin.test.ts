@@ -260,6 +260,18 @@ describe("openrig-core plugin — skills (HG-2.1 skill content per agentskills.i
     expect(index).toContain("openrig-user");
   });
 
+  it("the shipped OpenRig user guidance teaches a bounded read-only health self-scout", () => {
+    const guide = fs.readFileSync(
+      nodePath.join(PLUGIN_ROOT, "skills", "openrig-user", "SKILL.md"),
+      "utf-8",
+    );
+    expect(guide).toContain("rig health --json");
+    expect(guide).toContain("rig health explain <finding-id> --json");
+    expect(guide).toContain("not a healthy assertion");
+    expect(guide).toContain("Never read raw SQLite");
+    expect(guide).toContain("read-only");
+  });
+
   it("the operating model teaches its core home and authored checklist marks without reversing the scaffold", () => {
     const skillRoot = nodePath.join(PLUGIN_ROOT, "skills", "openrig-operating-model");
     const skill = fs.readFileSync(nodePath.join(skillRoot, "SKILL.md"), "utf-8");

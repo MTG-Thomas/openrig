@@ -52,6 +52,7 @@ import { preflightCommand } from "./commands/preflight.js";
 import { authCommand } from "./commands/auth.js";
 import { providerCommand } from "./commands/provider.js";
 import { usageCommand } from "./commands/usage.js";
+import { healthCommand, type HealthDeps } from "./commands/health.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { expandCommand } from "./commands/expand.js";
 import { addMemberCommand } from "./commands/add.js";
@@ -154,6 +155,7 @@ export interface ProgramDeps {
   seatDeps?: SeatDeps;
   rigModeDeps?: RigModeDeps;
   startupProofDeps?: StartupProofDeps;
+  healthDeps?: HealthDeps;
   startDeps?: StartDeps;
   configPath?: string;
 }
@@ -228,6 +230,7 @@ export function createProgram(depsOverride?: ProgramDeps): Command {
   program.addCommand(authCommand());
   program.addCommand(providerCommand());
   program.addCommand(usageCommand());
+  program.addCommand(healthCommand(depsOverride?.healthDeps));
   program.addCommand(doctorCommand());
   program.addCommand(expandCommand(depsOverride?.expandDeps));
   program.addCommand(addMemberCommand(depsOverride?.addDeps));

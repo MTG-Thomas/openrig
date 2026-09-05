@@ -717,6 +717,31 @@ rig env logs <rig>
 rig env down <rig>
 ```
 
+### Bounded agent self-scout
+
+Use the typed health projection before reading raw coordination history. The
+default query is the current seat; widen deliberately when the evidence points
+beyond it:
+
+```bash
+rig health --json
+rig health --rig <rig-id> --json
+rig health --instance --json
+rig health explain <finding-id> --json
+```
+
+Follow the returned stable finding ID and `suggestedInspection`. Use `explain`
+when the summary matters: it returns the same canonical record with its bounded
+window, freshness, literal detector rule, evidence references, and next
+inspection. Human output projects those same fields; it does not calculate a
+second score.
+
+An empty result means only that no records matched the bounded query. It is
+**not a healthy assertion**. Stale, unavailable, contradictory, and
+indeterminate evidence stays explicit. Never read raw SQLite for a self-scout,
+and never turn a finding into an acknowledgement, notification, queue row, or
+remediation automatically: `rig health` is strictly read-only.
+
 ## Transcript and Communication
 
 ### Transcript access
