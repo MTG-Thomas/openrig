@@ -40,12 +40,22 @@ function tokenFor(record: HealthRecord): Token {
   return "info";
 }
 
-function stateLabel(record: HealthRecord): string {
+function conditionLabel(record: HealthRecord): string | null {
   if (record.status === "indeterminate") return "INDETERMINATE";
   if (record.freshness.state === "stale") return "STALE";
   if (record.freshness.state === "unavailable" || record.freshness.state === "contradictory") return "INDETERMINATE";
   if (record.status === "cleared") return "CLEARED";
-  return record.severity.toUpperCase();
+  return null;
+}
+
+function stateLabel(record: HealthRecord): string {
+  const condition = conditionLabel(record);
+  return `${record.severity.toUpperCase()}${condition ? ` ${condition}` : ""}`;
+}
+
+function signalLabel(record: HealthRecord): string {
+  const condition = conditionLabel(record);
+  return `${condition ? `${condition} · ` : ""}${record.summary}`;
 }
 
 function clip(text: string, width: number): string {
@@ -174,8 +184,8 @@ function healthColumnWidths(width: number) {
 function healthTableRow(record: HealthRecord, snap: FleetSnapshot, width: number): ContentLine {
   const { wide, sevWidth, signalWidth, scopeWidth, ageWidth, confWidth, evidenceWidth } = healthColumnWidths(width);
   const values = [
-    cell(stateLabel(record), sevWidth),
-    cell(record.summary, signalWidth),
+    cell(record.severity.toUpperCase(), sevWidth),
+    cell(signalLabel(record), signalWidth),
     cell(scopeName(record, snap), scopeWidth),
     cell(age(record), ageWidth),
     ...(wide ? [cell(record.confidence, confWidth), cell(evidenceSummary(record), evidenceWidth)] : []),

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { demoSnapshot } from "../src/demo-data.js";
 import { parseCommand } from "../src/grammar.js";
+import { healthListLines } from "../src/health/health-model.js";
 import { resolveEscapeAction } from "../src/input.js";
 import { renderScreen } from "../src/render.js";
 import { createViewState } from "../src/state.js";
@@ -153,6 +154,24 @@ describe("fleet/system health TUI", () => {
       view.dispatch(parseCommand("tab health"));
       expect(renderScreen(view.get(), snap, { cols: 120, rows: 50, colorMode: "none" }).lines.join("\n")).toMatch(expected);
     }
+  });
+
+  it.each([129, 89, 58])("retains severity beside stale and indeterminate truth at content width %i", (width) => {
+    const snap = healthSnapshot();
+    snap.health!.records = [
+      record({ id: "stale-critical", seatId: "node-guard", severity: "critical", freshness: "stale", summary: "Stale signal." }),
+      record({ id: "unknown-warning", seatId: "node-driver", severity: "warning", status: "indeterminate", freshness: "contradictory", summary: "Unknown signal." }),
+    ];
+    const lines = healthListLines(snap, { kind: "rig", rigId: "openrig-build", rigName: "openrig-build", local: true }, width);
+    const findingLine = (findingId: string) => {
+      return lines.find((line) => line.action?.type === "health-open" && line.action.findingId === findingId)?.text ?? "";
+    };
+    const stale = findingLine("stale-critical");
+    const unknown = findingLine("unknown-warning");
+    expect(stale).toContain("CRITICAL");
+    expect(stale).toContain("STALE");
+    expect(unknown).toContain("WARNING");
+    expect(unknown).toContain("INDETERMINATE");
   });
 
   it("preserves plain geometry in color and freezes fully under reduced motion", () => {
