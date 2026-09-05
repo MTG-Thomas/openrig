@@ -644,10 +644,17 @@ describe("daemon health projection route", () => {
       });
 
       writeUsage(30, 30);
-      const cleared = (await (await setup.app.request(
+      const currentAfterClear = (await (await setup.app.request(
         `/api/health?scope_type=seat&scope_id=${node.id}`,
       )).json()) as typeof body;
+      expect(currentAfterClear).toMatchObject({ total: 0, records: [] });
+
+      const cleared = (await (await setup.app.request(
+        `/api/health?scope_type=seat&scope_id=${node.id}&status=cleared`,
+      )).json()) as typeof body;
       expect(cleared.records[0]).toMatchObject({ id: first.id, status: "cleared" });
+      expect(await (await setup.app.request(`/api/health/${first.id}`)).json())
+        .toMatchObject({ id: first.id, status: "cleared" });
 
       writeUsage(96, 40);
       const restarted = (await (await setup.app.request(

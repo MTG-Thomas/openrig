@@ -129,7 +129,7 @@ export class HealthProjectionService {
       (query.scopeType === undefined || record.scope.type === query.scopeType)
       && (query.scopeId === undefined || healthScopeId(record.scope) === query.scopeId)
       && (query.severity === undefined || record.severity === query.severity)
-      && (query.status === undefined || record.status === query.status));
+      && (query.status === undefined ? record.status !== "cleared" : record.status === query.status));
     return {
       schema: HEALTH_LIST_SCHEMA,
       evaluatedAt: newestEvaluatedAt(evaluated),
