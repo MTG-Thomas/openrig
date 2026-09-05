@@ -339,7 +339,7 @@ function evaluateContext(
   }
   const firstPressure = samples[pressureIndex]!;
   const status: HealthStatus = active ? "active" : "cleared";
-  const severity: HealthSeverity = Math.max(...samples.map((sample) => sample.usedPercentage!)) >= CONTEXT_CRITICAL_PERCENT
+  const severity: HealthSeverity = Math.max(...samples.slice(pressureIndex).map((sample) => sample.usedPercentage!)) >= CONTEXT_CRITICAL_PERCENT
     ? "critical"
     : "warning";
   return [record({

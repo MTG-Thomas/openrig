@@ -323,7 +323,7 @@ describe("deterministic health detectors", () => {
     const scope = { type: "seat", rigId: "rig-a", seatId: "seat-a" } as const;
     const freshPressure = adaptContextUsageEvidence("seat-a", {
       availability: "known", reason: null, source: "codex_token_count_jsonl",
-      usedPercentage: 84, remainingPercentage: 16, contextWindowSize: 250_000,
+      usedPercentage: 97, remainingPercentage: 3, contextWindowSize: 250_000,
       totalInputTokens: 205_000, totalOutputTokens: 5_000, currentUsage: null,
       transcriptPath: null, sessionId: "session-a", sessionName: "seat-a@rig-a",
       sampledAt: "2026-09-03T10:30:00Z", fresh: true,
@@ -337,7 +337,8 @@ describe("deterministic health detectors", () => {
     const active = evaluateHealthDetectors([base]);
     expect(active).toHaveLength(1);
     expect(active[0]).toMatchObject({ detector: "context.pressure", status: "active", category: "context" });
-    expect(active[0]?.explanation).toContain("84%");
+    expect(active[0]).toMatchObject({ severity: "critical" });
+    expect(active[0]?.explanation).toContain("97%");
     expect(active[0]?.explanation).toContain("continuity is resumed");
 
     const clearedEvidence = adaptContextUsageEvidence("seat-a", {
@@ -373,6 +374,7 @@ describe("deterministic health detectors", () => {
       lastObservedAt: "2026-09-03T10:55:00Z",
     }])[0]!;
     expect(restarted).toMatchObject({ status: "active", startedAt: "2026-09-03T10:55:00Z" });
+    expect(restarted).toMatchObject({ severity: "warning" });
     expect(restarted.id).not.toBe(active[0]!.id);
 
     const staleSource = boundedSource({
