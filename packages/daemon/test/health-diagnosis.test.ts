@@ -351,3 +351,35 @@ it("rechecks evidence availability after submission and refuses empty, non-file 
     expect(t.service.list()).toHaveLength(0);
   }
 });
+
+
+it("binds authority categories and slice IDs to the finding scope", async () => {
+  const t = await checkpointSetup(); const workspace = join(t.home, "workspace");
+  const write = (path: string, content: string) => { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, content); return path; };
+  const project = write(join(workspace, "SPEC.md"), "# Current project");
+  const mission = write(join(workspace, "missions/current/SPEC.md"), "# Current mission");
+  const missionYaml = write(join(workspace, "missions/current/mission.yaml"), "metadata: {name: current}");
+  const spec = write(join(workspace, "missions/current/slices/09-current/SPEC.md"), "---\nid: OPR.9\nmission: current\n---\n# Current slice");
+  const yaml = write(join(workspace, "missions/current/slices/09-current/slice.yaml"), "schema: openrig.slice/v0alpha1");
+  const otherMission = write(join(workspace, "missions/other/SPEC.md"), "# Unrelated mission marker");
+  const sibling = write(join(workspace, "missions/current/slices/08-sibling/SPEC.md"), "---\nid: OPR.8\n---\n# Sibling marker");
+  const missingId = write(join(workspace, "missions/current/slices/OPR.9/SPEC.md"), "# Directory name is not a declared ID marker");
+  const malformed = write(join(workspace, "missions/current/slices/malformed/SPEC.md"), "---\nid: [broken\n---\n# Malformed marker");
+  const cp = { ...t.cp, scope: { type: "slice" as const, projectId: "project", missionId: "current", sliceId: "OPR.9" },
+    authorityPaths: { project: [project, mission], mission: [mission, otherMission, spec], slice: [spec, yaml, mission, otherMission, sibling, missingId, malformed] } };
+  t.source.submit(cp, "author@rig");
+  const finding = t.projection.list().records[0]!;
+  const results = healthAuthority(workspace, t.source, finding);
+  expect(results.find((a) => a.path === otherMission)).toMatchObject({ state: "unavailable" });
+  // Scope category stays observable when a path is submitted at two different levels.
+  const entry = (level: string, path: string) => results.find((a) => (a as { level?: string }).level === level && a.path === path);
+  for (const [level, path] of [["project", project], ["mission", mission], ["mission", missionYaml], ["slice", spec], ["slice", yaml]]) expect(entry(level!, path!)).toMatchObject({ state: "available" });
+  for (const [level, path] of [["project", mission], ["mission", spec], ["mission", otherMission], ["slice", mission], ["slice", otherMission], ["slice", sibling], ["slice", missingId], ["slice", malformed]]) expect(entry(level!, path!)).toMatchObject({ state: "unavailable" });
+  for (const marker of ["Unrelated mission marker", "Sibling marker", "declared ID marker", "Malformed marker"]) expect(JSON.stringify(results)).not.toContain(marker);
+  write(spec, "---\nid: OPR.8\nmission: current\n---\n# Changed identity marker");
+  const changed = healthAuthority(workspace, t.source, finding);
+  expect(changed.find((a) => a.path === yaml)).toMatchObject({ state: "unavailable" });
+  expect(JSON.stringify(changed)).not.toContain("Changed identity marker");
+  const unscoped = healthAuthority(workspace, t.source, { ...finding, scope: { type: "rig", rigId: "rig" } });
+  expect(unscoped.filter((a) => (a as { level?: string }).level !== "project").every((a) => a.state === "unavailable")).toBe(true);
+});

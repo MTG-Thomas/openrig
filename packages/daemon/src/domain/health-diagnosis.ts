@@ -8,7 +8,7 @@ export interface HealthDisposition {
   verdict: typeof DIAGNOSIS_VERDICTS[number]; causalStart: string | null;
   steering: string; uncertainty: string; evidenceRefs: string[];
 }
-export interface AuthorityReference { path: string; state: "available" | "unavailable"; sha256?: string; content?: string; }
+export interface AuthorityReference { level?: "project" | "mission" | "slice"; path: string; state: "available" | "unavailable"; sha256?: string; content?: string; }
 interface Packet { schema: "openrig.health-diagnosis/v0alpha1"; finding: HealthRecord; policyVersion: string; authority: AuthorityReference[]; presentedAt: string; instructions: string; }
 interface Receipt { kind: "health-diagnosis"; at: string; action: "presented" | "observed" | "disposition"; finding?: HealthRecord; disposition?: HealthDisposition; authority?: AuthorityReference[]; }
 interface DiagnosisAction { qitemId: string; findingId: string; action: "create" | "represent" | "observe" | "retained" | "deferred"; reason?: string; }

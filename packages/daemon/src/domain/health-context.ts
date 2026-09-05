@@ -1,5 +1,6 @@
 import { readFileSync, statSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
 import { createHash } from "node:crypto";
 import { resolveAllowedFile } from "./files/path-safety.js";
 import type { HealthRecord } from "./health-projection.js";
@@ -23,28 +24,46 @@ export function readHealthArtifact(workspace: string, path: string, maxBytes = 1
   } catch { return { path, state: "unavailable" }; }
 }
 
-// Context is the work tree's canonical authority files, never an arbitrary file browser.
-function canonicalAuthorityPath(path: string): boolean {
-  return /^(SPEC\.md|project\.yaml|missions\/[^/]+\/(SPEC\.md|mission\.yaml)|missions\/[^/]+\/slices\/[^/]+\/(SPEC\.md|slice\.yaml))$/.test(path);
+type AuthorityLevel = NonNullable<AuthorityReference["level"]>;
+
+/** Only read a canonical file at the selected work-tree node; aliases are unavailable. */
+function readAuthorityFile(workspace: string, path: string): AuthorityReference {
+  try {
+    const selected = relative(resolve(workspace), resolve(workspace, path));
+    const actual = relative(realpathSync(workspace), realpathSync(resolve(workspace, path)));
+    if (actual !== selected) return { path, state: "unavailable" };
+    return readHealthArtifact(workspace, path, 65536, true);
+  } catch { return { path, state: "unavailable" }; }
 }
 
 export function healthAuthority(workspace: string, checkpoints: HealthCheckpointSource, record: HealthRecord): AuthorityReference[] {
   const lineage = record.evidence.find((e) => e.type === "queue-transition");
   const checkpoint = lineage?.type === "queue-transition" ? checkpoints.entries().find((c) => c.checkpoint.lineageQitemId === lineage.qitemId)?.checkpoint : undefined;
-  const paths = new Set([join(workspace, "SPEC.md"), join(workspace, "project.yaml"),
-    ...Object.values(checkpoint?.authorityPaths ?? {}).flat()]);
-  if (record.scope.type === "mission" || record.scope.type === "slice") {
-    paths.add(join(workspace, "missions", record.scope.missionId, "SPEC.md"));
-    paths.add(join(workspace, "missions", record.scope.missionId, "mission.yaml"));
-  }
-  return [...paths].map((path) => {
+  const scope = record.scope;
+  const mission = (scope.type === "mission" || scope.type === "slice") && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(scope.missionId) ? scope.missionId : null;
+  const groups: Record<AuthorityLevel, string[]> = {
+    project: [join(workspace, "SPEC.md"), join(workspace, "project.yaml"), ...checkpoint?.authorityPaths.project ?? []],
+    mission: [...(mission ? [join(workspace, "missions", mission, "SPEC.md"), join(workspace, "missions", mission, "mission.yaml")] : []), ...checkpoint?.authorityPaths.mission ?? []],
+    slice: checkpoint?.authorityPaths.slice ?? [],
+  };
+  const belongs = (level: AuthorityLevel, path: string): boolean => {
+    const parts = relative(resolve(workspace), resolve(workspace, path)).split("/");
+    if (level === "project") return parts.length === 1 && ["SPEC.md", "project.yaml"].includes(parts[0]!);
+    if (!mission || parts[0] !== "missions" || parts[1] !== mission) return false;
+    if (level === "mission") return parts.length === 3 && ["SPEC.md", "mission.yaml"].includes(parts[2]!);
+    if (scope.type !== "slice" || parts.length !== 5 || parts[2] !== "slices" || !["SPEC.md", "slice.yaml"].includes(parts[4]!)) return false;
+    // Directory names are not slice IDs. The canonical sibling SPEC owns identity.
+    const spec = readAuthorityFile(workspace, join(workspace, ...parts.slice(0, 4), "SPEC.md"));
+    const frontmatter = spec.content?.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
+    if (!frontmatter) return false;
+    const identity = parseYaml(frontmatter) as { id?: unknown; mission?: unknown } | null;
+    return identity?.id === scope.sliceId && (identity.mission === undefined || identity.mission === mission);
+  };
+  return (Object.keys(groups) as AuthorityLevel[]).flatMap((level) => [...new Set(groups[level])].map((path) => {
     try {
-      const selected = relative(resolve(workspace), resolve(workspace, path));
-      const actual = relative(realpathSync(workspace), realpathSync(resolve(workspace, path)));
-      if (!canonicalAuthorityPath(selected) || actual !== selected) return { path, state: "unavailable" };
-      return readHealthArtifact(workspace, path, 65536, true);
-    } catch { return { path, state: "unavailable" }; }
-  });
+      return { ...(belongs(level, path) ? readAuthorityFile(workspace, path) : { path, state: "unavailable" as const }), level };
+    } catch { return { path, state: "unavailable" as const, level }; }
+  }));
 }
 
 /** Connector-specific readiness lives behind the transport-neutral diagnosis port.

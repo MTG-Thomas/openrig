@@ -98,6 +98,12 @@ project/mission/slice documents supplied to the diagnosing agent. Embedded
 context is limited to canonical `SPEC.md` and project/mission/slice YAML files
 at their corresponding work-tree nodes, at most 64 KiB each. Other paths and
 symlink aliases are reported unavailable without embedding their contents.
+Each entry retains its authority level. Project files must be at the configured
+project root; mission files must belong to the finding's mission; slice files
+must also have a sibling `SPEC.md` declaring the finding's slice ID (and matching
+mission when declared). A sibling slice or another mission is unavailable even
+when its filename is canonical. Without mission/slice scope, those authority
+levels remain unavailable.
 
 Checkpoints are audited under `health/checkpoints/history/`; replaying identical
 bytes writes nothing. Later censuses advance observation time. High-to-high
