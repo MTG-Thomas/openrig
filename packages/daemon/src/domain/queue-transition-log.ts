@@ -204,6 +204,23 @@ export class QueueTransitionLog {
     return rows.map((row) => this.rowToTransition(row));
   }
 
+  /** Follow declared handoffs only. Bound the family before materializing its
+   * transitions; cycles converge through UNION, and overflow refuses explicitly. */
+  listForHandoffWindow(qitemId: string, startedAt: string, endedAt: string, limit: number): QueueTransition[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10001) throw new Error("Invalid transition window limit");
+    const start = new Date(startedAt).toISOString();
+    const end = new Date(endedAt).toISOString();
+    const family = this.db.prepare(`WITH RECURSIVE lineage(id) AS (
+      SELECT ? UNION SELECT q.qitem_id FROM queue_items q JOIN lineage l ON q.handed_off_from = l.id
+      WHERE q.ts_created <= ? LIMIT 1001
+    ) SELECT id FROM lineage`).all(qitemId, end) as Array<{ id: string }>;
+    if (family.length > 1000) throw new Error("health_checkpoint_lineage_limit");
+    const rows = this.db.prepare(`SELECT * FROM queue_transitions
+      WHERE qitem_id IN (${family.map(() => "?").join(",")}) AND ts >= ? AND ts <= ?
+      ORDER BY transition_id ASC LIMIT ?`).all(...family.map((r) => r.id), start, end, limit) as QueueTransitionRow[];
+    return rows.map((row) => this.rowToTransition(row));
+  }
+
   listForActor(actorSession: string, limit = 100): QueueTransition[] {
     const rows = this.db
       .prepare(

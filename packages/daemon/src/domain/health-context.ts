@@ -4,6 +4,7 @@ import { parse as parseYaml } from "yaml";
 import { createHash } from "node:crypto";
 import { resolveAllowedFile } from "./files/path-safety.js";
 import type { HealthRecord } from "./health-projection.js";
+import { healthEpisodeId } from "./health-projection.js";
 import type { AuthorityReference } from "./health-diagnosis.js";
 import type { HealthCheckpointSource } from "./health-checkpoints.js";
 import { loadHumanRegistry } from "./gateway/human-registry.js";
@@ -37,8 +38,7 @@ function readAuthorityFile(workspace: string, path: string): AuthorityReference 
 }
 
 export function healthAuthority(workspace: string, checkpoints: HealthCheckpointSource, record: HealthRecord): AuthorityReference[] {
-  const lineage = record.evidence.find((e) => e.type === "queue-transition");
-  const checkpoint = lineage?.type === "queue-transition" ? checkpoints.entries().find((c) => c.checkpoint.lineageQitemId === lineage.qitemId)?.checkpoint : undefined;
+  const checkpoint = record.detector === "process.ceremony-amplification" ? checkpoints.entries().find((c) => healthEpisodeId(record.detector, c.checkpoint.scope, c.episodeStartedAt) === record.id)?.checkpoint : undefined;
   const scope = record.scope;
   const mission = (scope.type === "mission" || scope.type === "slice") && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(scope.missionId) ? scope.missionId : null;
   const groups: Record<AuthorityLevel, string[]> = {

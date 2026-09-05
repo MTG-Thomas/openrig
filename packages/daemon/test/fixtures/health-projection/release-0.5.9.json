@@ -4,6 +4,7 @@
   "cases": {
     "staleConductor": {
       "origin": "release-0.5.9-recorded-incident",
+      "productOutcomeCensus": { "availability": "unavailable", "reason": "This full-day window includes real slice advances but retains no sourced product-outcome census. Transition and auto-unpark identity do not establish a ceremony ratio." },
       "scope": { "type": "mission", "projectId": "openrig", "missionId": "release-0.5.9" },
       "lineage": "qitem-r059-mission-conductor-20260903",
       "window": {

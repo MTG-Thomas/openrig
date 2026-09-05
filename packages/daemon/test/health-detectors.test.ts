@@ -115,7 +115,7 @@ function staleConductorObservations(): HealthDetectorObservation[] {
     sourceOrder,
     transitionId: event.transitionId,
     observedAt: event.observedAt,
-    qitemId: event.blockerId,
+    qitemId: subject.lineage,
     state: "auto-unparked",
   }));
   evidence.push(queueEvidence({
@@ -142,7 +142,7 @@ function staleConductorObservations(): HealthDetectorObservation[] {
       kind: "coordination-lineage",
       lineageId: subject.lineage,
       coordinationTransitions: subject.transitionIds.length,
-      productStateChanges: 1,
+      productStateChanges: null, // The recorded full-day fixture has no product-outcome census.
       boundedAuthority: false,
       reviewReturns: 0,
       candidateChanges: 1,
@@ -184,19 +184,20 @@ function simpleSource(
 }
 
 describe("deterministic health detectors", () => {
-  it("detects only the three source-supported stale-conductor episodes", () => {
+  it("preserves supported conductor signals without inventing a ceremony denominator", () => {
     const records = evaluateHealthDetectors(staleConductorObservations());
     expect(records.map((record) => record.detector)).toEqual([
       "governance.stale-directive",
       "process.ceremony-amplification",
       "process.redundant-wake-storm",
     ]);
-    expect(records.every((record) => record.status === "active")).toBe(true);
+    expect(records.filter((record) => record.detector !== "process.ceremony-amplification").every((record) => record.status === "active")).toBe(true);
+    expect(records.find((record) => record.detector === "process.ceremony-amplification")?.status).toBe("indeterminate");
     expect(records.every((record) => record.confidence === "high")).toBe(true);
     expect(records.every((record) => record.window.startedAt === corpus.cases.staleConductor.window.startedAt)).toBe(true);
     expect(records.every((record) => record.evidence.length > 0)).toBe(true);
     expect(records.find((record) => record.detector === "process.ceremony-amplification")?.explanation)
-      .toContain("257 coordination transitions for 1 product-state change");
+      .toContain("product-outcome census unavailable, so no ratio is computed");
   });
 
   it("does not mistake signed quiescence breadth for ceremony amplification", () => {

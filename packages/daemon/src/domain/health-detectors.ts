@@ -40,7 +40,7 @@ export type HealthDetectorObservation =
       kind: "coordination-lineage";
       lineageId: string;
       coordinationTransitions: number;
-      productStateChanges: number;
+      productStateChanges: number | null;
       boundedAuthority: boolean;
       reviewReturns: number;
       candidateChanges: number;
@@ -134,7 +134,10 @@ export class HealthProjectionService {
       (query.scopeType === undefined || record.scope.type === query.scopeType)
       && (query.scopeId === undefined || healthScopeId(record.scope) === query.scopeId)
       && (query.severity === undefined || record.severity === query.severity)
-      && (query.status === undefined ? record.status !== "cleared" : record.status === query.status));
+      && (query.status === undefined ? record.status !== "cleared" : record.status === query.status))
+      // Reserve visibility for the primary signal before the query cap. A hundred
+      // context samples must not hide ceremony from the default CLI/TUI read.
+      .sort((a, b) => Number(b.detector === "process.ceremony-amplification") - Number(a.detector === "process.ceremony-amplification"));
     return {
       schema: HEALTH_LIST_SCHEMA,
       evaluatedAt: newestEvaluatedAt(evaluated),
@@ -310,18 +313,23 @@ function evaluateCoordination(
   policy: HealthPolicy,
 ): HealthRecord[] {
   const records: HealthRecord[] = [];
-  const denominator = Math.max(observation.productStateChanges, 1);
-  const ratio = observation.coordinationTransitions / denominator;
+  const ratio = observation.productStateChanges === null ? null
+    : observation.coordinationTransitions / Math.max(observation.productStateChanges, 1);
   if (observation.conditionCleared || (!observation.boundedAuthority
     && observation.coordinationTransitions >= policy.thresholds.ceremonyTransitions
-    && ratio >= policy.thresholds.ceremonyRatio)) {
-    records.push(record(observation, {
+    && (ratio === null || ratio >= policy.thresholds.ceremonyRatio))) {
+    records.push(record(ratio === null ? { ...observation, conditionCleared: false } : observation, {
       detector: "process.ceremony-amplification",
       category: "process",
       severity: "warning",
-      summary: `Coordination activity is disproportionate for ${observation.lineageId}.`,
+      ...(ratio === null ? { status: "indeterminate" as const } : {}),
+      summary: ratio === null
+        ? `Ceremony proportionality is indeterminate for ${observation.lineageId}.`
+        : `Coordination activity is disproportionate for ${observation.lineageId}.`,
       threshold: `coordinationTransitions >= ${policy.thresholds.ceremonyTransitions} AND coordinationTransitions / max(productStateChanges, 1) >= ${policy.thresholds.ceremonyRatio} AND boundedAuthority = false`,
-      explanation: `${observation.coordinationTransitions} coordination transitions for ${observation.productStateChanges} product-state change${observation.productStateChanges === 1 ? "" : "s"} in one lineage (${ratio.toFixed(1)}:1).`,
+      explanation: ratio === null
+        ? `${observation.coordinationTransitions} coordination transitions in one lineage; product-outcome census unavailable, so no ratio is computed.`
+        : `${observation.coordinationTransitions} coordination transitions for ${observation.productStateChanges} product-state change${observation.productStateChanges === 1 ? "" : "s"} in one lineage (${ratio.toFixed(1)}:1).`,
       suggestedInspection: `Inspect queue transitions and product checkpoints for ${observation.lineageId}.`,
     }));
   }

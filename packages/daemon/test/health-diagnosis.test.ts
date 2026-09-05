@@ -110,19 +110,21 @@ it("policy changes are versioned and audited, invalid or replayed changes write 
 
 async function checkpointSetup() {
   const t = setup(); let now = "2026-09-04T04:51:31.138Z";
-  const fixture = JSON.parse(readFileSync(new URL("./fixtures/health-projection/release-0.5.9.json", import.meta.url), "utf8"));
-  const subject = fixture.cases.staleConductor;
-  const row = await t.queue.create({ qitemId: subject.lineage, sourceSession: "actor@rig", destinationSession: "owner@rig", body: "real replay lineage", nudge: false });
-  // Reconstruct the fixture's exact dated auto-unpark receipts, not invented timestamps for the un-timed IDs.
+  // Synthetic lifecycle mechanics, not a historical product-outcome calibration.
+  const subject = { lineage: "synthetic-reminder-lineage", scope: { type: "rig" as const, rigId: "fixture" },
+    window: { startedAt: "2026-09-04T04:00:00.000Z" },
+    autoUnparks: Array.from({ length: 52 }, (_, i) => ({ transitionId: 100000 + i, observedAt: new Date(Date.parse("2026-09-04T04:00:00.000Z") + i * 60000).toISOString() })) };
+  const row = await t.queue.create({ qitemId: subject.lineage, sourceSession: "actor@rig", destinationSession: "owner@rig", body: "synthetic replay lineage", nudge: false });
+  // Each transition is explicit; the source must verify the complete census.
   const insert = t.db.prepare("INSERT INTO queue_transitions(transition_id,qitem_id,ts,state,actor_session) VALUES(?,?,?,?,?)");
   for (const event of subject.autoUnparks) insert.run(event.transitionId, row.qitemId, event.observedAt, "pending", "watchdog");
   const workspace = join(t.home, "workspace"); mkdirSync(workspace);
-  const evidencePath = join(workspace, "release-0.5.9.json");
-  writeFileSync(evidencePath, JSON.stringify(fixture));
+  const evidencePath = join(workspace, "synthetic-census.json");
+  writeFileSync(evidencePath, JSON.stringify({ synthetic: true, outcomes: ["closure"], expectation: "One bounded outcome check", boundedAuthority: false }));
   const cp: HealthCheckpoint = { schema: "openrig.health-checkpoint/v0alpha1", lineageQitemId: row.qitemId, scope: subject.scope,
     startedAt: subject.window.startedAt, observedAt: now, transitionIds: subject.autoUnparks.map((x: { transitionId: number }) => x.transitionId),
     productOutcomes: [{ id: "closure", observedAt: now, evidenceRef: evidencePath }],
-    productCensusRef: evidencePath, boundedAuthority: { applies: false, evidenceRef: evidencePath },
+    productCensusRef: evidencePath, sdlc: { expectation: "Keep the graph moving; wait on named live boundaries", evidenceRef: evidencePath }, boundedAuthority: { applies: false, evidenceRef: evidencePath },
     authorityPaths: { project: [], mission: [], slice: [] } };
   const source = new HealthCheckpointSource(t.home, t.queue, t.policy, () => now);
   const projection = new HealthProjectionService(source, () => t.policy.read());
@@ -130,7 +132,7 @@ async function checkpointSetup() {
   return { ...t, source, projection, service, cp, time: (value: string) => { now = value; } };
 }
 
-it("replays dated real ceremony receipts through live checkpoint ingestion, clear and recurrence without a wake storm", async () => {
+it("drives synthetic checkpoint ingestion, clear and recurrence without a wake storm", async () => {
   const t = await checkpointSetup(); const p = t.policy.read().policy;
   t.policy.apply({ ...p, diagnosis: { ...p.diagnosis, enabled: true, owner: "owner@rig", cooldownSeconds: 60 } }, "actor@rig");
   t.source.submit(t.cp, "author@rig");

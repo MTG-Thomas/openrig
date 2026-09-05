@@ -68,6 +68,7 @@ try {
   const checkpoint = { schema: "openrig.health-checkpoint/v0alpha1", lineageQitemId: row.qitemId,
     scope: { type: "rig", rigId: "fixture" }, startedAt: transitions[0].ts, observedAt: at,
     transitionIds: transitions.map((t) => t.transitionId), productOutcomes: [], productCensusRef: join(workspace, "outcome.md"),
+    sdlc: { expectation: "One outcome check at completion", evidenceRef: join(workspace, "outcome.md") },
     boundedAuthority: { applies: false, evidenceRef: join(workspace, "outcome.md") }, authorityPaths: { project: [join(workspace, "SPEC.md"), join(home, "outside.yaml")], mission: [], slice: [] } };
   writeFileSync(join(home, "checkpoint.json"), JSON.stringify({ ...checkpoint, productCensusRef: join(workspace, "missing.md") }));
   await run("checkpoint", "--file", join(home, "checkpoint.json"), "--json");
