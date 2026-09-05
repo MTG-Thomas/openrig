@@ -28,6 +28,8 @@ import {
   nodeRuntimeOf,
   reconcileExplicitOwnerHarness,
   resolveDefaultOwner,
+  withWorkflowContinuation,
+  workflowWaitWakeMessage,
   type GateCompileResult,
   type ProjectStepInput,
   type ProjectStepResult,
@@ -696,6 +698,8 @@ export class WorkflowRuntime {
           entryStep,
           rootObjective: input.rootObjective,
           gate: entryGate,
+          packetId: entryGateQitemId,
+          ownerSession: entryOwner,
         }),
         priority: "routine",
         tier: entryGate?.tier ?? "mode2",
@@ -1027,17 +1031,25 @@ export class WorkflowRuntime {
       // Fresh frontier packet — the redrive delivery. The --decision
       // text lands durably in the packet body (the resumer’s
       // instruction reaches the step owner).
+      const redrivePacketId = newQitemId();
       const created = this.queueRepo.createWithinTransaction({
+        qitemId: redrivePacketId,
         sourceSession: input.actorSession,
         destinationSession: owner,
-        body:
-          `WORKFLOW RESUME (redrive)\n` +
-          `workflow: ${instance.workflowName} v${instance.workflowVersion}\n` +
-          `instance: ${instance.instanceId}\n` +
-          `step: ${step.id} (role ${step.actor_role}) — re-driven from the recorded failure; completed steps are NOT re-run\n` +
-          `resumed by: ${input.actorSession} (redrive #${(instance.resumeCount ?? 0) + 1})\n` +
-          (input.decision ? `decision: ${input.decision}\n` : "") +
-          `history: rig workflow trace ${instance.instanceId}`,
+        body: withWorkflowContinuation({
+          body:
+            `WORKFLOW RESUME (redrive)\n` +
+            `workflow: ${instance.workflowName} v${instance.workflowVersion}\n` +
+            `instance: ${instance.instanceId}\n` +
+            `step: ${step.id} (role ${step.actor_role}) — re-driven from the recorded failure; completed steps are NOT re-run\n` +
+            `resumed by: ${input.actorSession} (redrive #${(instance.resumeCount ?? 0) + 1})\n` +
+            (input.decision ? `decision: ${input.decision}\n` : "") +
+            `history: rig workflow trace ${instance.instanceId}`,
+          instanceId: instance.instanceId,
+          packetId: redrivePacketId,
+          ownerSession: owner,
+          step,
+        }),
         priority: "routine",
         tier: "mode2",
         tags: [
@@ -1234,10 +1246,18 @@ export class WorkflowRuntime {
       if (!step) throw new WorkflowProjectorError("resume_step_missing_from_spec", `failed step "${occurrence.stepId}" no longer exists`, { instanceId: instance.instanceId, stepId: occurrence.stepId });
       const owner = resolveDefaultOwner(specRow.spec, step, (session) => nodeRuntimeOf(this.db, session), roleResolutionContext(this.db, instance.boundRig));
       if (!owner) throw new WorkflowProjectorError("next_owner_unresolved", `cannot resolve owner for failed step "${step.id}"`);
+      const redrivePacketId = newQitemId();
       const created = this.queueRepo.createWithinTransaction({
+        qitemId: redrivePacketId,
         sourceSession: input.actorSession,
         destinationSession: owner,
-        body: `WORKFLOW RESUME (packet redrive)\nworkflow: ${instance.workflowName} v${instance.workflowVersion}\ninstance: ${instance.instanceId}\noccurrence: ${occurrence.occurrenceId}\nstep: ${step.id}\n${input.decision ? `decision: ${input.decision}\n` : ""}`,
+        body: withWorkflowContinuation({
+          body: `WORKFLOW RESUME (packet redrive)\nworkflow: ${instance.workflowName} v${instance.workflowVersion}\ninstance: ${instance.instanceId}\noccurrence: ${occurrence.occurrenceId}\nstep: ${step.id}\n${input.decision ? `decision: ${input.decision}\n` : ""}`,
+          instanceId: instance.instanceId,
+          packetId: redrivePacketId,
+          ownerSession: owner,
+          step,
+        }),
         priority: "routine",
         tier: "mode2",
         tags: ["workflow", "resume", `workflow:${instance.workflowName}`, `instance:${instance.instanceId}`, `occurrence:${occurrence.occurrenceId}`],
@@ -1400,10 +1420,18 @@ export class WorkflowRuntime {
       // rejects the repark below (human_route_fields_required) and
       // the waiting-on-human class — the one route most exists for —
       // becomes un-routable.
+      const routedPacketId = newQitemId();
       const created = this.queueRepo.createWithinTransaction({
+        qitemId: routedPacketId,
         sourceSession: input.actorSession,
         destinationSession: input.toSession,
-        body: oldPacket.body,
+        body: withWorkflowContinuation({
+          body: oldPacket.body,
+          instanceId: instance.instanceId,
+          packetId: routedPacketId,
+          ownerSession: input.toSession,
+          step: step ?? undefined,
+        }),
         priority: oldPacket.priority ?? "routine",
         tier: oldPacket.tier ?? "mode2",
         // OPR.0.4.6.WF5 (rev1-r2 B1 fold): the successor IS the same work
@@ -1459,6 +1487,17 @@ export class WorkflowRuntime {
           closureTarget: oldPacket.blockedOn,
           blockedOn: oldPacket.blockedOn,
           transitionNote: `workflow route: park preserved (${oldPacket.blockedOn})`,
+          wakeAfterSeconds: step?.re_present_after_seconds,
+          wakeMessage:
+            step?.re_present_after_seconds !== undefined
+              ? workflowWaitWakeMessage({
+                  spec: specRow!.spec,
+                  instance,
+                  step,
+                  packetId: routedPacketId,
+                  ownerSession: input.toSession,
+                })
+              : undefined,
         });
         register(reparked.persistedEvent);
       }
@@ -1623,9 +1662,11 @@ export type WorkflowInstanceWithInspection = WorkflowInstanceWithDeadline & {
 function workflowInstantiateBody(input: {
   spec: { id: string; version: string };
   instanceId: string;
-  entryStep: { id: string; actor_role: string; objective?: string };
+  entryStep: WorkflowStepSpec;
   rootObjective: string;
   gate?: GateCompileResult | null;
+  packetId: string;
+  ownerSession: string;
 }): string {
   const lines = [
     `### Workflow entry: ${input.spec.id}@${input.spec.version} step ${input.entryStep.id}`,
@@ -1646,7 +1687,13 @@ function workflowInstantiateBody(input: {
   if (input.entryStep.objective) {
     lines.push("", `Step objective: ${input.entryStep.objective}`);
   }
-  return lines.join("\n");
+  return withWorkflowContinuation({
+    body: lines.join("\n"),
+    instanceId: input.instanceId,
+    packetId: input.packetId,
+    ownerSession: input.ownerSession,
+    step: input.entryStep,
+  });
 }
 
 export {

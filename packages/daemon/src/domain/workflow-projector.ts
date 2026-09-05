@@ -49,6 +49,62 @@ import {
   disarmWorkflowKeepalive,
   ensureWorkflowKeepaliveArmed,
 } from "./workflow-keepalive-arming.js";
+import { shellQuote } from "../adapters/shell-quote.js";
+
+const WORKFLOW_CONTEXT_SHORTCUT =
+  "Context: this workflow packet is a shortcut, not the whole story; inspect additional project, mission, and receipt evidence before choosing an authored exit.";
+
+/** One occurrence-bound action, shared by packet bodies and authored wait wakes. */
+export function renderWorkflowProjectCommand(input: {
+  instanceId: string;
+  packetId: string;
+  ownerSession: string;
+  step?: Pick<WorkflowStepSpec, "acceptance">;
+}): string {
+  const base = `rig workflow project --instance ${input.instanceId} --current-packet ${input.packetId} --exit <handoff|waiting|done|failed> --actor-session ${input.ownerSession}`;
+  const acceptance = input.step?.acceptance;
+  if (!acceptance) return base;
+  const verdict = acceptance.verdicts.length === 1
+    ? acceptance.verdicts[0]!
+    : `<${acceptance.verdicts.join("|")}>`;
+  return `${base} --acceptance-candidate ${shellQuote(acceptance.candidate)} --acceptance-verdict ${shellQuote(verdict)} --acceptance-evidence-ref ${shellQuote(acceptance.evidence_ref)}`;
+}
+
+/** Refreshes guidance when a packet is recreated (route/resume) instead of
+ * carrying a stale packet id or owner forward in copied body text. */
+export function withWorkflowContinuation(input: {
+  body: string;
+  instanceId: string;
+  packetId: string;
+  ownerSession: string;
+  step?: Pick<WorkflowStepSpec, "acceptance">;
+}): string {
+  const lines = input.body
+    .split("\n")
+    .filter((line) => !line.startsWith("Continuation: ") && line !== WORKFLOW_CONTEXT_SHORTCUT);
+  while (lines.at(-1) === "") lines.pop();
+  return [
+    ...lines,
+    "",
+    `Continuation: ${renderWorkflowProjectCommand(input)}`,
+    WORKFLOW_CONTEXT_SHORTCUT,
+  ].join("\n");
+}
+
+export function workflowWaitWakeMessage(input: {
+  spec: WorkflowSpec;
+  instance: WorkflowInstance;
+  step: WorkflowStepSpec;
+  packetId: string;
+  ownerSession: string;
+}): string {
+  return [
+    `Workflow waiting deadline reached: ${input.spec.id}@${input.spec.version} instance ${input.instance.instanceId} step ${input.step.id}.`,
+    `You still own the same frontier packet ${input.packetId}. Read it and inspect current evidence before choosing an authored exit.`,
+    `Continuation: ${renderWorkflowProjectCommand({ ...input, instanceId: input.instance.instanceId })}`,
+    WORKFLOW_CONTEXT_SHORTCUT,
+  ].join("\n");
+}
 
 /**
  * OPR.0.4.6.WF2 FR-2: canonical-session → node runtime column lookup
@@ -246,7 +302,14 @@ export class WorkflowProjector {
           { instanceId: instance.instanceId, currentPacketId: input.currentPacketId },
         );
       }
-      return this.projectDependencyGraph({ input, instance, spec, currentStep, packetBinding });
+      return this.projectDependencyGraph({
+        input,
+        instance,
+        spec,
+        currentStep,
+        packetBinding,
+        currentOwnerSession: currentPacket.destinationSession,
+      });
     }
 
     // Determine next step (one-hop default; multi-hop is graduation).
@@ -272,8 +335,7 @@ export class WorkflowProjector {
     const willRoute = branchRouted || input.exit === "handoff";
 
     // FR-5 (G3): the waiting-replay ABSORPTION check. `waiting`
-    // deliberately KEEPS the closed packet on the frontier (the
-    // keepalive wakes the parked owner off it), so a replayed waiting
+    // deliberately KEEPS the closed packet on the frontier, so a replayed waiting
     // project passes the frontier guard — before this slice it
     // double-wrote the trail. Absorption closes the hole under the
     // guard-ratified FULL CLOSURE-INTENT IDENTITY (G-WF1-1): the replay
@@ -438,6 +500,20 @@ export class WorkflowProjector {
         handedOffTo: closure.handedOffTo,
         blockedOn: closure.blockedOn,
         transitionNote: closure.transitionNote,
+        wakeAfterSeconds:
+          effectiveExit === "waiting" && !routes
+            ? currentStep.re_present_after_seconds
+            : undefined,
+        wakeMessage:
+          effectiveExit === "waiting" && !routes && currentStep.re_present_after_seconds !== undefined
+            ? workflowWaitWakeMessage({
+                spec,
+                instance,
+                step: currentStep,
+                packetId: input.currentPacketId,
+                ownerSession: currentPacket.destinationSession,
+              })
+            : undefined,
       });
       registerEvent(queueUpdate.persistedEvent);
 
@@ -477,22 +553,22 @@ export class WorkflowProjector {
         // PREALLOCATED so occurrence:<gatePacketId> exists at create
         // (identity queryable from birth — arch cell-2). Handler-role
         // gates stay negative (deterministic handoffs, not exceptions).
-        const gateQitemId = gateCompile ? newQitemId() : undefined;
+        const nextPacketId = newQitemId();
         const gateException =
-          gateCompile && gateQitemId
+          gateCompile
             ? classifyGateTrip({
                 workflowName: instance.workflowName,
                 instanceId: instance.instanceId,
                 gatedStepId: nextStep.id,
                 gateKind: gateCompile.kind,
-                gatePacketId: gateQitemId,
+                gatePacketId: nextPacketId,
                 parkOn: gateCompile.parkOn,
               })
             : null;
         // P34 (site :466, the ROUTES branch) — the stage call follows the create
         // immediately below; see the seam assert at the end of this transaction.
         createdNext = this.queueRepo.createWithinTransaction({
-          qitemId: gateQitemId,
+          qitemId: nextPacketId,
           sourceSession: input.actorSession,
           destinationSession: resolvedNextOwner,
           body: workflowHandoffBody({
@@ -503,6 +579,8 @@ export class WorkflowProjector {
             actorSession: input.actorSession,
             resultNote: effectiveResultNote,
             gate: gateCompile,
+            packetId: nextPacketId,
+            ownerSession: resolvedNextOwner,
           }),
           priority: "routine",
           tier: gateCompile?.tier ?? "mode2",
@@ -663,13 +741,13 @@ export class WorkflowProjector {
       // txn. A handoff ensures the per-instance job is armed (idempotent
       // — also heals pre-WF-1 instances on their first post-upgrade
       // hop); a terminal status disarms it (no orphaned watchdog
-      // noise). Waiting keeps the job armed — the keepalive wakes the
-      // parked owner. Plain INSERT/UPDATE, verified txn-composable.
+      // noise). Waiting keeps the deadline-gated job armed but quiet while
+      // blocked; an authored re-presentation rule uses the separate one-shot
+      // park timer above. Plain INSERT/UPDATE, verified txn-composable.
       if (this.watchdogJobsRepo) {
         if (routes && resolvedNextOwner) {
-          // Any route arms the keepalive for the new owner — including a
-          // gate park (waiting keeps the job armed; it wakes the parked
-          // gate target exactly like any parked owner).
+          // Any route arms the keepalive for the new owner — including a gate
+          // park, whose delivery attention is handled by the queue wake intent.
           ensureWorkflowKeepaliveArmed(this.watchdogJobsRepo, {
             instanceId: instance.instanceId,
             targetSession: resolvedNextOwner,
@@ -879,8 +957,9 @@ export class WorkflowProjector {
     spec: WorkflowSpec;
     currentStep: WorkflowStepSpec;
     packetBinding: import("./workflow-types.js").WorkflowFrontierBinding;
+    currentOwnerSession: string;
   }): Promise<ProjectStepResult> {
-    const { input, instance, spec, currentStep, packetBinding } = args;
+    const { input, instance, spec, currentStep, packetBinding, currentOwnerSession } = args;
     if (input.exit === "waiting" && instance.status === "waiting" && matchesStoredWaitingDecision(instance, input, currentStep.id, this.trailLog)) {
       return {
         instance,
@@ -969,7 +1048,7 @@ export class WorkflowProjector {
         if (!owner) {
           throw new WorkflowProjectorError("next_owner_unresolved", `cannot resolve next owner for dependency step "${step.id}"`, { instanceId: instance.instanceId, stepId: step.id });
         }
-        return { step, gate, owner };
+        return { step, gate, owner, packetId: newQitemId() };
       });
 
       const closureOwner = ownerPlans.length === 1 ? ownerPlans[0]!.owner : null;
@@ -994,6 +1073,20 @@ export class WorkflowProjector {
         handedOffTo: closure.handedOffTo,
         blockedOn: closure.blockedOn,
         transitionNote: closure.transitionNote,
+        wakeAfterSeconds:
+          effectiveExit === "waiting" && ownerPlans.length === 0
+            ? currentStep.re_present_after_seconds
+            : undefined,
+        wakeMessage:
+          effectiveExit === "waiting" && ownerPlans.length === 0 && currentStep.re_present_after_seconds !== undefined
+            ? workflowWaitWakeMessage({
+                spec,
+                instance,
+                step: currentStep,
+                packetId: input.currentPacketId,
+                ownerSession: currentOwnerSession,
+              })
+            : undefined,
       });
       addEvent(updated.persistedEvent);
 
@@ -1011,9 +1104,20 @@ export class WorkflowProjector {
 
       for (const plan of ownerPlans) {
         const created = this.queueRepo.createWithinTransaction({
+          qitemId: plan.packetId,
           sourceSession: input.actorSession,
           destinationSession: plan.owner,
-          body: workflowHandoffBody({ spec, instance, currentStep, nextStep: plan.step, actorSession: input.actorSession, resultNote: effectiveResultNote, gate: plan.gate }),
+          body: workflowHandoffBody({
+            spec,
+            instance,
+            currentStep,
+            nextStep: plan.step,
+            actorSession: input.actorSession,
+            resultNote: effectiveResultNote,
+            gate: plan.gate,
+            packetId: plan.packetId,
+            ownerSession: plan.owner,
+          }),
           priority: "routine",
           tier: plan.gate?.tier ?? "mode2",
           tags: ["workflow", plan.gate ? "gate" : "handoff", `workflow:${spec.id}`, `instance:${instance.instanceId}`, `step:${plan.step.id}`],
@@ -1635,6 +1739,8 @@ function workflowHandoffBody(input: {
   actorSession: string;
   resultNote: string | undefined;
   gate?: GateCompileResult | null;
+  packetId: string;
+  ownerSession: string;
 }): string {
   const lines = [
     input.gate
@@ -1658,7 +1764,13 @@ function workflowHandoffBody(input: {
   if (input.resultNote) {
     lines.push("", `Prior step note: ${input.resultNote}`);
   }
-  return lines.join("\n");
+  return withWorkflowContinuation({
+    body: lines.join("\n"),
+    instanceId: input.instance.instanceId,
+    packetId: input.packetId,
+    ownerSession: input.ownerSession,
+    step: input.nextStep,
+  });
 }
 
 function validateAcceptance(
