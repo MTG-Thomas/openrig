@@ -127,6 +127,7 @@ export interface HealthRecordDraft {
 }
 
 export interface HealthRecord {
+  policyVersion?: string;
   schema: typeof HEALTH_RECORD_SCHEMA;
   id: string;
   detector: string;

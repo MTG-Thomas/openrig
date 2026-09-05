@@ -194,6 +194,16 @@ export class QueueTransitionLog {
     return rows.map((r) => this.rowToTransition(r));
   }
 
+  /** Bounded source adapter: apply the time window and limit before materializing rows. */
+  listForQitemWindow(qitemId: string, startedAt: string, endedAt: string, limit: number): QueueTransition[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10001) throw new Error("Invalid transition window limit");
+    const start = new Date(startedAt).toISOString();
+    const end = new Date(endedAt).toISOString();
+    const rows = this.db.prepare("SELECT * FROM queue_transitions WHERE qitem_id = ? AND ts >= ? AND ts <= ? ORDER BY transition_id ASC LIMIT ?")
+      .all(qitemId, start, end, limit) as QueueTransitionRow[];
+    return rows.map((row) => this.rowToTransition(row));
+  }
+
   listForActor(actorSession: string, limit = 100): QueueTransition[] {
     const rows = this.db
       .prepare(

@@ -1,3 +1,4 @@
+import { DEFAULT_HEALTH_POLICY, type EffectiveHealthPolicy, type HealthPolicy } from "./health-policy.js";
 import type Database from "better-sqlite3";
 import {
   adaptContextUsageEvidence,
@@ -18,10 +19,6 @@ import type { RigRepository } from "./rig-repository.js";
 import type { SessionRegistry } from "./session-registry.js";
 import { queryUsageSeries } from "./usage-series.js";
 
-const CEREMONY_MIN_TRANSITIONS = 20;
-const CEREMONY_MIN_RATIO = 12;
-const REVIEW_CAROUSEL_MIN_RETURNS = 4;
-const REDUNDANT_WAKE_MIN_COUNT = 4;
 const CONTEXT_PRESSURE_PERCENT = 95;
 const CONTEXT_CRITICAL_PERCENT = 99;
 const LIVE_CONTEXT_RETENTION_SECONDS = 86_400;
@@ -29,6 +26,9 @@ const LIVE_CONTEXT_FRESHNESS_SECONDS = 600;
 export const HEALTH_LIST_SCHEMA = "openrig.health-list/v0alpha1" as const;
 
 interface ObservationBase {
+  conditionCleared?: boolean;
+  confidence?: HealthConfidence;
+  sourceDescription?: string;
   scope: HealthScope;
   episodeStartedAt: string;
   lastObservedAt: string;
@@ -101,8 +101,8 @@ export interface HealthListProjection {
   records: HealthRecord[];
 }
 
-export function evaluateHealthDetectors(observations: readonly HealthDetectorObservation[]): HealthRecord[] {
-  const records = observations.flatMap(evaluateObservation);
+export function evaluateHealthDetectors(observations: readonly HealthDetectorObservation[], policy: HealthPolicy = DEFAULT_HEALTH_POLICY): HealthRecord[] {
+  const records = observations.flatMap((o) => evaluateObservation(o, policy)).filter((r) => !policy.disabledDetectors.includes(r.detector));
   const episodes = new Map<string, HealthRecord>();
   for (const record of records) {
     const previous = episodes.get(record.id);
@@ -117,14 +117,19 @@ export function canonicalDetectorJson(records: readonly HealthRecord[]): string 
 }
 
 export class HealthProjectionService {
-  constructor(private readonly source: HealthObservationSource) {}
+  constructor(private readonly source: HealthObservationSource, private readonly policy?: () => EffectiveHealthPolicy) {}
+
+  records(): HealthRecord[] {
+    const policy = this.policy?.();
+    return evaluateHealthDetectors(this.source.read(), policy?.policy).map((record) => policy ? { ...record, policyVersion: policy.version } : record);
+  }
 
   list(query: HealthListQuery = {}): HealthListProjection {
     const limit = query.limit ?? 100;
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
       throw new Error("limit must be an integer from 1 to 200");
     }
-    const evaluated = evaluateHealthDetectors(this.source.read());
+    const evaluated = this.records();
     const filtered = evaluated.filter((record) =>
       (query.scopeType === undefined || record.scope.type === query.scopeType)
       && (query.scopeId === undefined || healthScopeId(record.scope) === query.scopeId)
@@ -141,7 +146,7 @@ export class HealthProjectionService {
   }
 
   get(id: string): HealthRecord | null {
-    return evaluateHealthDetectors(this.source.read()).find((record) => record.id === id) ?? null;
+    return this.records().find((record) => record.id === id) ?? null;
   }
 }
 
@@ -290,10 +295,10 @@ export function healthScopeId(scope: HealthScope): string {
   }
 }
 
-function evaluateObservation(observation: HealthDetectorObservation): HealthRecord[] {
+function evaluateObservation(observation: HealthDetectorObservation, policy: HealthPolicy): HealthRecord[] {
   switch (observation.kind) {
-    case "coordination-lineage": return evaluateCoordination(observation);
-    case "wake-lineage": return evaluateWake(observation);
+    case "coordination-lineage": return evaluateCoordination(observation, policy);
+    case "wake-lineage": return evaluateWake(observation, policy);
     case "directive": return evaluateDirective(observation);
     case "scope-admission": return evaluateAdmission(observation);
     case "context-pressure": return evaluateContext(observation);
@@ -302,24 +307,25 @@ function evaluateObservation(observation: HealthDetectorObservation): HealthReco
 
 function evaluateCoordination(
   observation: Extract<HealthDetectorObservation, { kind: "coordination-lineage" }>,
+  policy: HealthPolicy,
 ): HealthRecord[] {
   const records: HealthRecord[] = [];
   const denominator = Math.max(observation.productStateChanges, 1);
   const ratio = observation.coordinationTransitions / denominator;
-  if (!observation.boundedAuthority
-    && observation.coordinationTransitions >= CEREMONY_MIN_TRANSITIONS
-    && ratio >= CEREMONY_MIN_RATIO) {
+  if (observation.conditionCleared || (!observation.boundedAuthority
+    && observation.coordinationTransitions >= policy.thresholds.ceremonyTransitions
+    && ratio >= policy.thresholds.ceremonyRatio)) {
     records.push(record(observation, {
       detector: "process.ceremony-amplification",
       category: "process",
       severity: "warning",
       summary: `Coordination activity is disproportionate for ${observation.lineageId}.`,
-      threshold: `coordinationTransitions >= ${CEREMONY_MIN_TRANSITIONS} AND coordinationTransitions / max(productStateChanges, 1) >= ${CEREMONY_MIN_RATIO} AND boundedAuthority = false`,
+      threshold: `coordinationTransitions >= ${policy.thresholds.ceremonyTransitions} AND coordinationTransitions / max(productStateChanges, 1) >= ${policy.thresholds.ceremonyRatio} AND boundedAuthority = false`,
       explanation: `${observation.coordinationTransitions} coordination transitions for ${observation.productStateChanges} product-state change${observation.productStateChanges === 1 ? "" : "s"} in one lineage (${ratio.toFixed(1)}:1).`,
       suggestedInspection: `Inspect queue transitions and product checkpoints for ${observation.lineageId}.`,
     }));
   }
-  if (observation.reviewReturns >= REVIEW_CAROUSEL_MIN_RETURNS
+  if (observation.reviewReturns >= policy.thresholds.reviewReturns
     && observation.candidateChanges === 0
     && observation.newRiskClasses === 0) {
     records.push(record(observation, {
@@ -327,7 +333,7 @@ function evaluateCoordination(
       category: "process",
       severity: "warning",
       summary: `Review repeatedly returned the unchanged ${observation.lineageId} lineage.`,
-      threshold: `reviewReturns >= ${REVIEW_CAROUSEL_MIN_RETURNS} AND candidateChanges = 0 AND newRiskClasses = 0`,
+      threshold: `reviewReturns >= ${policy.thresholds.reviewReturns} AND candidateChanges = 0 AND newRiskClasses = 0`,
       explanation: `${observation.reviewReturns} review returns occurred with no candidate change and no newly recorded risk class.`,
       suggestedInspection: `Inspect the review return sequence for ${observation.lineageId}.`,
     }));
@@ -337,15 +343,16 @@ function evaluateCoordination(
 
 function evaluateWake(
   observation: Extract<HealthDetectorObservation, { kind: "wake-lineage" }>,
+  policy: HealthPolicy,
 ): HealthRecord[] {
   const redundant = Math.max(0, observation.wakeCount - observation.rescueWakeCount);
-  if (!observation.existingNextAction || redundant < REDUNDANT_WAKE_MIN_COUNT) return [];
+  if (!observation.existingNextAction || redundant < policy.thresholds.redundantWakes) return [];
   return [record(observation, {
     detector: "process.redundant-wake-storm",
     category: "process",
     severity: "warning",
     summary: `Repeated wakes duplicated an existing next action for ${observation.lineageId}.`,
-    threshold: `wakeCount - rescueWakeCount >= ${REDUNDANT_WAKE_MIN_COUNT} AND existingNextAction = true`,
+    threshold: `wakeCount - rescueWakeCount >= ${policy.thresholds.redundantWakes} AND existingNextAction = true`,
     explanation: `${observation.wakeCount} wakes minus ${observation.rescueWakeCount} liveness rescues left ${redundant} redundant wakes while a next action was already recorded.`,
     suggestedInspection: `Inspect watchdog and queue wake receipts for ${observation.lineageId}.`,
   })];
@@ -461,13 +468,13 @@ function record(
     category: fields.category,
     scope: observation.scope,
     severity: fields.severity,
-    confidence: fields.confidence ?? "high",
-    status: fields.status ?? "active",
+    confidence: fields.confidence ?? observation.confidence ?? "high",
+    status: observation.conditionCleared ? "cleared" : fields.status ?? "active",
     startedAt: observation.episodeStartedAt,
     lastObservedAt: observation.lastObservedAt,
     summary: fields.summary,
     threshold: fields.threshold,
-    explanation: fields.explanation,
+    explanation: [fields.explanation, observation.sourceDescription].filter(Boolean).join(" "),
     suggestedInspection: fields.suggestedInspection,
     source: observation.source,
   });

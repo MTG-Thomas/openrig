@@ -1,3 +1,7 @@
+import { HealthPolicyStore } from "./domain/health-policy.js";
+import { HealthCheckpointSource } from "./domain/health-checkpoints.js";
+import { HealthDiagnosisService } from "./domain/health-diagnosis.js";
+import { healthAuthority, healthHumanReadiness } from "./domain/health-context.js";
 import type { Hono } from "hono";
 import type Database from "better-sqlite3";
 import type { ExecFn } from "./adapters/tmux.js";
@@ -942,13 +946,20 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
   });
   const { HealthProjectionService, LiveContextHealthSource } = await import("./domain/health-detectors.js");
   const healthSettingsStore = new ContextPackSettingsStore();
-  const healthProjection = new HealthProjectionService(new LiveContextHealthSource({
+  const contextHealthSource = new LiveContextHealthSource({
     db,
     rigRepo,
     sessionRegistry,
     contextUsageStore,
     resolveContextPressurePolicy: () => healthSettingsStore.resolveContextPressurePolicy(),
-  }));
+  });
+  const healthPolicy = new HealthPolicyStore(OPENRIG_HOME, () => healthSettingsStore.resolveContextPressurePolicy());
+  const healthCheckpoints = new HealthCheckpointSource(OPENRIG_HOME, queueRepoInstance, healthPolicy);
+  const healthProjection = new HealthProjectionService({ read: () => [...contextHealthSource.read(), ...healthCheckpoints.read()] }, () => healthPolicy.read());
+  const healthDiagnosis = new HealthDiagnosisService({ queue: queueRepoInstance, projection: healthProjection, policy: healthPolicy,
+    authority: (record) => healthAuthority(healthSettingsStore.resolveOne("workspace.root").value as string, healthCheckpoints, record),
+    humanReadiness: (address) => healthHumanReadiness(OPENRIG_HOME, address, deps.gatewaySubsystem?.status().state === "active"),
+  });
   // OPR.0.4.3.20 FR-4 — inject contextUsageStore so refresh() can null-fill a
   // Claude token from the sidecar during periodic/manual snapshot refresh.
   const resumeMetadataRefresher = new ResumeMetadataRefresher({ sessionRegistry, tmuxAdapter, contextUsageStore });
@@ -1175,6 +1186,9 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
     activityHookToken: resolvedActivityHookToken,
     contextUsageStore,
     healthProjection,
+    healthDiagnosis,
+    healthPolicy,
+    healthCheckpoints,
     serviceOrchestrator,
     composeAdapter,
     kernelBootTracker,

@@ -342,6 +342,8 @@ export interface QueueClaimInput {
 }
 
 export interface QueueListOptions {
+  /** Exact tag selection before the result bound (used by diagnostic occurrences). */
+  tag?: string;
   destinationSession?: string;
   sourceSession?: string;
   state?: QueueState | QueueState[];
@@ -2780,6 +2782,10 @@ export class QueueRepository {
     const limit = opts?.limit ?? 100;
     const conditions: string[] = [];
     const params: unknown[] = [];
+    if (opts?.tag) {
+      conditions.push("EXISTS (SELECT 1 FROM json_each(queue_items.tags) WHERE value = ?)");
+      params.push(opts.tag);
+    }
 
     if (opts?.rig) {
       const escaped = opts.rig.replace(/%/g, "\\%").replace(/_/g, "\\_");

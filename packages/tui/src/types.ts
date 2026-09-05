@@ -272,6 +272,7 @@ export interface HealthEvidenceReference {
 }
 
 export interface HealthRecord {
+  policyVersion?: string;
   schema: "openrig.health/v0alpha1";
   id: string;
   detector: string;

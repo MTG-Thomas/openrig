@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Command, InvalidArgumentError, Option } from "commander";
 import {
   HEALTH_SEVERITIES,
@@ -223,6 +224,7 @@ function renderExplanation(record: HealthRecord): void {
   console.log(`  Freshness:   ${record.freshness.state}; evaluated=${record.freshness.evaluatedAt}; newest=${record.freshness.newestSourceAt ?? "unavailable"}; max-age=${record.freshness.maxAgeSeconds}s; age=${record.freshness.ageSeconds ?? "unavailable"}s`);
   if (record.indeterminateReason) console.log(`  Indeterminate: ${record.indeterminateReason}`);
   console.log(`  Rule:        ${record.threshold}`);
+  console.log(`  Policy:      ${record.policyVersion ?? "not reported by source"}`);
   console.log(`  Explanation: ${record.explanation}`);
   console.log(`  Evidence:    ${JSON.stringify(record.evidence)}`);
   console.log(`  Inspect:     ${record.suggestedInspection}`);
@@ -259,10 +261,11 @@ export function healthCommand(depsOverride?: HealthDeps): Command {
     .addOption(new Option("--status <status>", "Filter by finding status").choices([...HEALTH_STATUSES]))
     .option("--limit <count>", "Maximum findings (1-200)", parseLimit, 100)
     .option("--json", "Emit the canonical daemon health projection as JSON")
+    .option("--actor <name>", "Attribute explicit diagnosis writes when operating outside a managed seat")
     .addHelpText("after", `
 The default scope is the current seat. --instance without an ID is the bounded
 instance-wide projection. Empty output is not a healthy assertion. This command
-never acknowledges, snoozes, notifies, queues, reroutes, relaunches, or remediates.`);
+list/explain never mutate. Diagnosis mutations use explicit subcommands; automatic diagnostic presentation is opt-in policy.`);
 
   command.action(async (options: HealthListOptions) => {
     const json = Boolean(options.json);
@@ -332,5 +335,54 @@ never acknowledges, snoozes, notifies, queues, reroutes, relaunches, or remediat
       else renderExplanation(response.data);
     });
 
+  async function diagnosisRequest(path: string, options: { json?: boolean }, payload?: unknown) {
+    const json = Boolean(options.json || command.opts().json);
+    const client = await readyClient(deps, json);
+    if (!client) return;
+    const response = await guardedRequest(() => payload === undefined ? client.get(`/api/health-diagnosis${path}`) : client.post(`/api/health-diagnosis${path}`, { ...(payload as object), actor: command.opts().actor }), json);
+    if (!response) return;
+    if (response.status >= 400) { console.error(JSON.stringify(response.data)); process.exitCode = 1; return; }
+    if (json || path === "/policy" || path === "/checkpoints" || path === "/evaluate" || path.endsWith("/notify")) {
+      console.log(JSON.stringify(response.data, null, json ? undefined : 2));
+    } else {
+      const entries = Array.isArray(response.data) ? response.data : [response.data];
+      if (!entries.length) console.log("No diagnostic occurrences. This is not a healthy assertion.");
+      for (const entry of entries as Array<{ row: { qitemId: string }; finding: HealthRecord; disposition: { verdict: string; causalStart: string | null; steering: string; uncertainty: string; evidenceRefs: string[] } | null; packet: { instructions: string }; humanDelivery: { qitemId: string; outcome: string } | null; authority: Array<{ path: string; state: string }> }>) {
+        console.log(`${entry.row.qitemId}  ${entry.finding.status}  ${entry.finding.detector}`);
+        console.log(`  Disposition: ${entry.disposition?.verdict ?? "awaiting agent investigation"}`);
+        if (path) {
+          if (entry.humanDelivery) console.log(`  Human delivery: ${entry.humanDelivery.outcome} (${entry.humanDelivery.qitemId})`);
+          console.log(`  Finding: ${entry.finding.id}  Policy: ${entry.finding.policyVersion ?? "unreported"}`);
+          console.log(`  ${entry.finding.explanation}`);
+          console.log(`  Start: ${entry.disposition?.causalStart ?? "unknown"}`);
+          console.log(`  Steering: ${entry.disposition?.steering ?? "not yet recorded"}`);
+          console.log(`  Uncertainty: ${entry.disposition?.uncertainty ?? entry.finding.indeterminateReason ?? "diagnosis pending"}`);
+          for (const ref of entry.authority) console.log(`  Authority (${ref.state}): ${ref.path}`);
+          console.log(`  ${entry.packet.instructions}`);
+          console.log("  Use --json for retained evidence, authority bytes, and transition receipts.");
+        }
+      }
+    }
+  }
+  function fromFile(file: string): unknown {
+    const text = readFileSync(file, "utf8");
+    if (Buffer.byteLength(text) > 1048576) throw new Error("Health input exceeds 1 MiB");
+    return JSON.parse(text);
+  }
+  command.command("policy").description("Inspect effective policy and engine state; apply edited JSON with --file")
+    .option("--file <path>", "Apply policy JSON with an audit record").option("--json")
+    .action(async (o: { file?: string; json?: boolean }) => diagnosisRequest("/policy", o, o.file ? { value: fromFile(o.file) } : undefined));
+  command.command("checkpoint").description("Inspect or submit an outcome-boundary lineage census (not a per-edit ritual)")
+    .option("--file <path>", "Submit checkpoint JSON with exact queue and product evidence").option("--json")
+    .action(async (o: { file?: string; json?: boolean }) => diagnosisRequest("/checkpoints", o, o.file ? { value: fromFile(o.file) } : undefined));
+  command.command("diagnose").description("Preview policy admission; --apply creates or re-presents bounded diagnostic context")
+    .option("--apply").option("--json").action(async (o: { apply?: boolean; json?: boolean }) => diagnosisRequest("/evaluate", o, { apply: Boolean(o.apply) }));
+  const diagnosis = command.command("diagnosis").description("Read occurrences and record agent-owned dispositions");
+  diagnosis.command("list").option("--json").action(async (o: { json?: boolean }) => diagnosisRequest("", o));
+  diagnosis.command("show <qitem-id>").option("--json").action(async (id: string, o: { json?: boolean }) => diagnosisRequest(`/${encodeURIComponent(id)}`, o));
+  diagnosis.command("record <qitem-id>").requiredOption("--file <path>", "Disposition JSON with verdict, causalStart, steering, uncertainty, evidenceRefs").option("--json")
+    .action(async (id: string, o: { file: string; json?: boolean }) => diagnosisRequest(`/${encodeURIComponent(id)}/disposition`, o, { value: fromFile(o.file) }));
+  diagnosis.command("notify <qitem-id>").description("Explicitly request human delivery under policy and verified connector readiness").option("--json")
+    .action(async (id: string, o: { json?: boolean }) => diagnosisRequest(`/${encodeURIComponent(id)}/notify`, o, {}));
   return command;
 }

@@ -280,6 +280,7 @@ export function healthDetailLines(snap: FleetSnapshot, findingId: string, width:
     sectionRule("EXPLANATION", width),
     ...wrap("why", record.explanation, width),
     ...wrap("threshold", record.threshold, width),
+    ...wrap("policy", record.policyVersion ?? "not reported by source", width),
     ...wrap("inspect", record.suggestedInspection, width),
     ...(record.indeterminateReason ? wrap("unknown", record.indeterminateReason, width, "warn") : []),
     { text: "" },

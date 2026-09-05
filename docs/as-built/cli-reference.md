@@ -25,6 +25,9 @@ This document reflects the current `rig` surface as shipped. Where live help tex
 
 ## Overview
 
+System Health diagnosis, policy, checkpoints, and dispositions are documented in
+[Agent-operated System Health diagnosis](../reference/health-diagnosis.md).
+
 - Binary: `rig`
 - Top-level command groups: `64`
 - Output mode: human-readable by default; many commands also support `--json`

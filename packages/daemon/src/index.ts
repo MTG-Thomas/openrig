@@ -365,7 +365,9 @@ export async function startServer(port?: number) {
   // PL-004 Phase C: graceful shutdown — stop scheduler before process
   // exit so any in-flight policy evaluation completes (or is awaited).
   // Multi-bind: close every serve() instance in parallel.
+  deps.healthDiagnosis?.start();
   const shutdown = async (sig: string) => {
+    await deps.healthDiagnosis?.stop();
     console.log(`OpenRig daemon received ${sig}; shutting down`);
     try {
       await deps.watchdogScheduler?.stop();
