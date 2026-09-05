@@ -717,6 +717,7 @@ describe("Session routes", () => {
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);
     expect(body).toHaveLength(1);
+    expect(body[0].nodeId).toBe(node.id);
     expect(body[0].logicalId).toBe("dev.impl");
     expect(body[0].nodeKind).toBe("agent");
     expect(body[0].canonicalSessionName).toBe("dev-impl@test-rig");

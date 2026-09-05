@@ -31,6 +31,7 @@ const SPEC_4A_ROUTES = [
   "/healthz",
   "/api/queue/recent-transitions?scope=rig&rig=openrig-build&limit=20",
   "/api/queue/recent-transitions?scope=instance&limit=20",
+  "/api/health?limit=200",
 ];
 
 describe("daemon client = the §4.A table, one module, nothing else (FR-8/FR-9)", () => {
@@ -64,6 +65,7 @@ describe("daemon client = the §4.A table, one module, nothing else (FR-8/FR-9)"
     await c.sliceDetail("11-production-tui-composed-system");
     await c.queueRecentTransitions({ kind: "rig", rig: "openrig-build" });
     await c.queueRecentTransitions({ kind: "instance" });
+    await (c as unknown as { healthFindings(): Promise<unknown> }).healthFindings();
 
     expect(seen.sort()).toEqual([...SPEC_4A_ROUTES].sort());
   });

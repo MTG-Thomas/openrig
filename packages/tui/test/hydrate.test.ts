@@ -10,6 +10,33 @@ import { createViewState } from "../src/state.js";
 
 const FIXTURES: Record<string, unknown> = {
   "/healthz": { ok: true, selfHostId: "mm2-openrig1" },
+  "/api/health?limit=200": {
+    schema: "openrig.health-list/v0alpha1",
+    evaluatedAt: "2026-09-05T12:00:00.000Z",
+    total: 1,
+    limit: 200,
+    truncated: false,
+    records: [{
+      schema: "openrig.health/v0alpha1",
+      id: "health-context-dev-impl",
+      detector: "context.pressure",
+      category: "context",
+      scope: { type: "seat", rigId: "01JRIG", seatId: "01JNODEIMPL" },
+      severity: "warning",
+      confidence: "high",
+      status: "active",
+      startedAt: "2026-09-05T11:50:00.000Z",
+      lastObservedAt: "2026-09-05T11:59:00.000Z",
+      window: { source: "context-usage", startedAt: "2026-09-04T12:00:00.000Z", endedAt: "2026-09-05T12:00:00.000Z", limit: 3, retentionSeconds: 86400 },
+      freshness: { state: "fresh", evaluatedAt: "2026-09-05T12:00:00.000Z", newestSourceAt: "2026-09-05T11:59:00.000Z", maxAgeSeconds: 600, ageSeconds: 60 },
+      summary: "Seat context utilization reached 84%.",
+      evidence: [{ type: "context-usage", sourceOrder: 0, observedAt: "2026-09-05T11:59:00.000Z", nodeId: "01JNODEIMPL", sessionId: "session-1", usedPercentage: 84, available: true, fresh: true }],
+      threshold: "fresh context utilization >= 80%",
+      explanation: "The latest sample reports 84% utilization.",
+      suggestedInspection: "Inspect the seat's context source, recency, and continuity state.",
+      indeterminateReason: null,
+    }],
+  },
   "/api/rigs/summary": [
     { id: "01JRIG", name: "myrig", nodeCount: 4, hasServices: false, latestSnapshotAt: null, latestSnapshotId: null, archivedAt: null, lifecycleState: "running" },
     { id: "01JDOWN", name: "downrig", nodeCount: 2, hasServices: false, latestSnapshotAt: null, latestSnapshotId: null, archivedAt: null, lifecycleState: "recoverable" },
@@ -53,7 +80,7 @@ const FIXTURES: Record<string, unknown> = {
   },
   "/api/rigs/01JRIG/nodes": [
     {
-      rigId: "01JRIG", rigName: "myrig", logicalId: "dev.impl", podId: "01JPOD", podNamespace: "dev",
+      nodeId: "01JNODEIMPL", rigId: "01JRIG", rigName: "myrig", logicalId: "dev.impl", podId: "01JPOD", podNamespace: "dev",
       role: "implementer", canonicalSessionName: "dev-impl@myrig", nodeKind: "agent", runtime: "claude-code",
       sessionStatus: "running", startupStatus: "ready", restoreOutcome: "resumed", oriented: "verified",
       terminalActive: false, lastActivityAt: "2026-08-02T09:15:00.000Z",
@@ -66,7 +93,7 @@ const FIXTURES: Record<string, unknown> = {
       hasAssignedWork: true, pendingWorkCount: 2,
     },
     {
-      rigId: "01JRIG", rigName: "myrig", logicalId: "dev.qa", podId: "01JPOD", podNamespace: "dev",
+      nodeId: "01JNODEQA", rigId: "01JRIG", rigName: "myrig", logicalId: "dev.qa", podId: "01JPOD", podNamespace: "dev",
       role: "qa", canonicalSessionName: "dev-qa@myrig", nodeKind: "agent", runtime: "codex",
       sessionStatus: null, startupStatus: null, restoreOutcome: "n-a", oriented: "n-a",
       terminalActive: null, lastActivityAt: null,
@@ -161,6 +188,16 @@ describe("snapshot hydration over the §4.A reads (Phase 2)", () => {
   it("hydrates the execution projection through the existing generic view route", async () => {
     const snap = await hydrateSnapshot(fixtureClient());
     expect(snap.execution).toMatchObject({ view: "execution", mission: "release-0.5.8" });
+  });
+  it("hydrates the bounded canonical health projection and stable node join", async () => {
+    const snap = await hydrateSnapshot(fixtureClient());
+    expect((snap as unknown as { health: unknown }).health).toMatchObject({
+      availability: "loaded",
+      total: 1,
+      truncated: false,
+      records: [{ id: "health-context-dev-impl", scope: { seatId: "01JNODEIMPL" } }],
+    });
+    expect(snap.hosts[0]?.rigs[0]?.pods[0]?.agents[0]).toMatchObject({ nodeId: "01JNODEIMPL" });
   });
   it("requests the currently selected mission rather than reusing the daemon default", async () => {
     const mission = "release-next";

@@ -13,7 +13,7 @@
 //   - A failed read leaves its portion honest-empty and records a NAMED error.
 import { DaemonClient } from "./daemon-client.js";
 import { parse as parseYaml } from "yaml";
-import type { AgentRow, FleetSnapshot, HostNode, NeedsItem, PodNode, QueueRead, RecentTransitionSnap, SeatActivitySummary, SliceDetailSnap, SpecEntry, ViewState } from "./types.js";
+import type { AgentRow, FleetSnapshot, HealthRecord, HostNode, NeedsItem, PodNode, QueueRead, RecentTransitionSnap, SeatActivitySummary, SliceDetailSnap, SpecEntry, ViewState } from "./types.js";
 import { isHumanSeatSession } from "./pulse/pulse-model.js";
 
 // Narrow read-shapes: just the served fields this module consumes (names match
@@ -28,10 +28,19 @@ interface RigStatusRead {
   seatsTotal?: number;
   seatsRunning?: number;
 }
-interface HealthRead {
+interface InstanceHealthRead {
   selfHostId?: string | null;
 }
+interface HealthProjectionRead {
+  schema: "openrig.health-list/v0alpha1";
+  evaluatedAt: string | null;
+  total: number;
+  limit: number;
+  truncated: boolean;
+  records: HealthRecord[];
+}
 interface NodeInventoryRead {
+  nodeId?: string;
   logicalId: string;
   podNamespace?: string | null;
   nodeKind: "agent" | "infrastructure";
@@ -193,6 +202,7 @@ function toAgentRow(node: NodeInventoryRead): AgentRow {
   const identityDownranked = node.identityVerdict?.verdict === "mismatch"
     || node.identityVerdict?.verdict === "pane_missing";
   return {
+    nodeId: node.nodeId,
     name: node.logicalId,
     runtime: node.runtime ?? "unknown",
     model: node.model ?? null,
@@ -347,8 +357,9 @@ export async function hydrateSnapshot(
   const wantsRecent = wantsTopologyScope && (!topologyLeaf || topologyLeaf.kind === "host" || topologyLeaf.kind === "rig");
   const wantsGraph = wantsTopologyScope && (!viewContext || viewContext.viewTab === "graph");
 
-  const [health, agg, summaries, library, review, streamItems, attention, blocked, inProgress, pending, recentlyFinished, scopesRead, executionRead, sliceDetailRead] = await Promise.all([
-    safe<HealthRead>("health", () => client.health()),
+  const [instanceHealth, healthProjection, agg, summaries, library, review, streamItems, attention, blocked, inProgress, pending, recentlyFinished, scopesRead, executionRead, sliceDetailRead] = await Promise.all([
+    safe<InstanceHealthRead>("health", () => client.health()),
+    safe<HealthProjectionRead>("health-findings", () => client.healthFindings()),
     safe<AttentionAggregateRead>("attention-aggregate", () => client.attentionAggregate()),
     safe<RigSummaryRead[]>("rigs-summary", () => client.rigsSummary()),
     wantsSpecs ? safe<SpecLibraryRead[]>("specs-library", () => client.specsLibrary()) : Promise.resolve(null),
@@ -465,7 +476,7 @@ export async function hydrateSnapshot(
   const aggHosts = agg?.hosts ?? [];
   const localHost: HostNode = {
     id: "local",
-    name: health?.selfHostId?.trim() || "local",
+    name: instanceHealth?.selfHostId?.trim() || "local",
     reachable: true,
     rigs,
   };
@@ -589,6 +600,15 @@ export async function hydrateSnapshot(
   const execution = (executionRead?.rows?.[0] ?? null) as FleetSnapshot["execution"];
 
   return {
+    health: healthProjection
+      ? {
+          availability: "loaded",
+          evaluatedAt: healthProjection.evaluatedAt,
+          total: healthProjection.total,
+          truncated: healthProjection.truncated,
+          records: healthProjection.records,
+        }
+      : { availability: "unavailable", evaluatedAt: null, total: 0, truncated: false, records: [] },
     hosts: [localHost, ...remoteHosts],
     specs,
     needs,

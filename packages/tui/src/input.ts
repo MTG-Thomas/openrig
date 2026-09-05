@@ -124,6 +124,7 @@ export function resolveEscapeAction(
   commandEditing = false,
 ): Action | null {
   if (event.key !== "escape" || commandEditing) return null;
+  if (state.healthOpen) return { type: "health-close" };
   if (state.filter) return { type: "filter", text: "" };
   if (state.section !== "scopes") return null;
   if (state.executionOpen) return { type: "execution-close" };

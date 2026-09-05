@@ -23,6 +23,7 @@ import { barCells, flashActive, reducedMotion, spinnerFrame } from "./motion.js"
 import { explorerWidth, MOTION_FRAME_MS } from "./visual-layout.js";
 import type { ColorMode, Token } from "./theme.js";
 import { detailPage, fieldLine, sectionRule, listItem, alignedRow, LABEL_W } from "./detail.js";
+import { healthAgentLines, healthDetailLines, healthListLines, healthSummaryLine } from "./health/health-model.js";
 import type { Action, FleetSnapshot, LoadState, NeedsItem, RecentTransitionSnap, RowFlash, Screen, ViewState } from "./types.js";
 
 interface ContentLine {
@@ -279,6 +280,16 @@ function agentDetailLines(
           ...(agent.activity?.eventAt ? [{ label: "changed", value: agent.activity.eventAt }] : []),
         ],
       },
+      {
+        title: "HEALTH",
+        lines: healthAgentLines(snap, {
+          kind: "seat",
+          rigId: rig.id ?? rig.name,
+          seatId: agent.nodeId ?? null,
+          seatName: agent.name,
+          local: found.host === snap.hosts[0],
+        }, contentWidth),
+      },
       { title: `CURRENT WORK · ${currentRows.length}`, lines: workRows(currentRows, contentWidth) },
       {
         title: "QUEUE",
@@ -312,14 +323,15 @@ function agentDetailLines(
 }
 
 function tabsLine(state: ViewState, suffix: string): ContentLine[] {
-  // S12: four tabs, each its own click zone (the first zone starts at
+  // Each topology tab is its own click zone (the first zone starts at
   // content col 0, preserving the focus-marker floor); `tab graph` = the
   // topology graph view (frame-01 hatchet mainline)
-  const labels: Array<[Extract<ViewState["viewTab"], "table" | "recent" | "overview" | "graph">, string]> = [
+  const labels: Array<[Extract<ViewState["viewTab"], "table" | "recent" | "overview" | "graph" | "health">, string]> = [
     ["table", state.viewTab === "table" ? "[ TABLE ]" : "  TABLE  "],
     ["recent", state.viewTab === "recent" ? "[ RECENT ]" : "  RECENT  "],
     ["overview", state.viewTab === "overview" ? "[ OVERVIEW ]" : "  OVERVIEW  "],
     ["graph", state.viewTab === "graph" ? "[ GRAPH ]" : "  GRAPH  "],
+    ["health", state.viewTab === "health" ? "[ HEALTH ]" : "  HEALTH  "],
   ];
   const text = `${labels.map(([, label]) => label).join("")}   ${suffix}`;
   const zones: ContentLine["zones"] = [];
@@ -524,7 +536,8 @@ function instanceContentLines(
   motion: MotionCtx,
 ): ContentLine[] {
   const lines = tabsLine(state, `instance ${host.name}`);
-  const scope = { kind: "instance" } as const;
+  const scope = { kind: "instance", local: host === snap.hosts[0] } as const;
+  if (state.viewTab === "health") return [...lines, { text: "" }, ...healthListLines(snap, scope, contentWidth)];
   if (state.viewTab === "recent") {
     const recent = recentLines(snap, scope, contentWidth, true);
     return recent.length > 0
@@ -583,6 +596,7 @@ function instanceContentLines(
     return lines;
   }
 
+  lines.push(healthSummaryLine(snap, scope, contentWidth));
   lines.push({ text: state.filter ? `/ filter instance rows: ${state.filter} · / replace · esc clear` : "/ filter instance rows…" });
   const columns = instanceAgentColumns(contentWidth);
   lines.push({ text: tableRow(columns, { rig: "RIG", pod: "POD", seat: "SEAT", runtime: "RT", context: "CTX", status: "STATE", queue: "Q", work: "WORK", now: "NOW" }) });
@@ -640,6 +654,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
   const contentWidthForGraph = contentWidth;
   void contentWidthForGraph;
   const lines: ContentLine[] = [];
+  if (state.healthOpen) return healthDetailLines(snap, state.healthOpen, contentWidth);
   // PULSE is a FULL-WIDTH view handled by an early return in renderScreen
   // (renderPulseScreen) — it never reaches the sidebar+content layout below.
   if (state.section === "topology") {
@@ -696,6 +711,8 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       .filter((a) => !state.filter || a.name.includes(state.filter) || a.pod.includes(state.filter));
     const suffix = `rig ${rig.name}${podFilter ? ` · pod ${podFilter}` : ""}${state.filter ? ` · filter "${state.filter}"` : ""}`;
     lines.push(...tabsLine(state, suffix));
+    const healthScope = { kind: "rig" as const, rigId: rig.id ?? rig.name, rigName: rig.name, local: host === snap.hosts[0] };
+    if (state.viewTab === "health") return [...lines, { text: "" }, ...healthListLines(snap, healthScope, contentWidth)];
     if (state.viewTab === "recent") {
       const recent = recentLines(snap, { kind: "rig", rig: rig.name }, contentWidth, true);
       return recent.length > 0
@@ -747,6 +764,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       lines.push({ text: `  style: ${state.graphStyle} · style hatchet|braille|braille-fallback rides the command bar` });
       return lines;
     }
+    lines.push(healthSummaryLine(snap, healthScope, contentWidth));
     lines.push({ text: state.filter ? `/ filter agents: ${state.filter} · / replace · esc clear` : "/ filter agents…" });
     if (state.viewTab === "overview") {
       lines.push(

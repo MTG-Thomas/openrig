@@ -570,6 +570,7 @@ function buildInventoryEntry(
     identityVerdict: identityVerdict?.verdict ?? null,
   });
   return {
+    nodeId: row.node_id,
     rigId: row.rig_id,
     rigName: row.rig_name,
     logicalId: row.logical_id,

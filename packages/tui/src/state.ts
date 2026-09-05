@@ -23,7 +23,7 @@ export function defaultSections(): SectionDef[] {
 }
 
 export function emptySnapshot(): FleetSnapshot {
-  return { hosts: [], specs: [], needs: [], humanQueueProbed: false, execution: null, executionMission: null, attention: [], blocked: [], inProgress: [], seatActivity: [], pending: [], recentlyFinished: [], hostsDown: [], stream: [], readErrors: [] };
+  return { health: { availability: "unavailable", evaluatedAt: null, total: 0, truncated: false, records: [] }, hosts: [], specs: [], needs: [], humanQueueProbed: false, execution: null, executionMission: null, attention: [], blocked: [], inProgress: [], seatActivity: [], pending: [], recentlyFinished: [], hostsDown: [], stream: [], readErrors: [] };
 }
 
 export interface CreateViewStateOptions {
@@ -66,6 +66,7 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
     scopesCollapseReqs: false,
     scopesNarrative: false,
     executionOpen: null,
+    healthOpen: null,
   };
   const listeners = new Set<(s: ViewState) => void>();
 
@@ -98,6 +99,7 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
       next.scopesMission = null;
       next.scopesSelected = null;
       next.executionOpen = null;
+      next.healthOpen = null;
       if (!state.sections.some((s) => s.name === action.section))
         return { ...next, lastError: `unknown section "${action.section}"` };
       return syncSelection(
@@ -108,10 +110,10 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
     case "scopes-mission-open": {
       const key = `scopes-mission:${action.mission}`;
       const expanded = state.expanded.includes(key) ? state.expanded : [...state.expanded, key];
-      return resetContent({ ...next, section: "scopes", scopesMission: action.mission, scopesSelected: null, executionOpen: null, expanded });
+      return resetContent({ ...next, section: "scopes", scopesMission: action.mission, scopesSelected: null, executionOpen: null, healthOpen: null, expanded });
     }
     case "scopes-open":
-      return resetContent({ ...next, section: "scopes", scopesMission: action.mission, scopesSelected: { mission: action.mission, slice: action.slice }, scopesNarrative: false, executionOpen: null });
+      return resetContent({ ...next, section: "scopes", scopesMission: action.mission, scopesSelected: { mission: action.mission, slice: action.slice }, scopesNarrative: false, executionOpen: null, healthOpen: null });
     case "scopes-reqs":
       return { ...next, scopesCollapseReqs: !next.scopesCollapseReqs };
     case "scopes-narrative":
@@ -120,6 +122,10 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
       return resetContent({ ...next, executionOpen: action.key });
     case "execution-close":
       return resetContent({ ...next, executionOpen: null });
+    case "health-open":
+      return { ...resetContent(next), healthOpen: action.findingId };
+    case "health-close":
+      return { ...resetContent(next), healthOpen: null };
     case "palette-open":
       return { ...next, palette: { query: "", selection: 0 } };
     case "palette-close":
@@ -147,11 +153,11 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
     case "tab": {
       // 5.2 Wave B — PULSE is a FLEET-WIDE top-level view (the mock's tab set),
       // reachable from ANY content context, unlike the section-scoped tabs.
-      if (action.tab === "pulse") return resetContent({ ...next, viewTab: "pulse" });
+      if (action.tab === "pulse") return resetContent({ ...next, viewTab: "pulse", healthOpen: null });
       const rigSpec = state.section === "specs" && state.drill.at(-1)?.kind === "spec" && findSpec(snap, state.drill.at(-1)!.name)?.kind === "rig";
-      const allowed = rigSpec ? ["topology", "configuration", "yaml"] : state.section === "topology" ? ["table", "recent", "overview", "graph"] : [];
+      const allowed = rigSpec ? ["topology", "configuration", "yaml"] : state.section === "topology" ? ["table", "recent", "overview", "graph", "health"] : [];
       if (!allowed.includes(action.tab)) return { ...next, lastError: `tab ${action.tab} is not available in this content context` };
-      return resetContent({ ...next, viewTab: action.tab });
+      return { ...resetContent({ ...next, viewTab: action.tab }), healthOpen: null };
     }
     case "content-scroll":
       return { ...next, contentOffset: Math.min(Math.max(0, state.contentOffset + action.delta), state.contentMaxOffset) };
@@ -203,14 +209,14 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
       // section's filter (founder direct-drive catch — a specs filter leaked
       // into the topology table and blanked it)
       const filter = drilled.section === state.section ? drilled.filter : "";
-      return syncSelection(resetContent({ ...sectionState, filter, viewTab: spec?.kind === "rig" ? "configuration" : "table" }), snap);
+      return syncSelection({ ...resetContent({ ...sectionState, filter, viewTab: spec?.kind === "rig" ? "configuration" : "table" }), healthOpen: null }, snap);
     }
     case "cross": {
       const crossed = crossNav(next, action.kind, action.name, snap, action.target);
       if (crossed.lastError) return crossed;
       const sectionState = clearScopeCoordinatesOnSectionChange(state, crossed);
       const filter = crossed.section === state.section ? crossed.filter : "";
-      return syncSelection({ ...sectionState, filter }, snap);
+      return syncSelection({ ...sectionState, filter, healthOpen: null }, snap);
     }
     default:
       return { ...next, lastError: "unknown action" };

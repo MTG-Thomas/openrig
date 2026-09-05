@@ -100,6 +100,7 @@ describe("Node Inventory Projection", () => {
 
     const entries = getNodeInventory(db, "rig-1");
     expect(entries).toHaveLength(2);
+    expect(entries.find((e) => e.logicalId === "dev.impl")?.nodeId).toBe("node-1");
     expect(entries.map((e) => e.logicalId).sort()).toEqual(["dev.impl", "infra.server"]);
     expect(entries.every((e) => e.podNamespace === "dev")).toBe(true);
   });

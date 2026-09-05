@@ -615,6 +615,9 @@ export function identityVerdictDownranksRunning(
 export type RigLifecycleState = "running" | "recoverable" | "stopped" | "degraded" | "attention_required";
 
 export interface NodeInventoryEntry {
+  /** Stable daemon node identity. Health scopes and other canonical records
+   * key seats by this value; logicalId remains the human-facing address. */
+  nodeId: string;
   rigId: string;
   rigName: string;
   logicalId: string;

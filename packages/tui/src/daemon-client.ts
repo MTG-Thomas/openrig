@@ -95,6 +95,11 @@ export class DaemonClient {
     return this.get("/healthz");
   }
 
+  /** Bounded canonical findings; the TUI filters this one record set by scope. */
+  healthFindings(limit = 200) {
+    return this.get(`/api/health?limit=${limit}`);
+  }
+
   // --- Crash-cart fleet restore (B1 conductor — the TUI OWNS the kick/poll/cancel
   //     lifecycle so it can retain the attempt id, render progress from the poll stream,
   //     and reach the cancel endpoint; it no longer delegates blind to a buffered child) ---

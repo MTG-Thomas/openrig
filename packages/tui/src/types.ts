@@ -4,6 +4,8 @@
 // it introduces no new data model.
 
 export interface AgentRow {
+  /** Stable daemon node identity used by canonical seat-scoped records. */
+  nodeId?: string;
   name: string;
   runtime: string;
   /** effective served model; separate from runtime, null when not served */
@@ -255,7 +257,59 @@ export interface RecentTransitionSnap {
   target: string;
 }
 
+export type HealthScope =
+  | { type: "instance"; instanceId: string }
+  | { type: "rig"; rigId: string }
+  | { type: "seat"; rigId: string; seatId: string }
+  | { type: "mission"; projectId: string; missionId: string }
+  | { type: "slice"; projectId: string; missionId: string; sliceId: string };
+
+export interface HealthEvidenceReference {
+  type: "queue-transition" | "watchdog-history" | "work-graph" | "topology-activity" | "context-usage" | "occupant-model" | "lifecycle-receipt";
+  sourceOrder: number;
+  observedAt: string | null;
+  [key: string]: unknown;
+}
+
+export interface HealthRecord {
+  schema: "openrig.health/v0alpha1";
+  id: string;
+  detector: string;
+  category: "behavioral" | "process" | "governance" | "epistemic" | "context";
+  scope: HealthScope;
+  severity: "info" | "warning" | "critical";
+  confidence: "high" | "medium";
+  status: "active" | "cleared" | "indeterminate";
+  startedAt: string | null;
+  lastObservedAt: string | null;
+  window: { source: HealthEvidenceReference["type"] | "mixed"; startedAt: string; endedAt: string; limit: number; retentionSeconds: number };
+  freshness: {
+    state: "fresh" | "stale" | "unavailable" | "contradictory";
+    evaluatedAt: string;
+    newestSourceAt: string | null;
+    maxAgeSeconds: number;
+    ageSeconds: number | null;
+  };
+  summary: string;
+  evidence: HealthEvidenceReference[];
+  threshold: string;
+  explanation: string;
+  suggestedInspection: string;
+  indeterminateReason: string | null;
+}
+
+export interface HealthSnapshot {
+  /** loaded means the canonical bounded list read answered, including [] */
+  availability: "loaded" | "unavailable";
+  evaluatedAt: string | null;
+  total: number;
+  truncated: boolean;
+  records: HealthRecord[];
+}
+
 export interface FleetSnapshot {
+  /** Canonical daemon health records. Absent on old/demo snapshots. */
+  health?: HealthSnapshot;
   /** SCOPES view (d64d2f5c): store-direct mission/slice projections; absent on old daemons (honest-empty). */
   scopes?: MissionScopesSnap[];
   /** EXECUTION view: the daemon's existing derived six-question projection. */
@@ -326,7 +380,7 @@ export interface DrillSegment {
   name: string;
 }
 
-export type ViewTab = "table" | "recent" | "overview" | "graph" | "topology" | "configuration" | "yaml" | "pulse";
+export type ViewTab = "table" | "recent" | "overview" | "graph" | "health" | "topology" | "configuration" | "yaml" | "pulse";
 
 export type Action =
   | { type: "noop" }
@@ -357,6 +411,8 @@ export type Action =
   /** EXECUTION view: open one derived row's detail page (key = slice:/lane:/park:/basis:/sources); close returns to the overview. */
   | { type: "execution-open"; key: string }
   | { type: "execution-close" }
+  | { type: "health-open"; findingId: string }
+  | { type: "health-close" }
   | { type: "palette-open" }
   | { type: "palette-close" }
   | { type: "palette-query"; query: string }
@@ -377,6 +433,8 @@ export interface SectionDef {
 }
 
 export interface ViewState {
+  /** Canonical health finding opened from any instance/rig/seat surface. */
+  healthOpen: string | null;
   /** SCOPES view: the mission whose execution story is open (null = selector only). */
   scopesMission: string | null;
   /** SCOPES view: the opened slice (null = tree only). */
