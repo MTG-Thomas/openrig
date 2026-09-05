@@ -418,7 +418,13 @@ export function healthEpisodeId(detector: string, scope: HealthScope, episodeSta
 
 /** Canonical bytes for daemon, CLI, TUI, fixtures, and content-addressed tests. */
 export function canonicalHealthJson(records: readonly HealthRecord[]): string {
-  return stableJson([...records].sort((a, b) => a.id.localeCompare(b.id, "en-US"))) + "\n";
+  return stableJson([...records].sort((a, b) => {
+    const idOrder = a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    if (idOrder !== 0) return idOrder;
+    const aJson = stableJson(a);
+    const bJson = stableJson(b);
+    return aJson < bJson ? -1 : aJson > bJson ? 1 : 0;
+  })) + "\n";
 }
 
 function projectionIndeterminateReason(draft: HealthRecordDraft): string | null {

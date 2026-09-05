@@ -95,6 +95,7 @@ describe("health projection contract", () => {
     expect(refreshed.id).toBe(active.id);
     expect(cleared.id).toBe(active.id);
     expect(later.id).not.toBe(active.id);
+    expect(canonicalHealthJson([refreshed, active])).toBe(canonicalHealthJson([active, refreshed]));
     expect(canonicalHealthJson([later, active])).toBe(canonicalHealthJson([active, later]));
     expect(canonicalHealthJson([active])).toBe(canonicalHealthJson([active]));
   });
