@@ -289,6 +289,14 @@ interface ReplayCorpus {
       independentEffects: unknown[];
     };
     scopeAdmissionCandidate: {
+      scope: { type: string; projectId: string; missionId: string; sliceId: string };
+      technicalReview: {
+        candidate: string;
+        base: string;
+        reviewedAt: string;
+        outcome: string;
+        source: { artifact: string; sha256: string };
+      };
       governingAuthorityEvidence: { availability: string };
     };
     naturalContextClear: {
@@ -330,13 +338,30 @@ describe("release 0.5.9 replay corpus", () => {
     expect(subject.autoUnparks.every(({ transitionId }) => transitionId < subject.clearingTransition.transitionId)).toBe(true);
   });
 
-  it("keeps the signed quiescence and missing-authority cases distinct", () => {
+  it("keeps the signed quiescence and source-bound S13 case distinct", () => {
     const clear = corpus.cases.signedQuiescence;
     expect(clear.authority).toMatchObject({ effectCount: 1, stopOnMismatch: true });
     expect(clear.protectedSeats).toHaveLength(16);
     expect(clear.inFlightHeavyProcesses).toEqual([]);
     expect(clear.independentEffects).toEqual([]);
-    expect(corpus.cases.scopeAdmissionCandidate.governingAuthorityEvidence.availability).toBe("unavailable");
+    const s13 = corpus.cases.scopeAdmissionCandidate;
+    expect(s13.scope).toEqual({
+      type: "slice",
+      projectId: "openrig",
+      missionId: "release-0.5.9",
+      sliceId: "OPR.0.5.9.13",
+    });
+    expect(s13.technicalReview).toEqual({
+      candidate: "857d05a0dc91b0eb0793a475820b55255783ed48",
+      base: "128e87deb9121e0bc038747f3b50a798c50186f2",
+      reviewedAt: "2026-09-04T03:31:00Z",
+      outcome: "CLEAR",
+      source: {
+        artifact: "state/review50/r059-s13-effective-model-identity-r2-CLEAR-857d05a0d-20260904.md",
+        sha256: "c84a013b72a98d75249972b3a78e3e2a366a718d2488269c1da9e7f72de5d0ed",
+      },
+    });
+    expect(s13.governingAuthorityEvidence.availability).toBe("unavailable");
   });
 
   it("represents native context clearing as a stable identity with no intervention", () => {

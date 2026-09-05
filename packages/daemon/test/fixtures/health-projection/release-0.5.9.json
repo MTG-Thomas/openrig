@@ -130,12 +130,17 @@
       "independentEffects": []
     },
     "scopeAdmissionCandidate": {
-      "origin": "release-0.5.9-recorded-candidate",
-      "scope": { "type": "slice", "projectId": "openrig", "missionId": "release-0.5.9", "sliceId": "OPR.0.5.9.7" },
-      "admissionReceipt": {
-        "candidate": "128e87deb9121e0bc038747f3b50a798c50186f2",
-        "observedAt": "2026-09-04T02:26:21Z",
-        "outcome": "PASS"
+      "origin": "release-0.5.9-s13-reviewed-technical-subject",
+      "scope": { "type": "slice", "projectId": "openrig", "missionId": "release-0.5.9", "sliceId": "OPR.0.5.9.13" },
+      "technicalReview": {
+        "candidate": "857d05a0dc91b0eb0793a475820b55255783ed48",
+        "base": "128e87deb9121e0bc038747f3b50a798c50186f2",
+        "reviewedAt": "2026-09-04T03:31:00Z",
+        "outcome": "CLEAR",
+        "source": {
+          "artifact": "state/review50/r059-s13-effective-model-identity-r2-CLEAR-857d05a0d-20260904.md",
+          "sha256": "c84a013b72a98d75249972b3a78e3e2a366a718d2488269c1da9e7f72de5d0ed"
+        }
       },
       "governingAuthorityEvidence": {
         "availability": "unavailable",
