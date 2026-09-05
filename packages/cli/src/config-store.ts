@@ -1253,6 +1253,18 @@ export class ConfigStore {
     const parent = getNestedValue(fileConfig, parentParts) as Record<string, unknown> | undefined;
     if (parent && leaf in parent) {
       delete parent[leaf];
+      if (key === "health.context_pressure.warning_percent" || key === "health.context_pressure.critical_percent") {
+        const workspaceRoot = (getNestedValue(fileConfig, KEY_TO_PATH["workspace.root"]) as string | undefined)
+          || readOpenRigEnv(ENV_MAP["workspace.root"].primary, ENV_MAP["workspace.root"].legacy)
+          || DEFAULT_WORKSPACE_ROOT;
+        const warning = getNestedValue(fileConfig, KEY_TO_PATH["health.context_pressure.warning_percent"])
+          ?? getDefaultValue("health.context_pressure.warning_percent", workspaceRoot);
+        const critical = getNestedValue(fileConfig, KEY_TO_PATH["health.context_pressure.critical_percent"])
+          ?? getDefaultValue("health.context_pressure.critical_percent", workspaceRoot);
+        if ((warning as number) >= (critical as number)) {
+          throw new Error(`Invalid context-pressure policy: warning (${warning}) must be less than critical (${critical})`);
+        }
+      }
     }
     writeFileSync(this.configPath, JSON.stringify(fileConfig, null, 2) + "\n", "utf-8");
   }

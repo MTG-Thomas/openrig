@@ -253,14 +253,23 @@ describe("ConfigStore — extended namespaces (User Settings v0)", () => {
     expect(store.resolve().health.contextPressure).toEqual({ warningPercent: 95, criticalPercent: 99 });
 
     store.set("health.context_pressure.critical_percent", "100");
-    store.set("health.context_pressure.warning_percent", "97");
-    expect(store.resolve().health.contextPressure).toEqual({ warningPercent: 97, criticalPercent: 100 });
+    store.set("health.context_pressure.warning_percent", "99");
+    expect(store.resolve().health.contextPressure).toEqual({ warningPercent: 99, criticalPercent: 100 });
     expect(store.resolveWithSource("health.context_pressure.warning_percent").source).toBe("file");
     expect(() => store.set("health.context_pressure.critical_percent", "97")).toThrow(/warning.*critical/i);
 
     for (const raw of ["0", "101", "95.5", "95junk"]) {
       expect(() => store.set("health.context_pressure.warning_percent", raw)).toThrow(/integer/i);
     }
+
+    const persistedBeforeReset = readFileSync(configPath, "utf-8");
+    expect(() => store.reset("health.context_pressure.critical_percent")).toThrow(/warning.*critical/i);
+    expect(readFileSync(configPath, "utf-8")).toBe(persistedBeforeReset);
+    expect(JSON.parse(persistedBeforeReset)).toMatchObject({
+      health: { contextPressure: { warningPercent: 99, criticalPercent: 100 } },
+    });
+    expect(store.resolveWithSource("health.context_pressure.warning_percent")).toMatchObject({ value: 99, source: "file" });
+    expect(store.resolveWithSource("health.context_pressure.critical_percent")).toMatchObject({ value: 100, source: "file" });
 
     store.reset("health.context_pressure.warning_percent");
     store.reset("health.context_pressure.critical_percent");

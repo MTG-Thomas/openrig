@@ -6,7 +6,7 @@
 // daemon's UI route surfaces a different value than the CLI.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -197,12 +197,21 @@ describe("SettingsStore (User Settings v0)", () => {
     });
 
     store.set("health.context_pressure.critical_percent", "100");
-    store.set("health.context_pressure.warning_percent", "97");
-    expect(store.resolveContextPressurePolicy()).toEqual({ warningPercent: 97, criticalPercent: 100 });
+    store.set("health.context_pressure.warning_percent", "99");
+    expect(store.resolveContextPressurePolicy()).toEqual({ warningPercent: 99, criticalPercent: 100 });
     expect(() => store.set("health.context_pressure.critical_percent", "97")).toThrow(/warning.*critical/i);
     for (const raw of ["0", "101", "95.5", "95junk"]) {
       expect(() => store.set("health.context_pressure.warning_percent", raw)).toThrow(/integer/i);
     }
+
+    const persistedBeforeReset = readFileSync(configPath, "utf-8");
+    expect(() => store.reset("health.context_pressure.critical_percent")).toThrow(/warning.*critical/i);
+    expect(readFileSync(configPath, "utf-8")).toBe(persistedBeforeReset);
+    expect(JSON.parse(persistedBeforeReset)).toMatchObject({
+      health: { contextPressure: { warningPercent: 99, criticalPercent: 100 } },
+    });
+    expect(store.resolveOne("health.context_pressure.warning_percent")).toMatchObject({ value: 99, source: "file" });
+    expect(store.resolveOne("health.context_pressure.critical_percent")).toMatchObject({ value: 100, source: "file" });
 
     store.reset("health.context_pressure.warning_percent");
     store.reset("health.context_pressure.critical_percent");

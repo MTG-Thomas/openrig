@@ -1115,6 +1115,16 @@ export class SettingsStore {
     const parent = getNestedValue(fc, parts.slice(0, -1)) as Record<string, unknown> | undefined;
     if (parent && parts[parts.length - 1]! in parent) {
       delete parent[parts[parts.length - 1]!];
+      if (key === "health.context_pressure.warning_percent" || key === "health.context_pressure.critical_percent") {
+        const workspaceRoot = this.resolveWorkspaceRootRaw(fc);
+        const warning = getNestedValue(fc, KEY_TO_PATH["health.context_pressure.warning_percent"])
+          ?? getDefaultValue("health.context_pressure.warning_percent", workspaceRoot);
+        const critical = getNestedValue(fc, KEY_TO_PATH["health.context_pressure.critical_percent"])
+          ?? getDefaultValue("health.context_pressure.critical_percent", workspaceRoot);
+        if ((warning as number) >= (critical as number)) {
+          throw new Error(`Invalid context-pressure policy: warning (${warning}) must be less than critical (${critical})`);
+        }
+      }
     }
     writeFileSync(this.configPath, JSON.stringify(fc, null, 2) + "\n", "utf-8");
   }
