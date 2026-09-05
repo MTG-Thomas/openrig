@@ -29,6 +29,10 @@ stops re-presentation. Disabling policy stops automatic admission and presentati
 Ownership changes do not silently reroute existing occurrences.
 Outside a managed seat, name the writer with `rig health --actor <name> ...`.
 Managed-seat transport identity takes precedence over that declared name.
+Only the occurrence's assigned owner may record its disposition or request human
+notification. Other agents can advise the owner; a policy-owner change does not
+grant custody of existing occurrences. Writes retain the sender's identity
+provenance on the queue transition.
 
 Policy controls detector enablement, ceremony/review/wake thresholds, checkpoint
 observation window and freshness, diagnostic owner, cooldown, re-presentation
@@ -82,8 +86,18 @@ both sides of the ratio. An empty outcome list requires the same census evidence
 as a nonempty one. `boundedAuthority.applies=null` means unknown, never false.
 Product-outcome meaning and bounded-effect authority remain attributed authored
 evidence; they are not proven merely by ingestion. Findings label that source
-and use medium confidence. This authority assessment is distinct from the
-project/mission/slice documents supplied to the diagnosing agent.
+and use medium confidence. Required evidence references must resolve to nonempty,
+readable local files (at most 1 MiB) inside the configured workspace. Absolute
+paths and paths relative to that workspace are supported; other reference kinds
+(including section addresses) remain unavailable. Resolved evidence records carry
+a SHA-256; missing files and symlink escapes remain attributed claims but force
+indeterminate source truth and cannot admit a diagnosis. Availability is checked
+again on every projection; presence does not certify the artifact's meaning.
+This authority assessment is distinct from the
+project/mission/slice documents supplied to the diagnosing agent. Embedded
+context is limited to canonical `SPEC.md` and project/mission/slice YAML files
+at their corresponding work-tree nodes, at most 64 KiB each. Other paths and
+symlink aliases are reported unavailable without embedding their contents.
 
 Checkpoints are audited under `health/checkpoints/history/`; replaying identical
 bytes writes nothing. Later censuses advance observation time. High-to-high

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, readdirSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ import { adaptQueueTransitionEvidence, boundHealthEvidence, deriveHealthSourceFr
 import { HealthCheckpointSource, type HealthCheckpoint } from "../src/domain/health-checkpoints.js";
 import { Hono } from "hono";
 import { healthDiagnosisRoutes } from "../src/routes/health-diagnosis.js";
+import { healthAuthority } from "../src/domain/health-context.js";
 import { healthRoutes } from "../src/routes/health.js";
 
 const cleanup: Array<() => void> = [];
@@ -115,10 +116,13 @@ async function checkpointSetup() {
   // Reconstruct the fixture's exact dated auto-unpark receipts, not invented timestamps for the un-timed IDs.
   const insert = t.db.prepare("INSERT INTO queue_transitions(transition_id,qitem_id,ts,state,actor_session) VALUES(?,?,?,?,?)");
   for (const event of subject.autoUnparks) insert.run(event.transitionId, row.qitemId, event.observedAt, "pending", "watchdog");
+  const workspace = join(t.home, "workspace"); mkdirSync(workspace);
+  const evidencePath = join(workspace, "release-0.5.9.json");
+  writeFileSync(evidencePath, JSON.stringify(fixture));
   const cp: HealthCheckpoint = { schema: "openrig.health-checkpoint/v0alpha1", lineageQitemId: row.qitemId, scope: subject.scope,
     startedAt: subject.window.startedAt, observedAt: now, transitionIds: subject.autoUnparks.map((x: { transitionId: number }) => x.transitionId),
-    productOutcomes: [{ id: "closure", observedAt: now, evidenceRef: `queue-transition:${subject.clearingTransition.transitionId}` }],
-    productCensusRef: "fixture:release-0.5.9/staleConductor", boundedAuthority: { applies: false, evidenceRef: "fixture:stale-conductor-authority" },
+    productOutcomes: [{ id: "closure", observedAt: now, evidenceRef: evidencePath }],
+    productCensusRef: evidencePath, boundedAuthority: { applies: false, evidenceRef: evidencePath },
     authorityPaths: { project: [], mission: [], slice: [] } };
   const source = new HealthCheckpointSource(t.home, t.queue, t.policy, () => now);
   const projection = new HealthProjectionService(source, () => t.policy.read());
@@ -142,7 +146,7 @@ it("replays dated real ceremony receipts through live checkpoint ingestion, clea
   t.source.submit({ ...t.cp, observedAt: "2026-09-04T04:52:00Z" }, "author@rig");
   expect(t.projection.list().records[0]!.id).toBe(first.id);
   t.time("2026-09-04T04:53:00Z");
-  t.source.submit({ ...t.cp, observedAt: "2026-09-04T04:53:00Z", boundedAuthority: { applies: true, evidenceRef: "fixture:signed-quiescence" } }, "author@rig");
+  t.source.submit({ ...t.cp, observedAt: "2026-09-04T04:53:00Z", boundedAuthority: { applies: true, evidenceRef: t.cp.boundedAuthority.evidenceRef } }, "author@rig");
   expect(t.projection.get(first.id)?.status).toBe("cleared");
   await t.service.evaluate("actor@rig", true);
   const transitions = t.queue.listTransitions(`qitem-health-diagnosis-${first.id}`).length;
@@ -219,14 +223,14 @@ it("human escalation requires both an admitted agent disposition and ready deliv
   let ready = false;
   const readiness = vi.fn(async () => ({ ready, reason: "fixture readiness" }));
   const service = new HealthDiagnosisService({ queue: t.queue, projection: t.projection, policy: t.policy, authority: () => [], humanReadiness: readiness });
-  await expect(service.notify(id, "actor@rig")).rejects.toThrow("policy");
+  await expect(service.notify(id, "owner@rig")).rejects.toThrow("policy");
   expect(readiness).not.toHaveBeenCalled();
   service.dispose(id, "owner@rig", { verdict: "established pathology", causalStart: "fixture:initial-reminder", steering: "Retire stale directive at next boundary", uncertainty: "Fixture evidence only", evidenceRefs: ["fixture:stale-conductor"] });
-  await expect(service.notify(id, "actor@rig")).rejects.toThrow("readiness");
+  await expect(service.notify(id, "owner@rig")).rejects.toThrow("readiness");
   expect(t.queue.list({ limit: 100 })).toHaveLength(1);
   ready = true;
-  const first = await service.notify(id, "actor@rig");
-  const second = await service.notify(id, "actor@rig");
+  const first = await service.notify(id, "owner@rig");
+  const second = await service.notify(id, "owner@rig");
   expect(second.qitemId).toBe(first.qitemId);
   expect(first.deliveryOutcome).not.toBe("posted");
   expect(t.queue.list({ limit: 100 })).toHaveLength(2);
@@ -262,4 +266,88 @@ it("policy threshold changes immediately reevaluate the structured source with t
   expect(t.projection.get(id)?.status).toBe("cleared");
   t.policy.apply(p, "actor@rig");
   expect(t.projection.list().records[0]!.policyVersion).toBe(t.policy.read().version);
+});
+
+
+it("requires occurrence custody before disposition or human effects and retains route identity provenance", async () => {
+  const t = setup(); const p = t.policy.read().policy;
+  t.policy.apply({ ...p, freshnessSeconds: 86400, diagnosis: { ...p.diagnosis, enabled: true, owner: "owner@rig", cooldownSeconds: 60 }, human: { address: "operator@external", conditions: ["established pathology"] } }, "actor@rig");
+  const readiness = vi.fn(async () => ({ ready: true, reason: "fixture" }));
+  const service = new HealthDiagnosisService({ queue: t.queue, projection: t.projection, policy: t.policy, now: () => "2026-09-05T21:01:01Z", authority: () => [], humanReadiness: readiness });
+  const id = (await t.service.evaluate("actor@rig", true)).actions[0]!.qitemId;
+  const app = new Hono(); app.use("*", async (c, next) => { c.set("healthDiagnosis" as never, service); await next(); });
+  app.route("/api/health-diagnosis", healthDiagnosisRoutes());
+  const disposition = { verdict: "established pathology", causalStart: null, steering: "Inspect", uncertainty: "Fixture", evidenceRefs: ["fixture"] };
+  const post = (action: string, actor: string) => app.request(`/api/health-diagnosis/${id}/${action}`, { method: "POST", headers: { "x-openrig-session": actor, "content-type": "application/json" }, body: JSON.stringify({ actor: "owner@rig", value: disposition }) });
+  const before = t.db.prepare("SELECT total_changes() AS n").get();
+  expect((await post("disposition", "peer@rig")).status).toBe(400);
+  expect((await post("notify", "peer@rig")).status).toBe(400);
+  expect(readiness).not.toHaveBeenCalled();
+  expect(t.db.prepare("SELECT total_changes() AS n").get()).toEqual(before);
+  expect(service.show(id).disposition).toBeNull();
+  expect((await service.evaluate("system:health", true)).actions[0]!.action).toBe("represent");
+  expect((await post("disposition", "owner@rig")).status).toBe(200);
+  expect(t.queue.listTransitions(id).at(-1)).toMatchObject({ actorSession: "owner@rig", identityProvenance: "transport:v1" });
+  const unchanged = t.db.prepare("SELECT total_changes() AS n").get();
+  expect((await post("disposition", "peer@rig")).status).toBe(400); // identical replay is still an owner action
+  expect((await post("notify", "peer@rig")).status).toBe(400);
+  expect(t.db.prepare("SELECT total_changes() AS n").get()).toEqual(unchanged);
+  expect((await post("notify", "owner@rig")).status).toBe(200);
+  expect(readiness).toHaveBeenCalledTimes(1);
+  const human = t.queue.list({ tag: "health-human" })[0]!;
+  expect(t.queue.listTransitions(human.qitemId)[0]).toMatchObject({ actorSession: "owner@rig", identityProvenance: "transport:v1" });
+});
+
+it("keeps unresolved checkpoint evidence indeterminate and never admits a diagnostic row", async () => {
+  for (const field of ["census", "authority", "outcome"]) {
+    const t = await checkpointSetup(); const cp = structuredClone(t.cp);
+    const p = t.policy.read().policy;
+    t.policy.apply({ ...p, diagnosis: { ...p.diagnosis, enabled: true, owner: "owner@rig" } }, "actor@rig");
+    if (field === "census") cp.productCensusRef = "missing-census.md";
+    if (field === "authority") cp.boundedAuthority.evidenceRef = "missing-authority.md";
+    if (field === "outcome") cp.productOutcomes[0]!.evidenceRef = "missing-outcome.md";
+    t.source.submit(cp, "author@rig");
+    expect(t.source.entries()[0]!.checkpoint).toEqual(cp);
+    expect(t.projection.list().records[0]!.status).toBe("indeterminate");
+    expect((await t.service.evaluate("actor@rig", true)).actions).toHaveLength(0);
+    expect(t.service.list()).toHaveLength(0);
+  }
+});
+
+it("embeds only canonical authority files with contained real paths", async () => {
+  const t = await checkpointSetup(); const workspace = join(t.home, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  const outside = join(t.home, "outside.yaml"); writeFileSync(outside, "outside-marker");
+  const arbitrary = join(workspace, "other.yaml"); writeFileSync(arbitrary, "arbitrary-marker");
+  const spec = join(workspace, "SPEC.md"); writeFileSync(spec, "# Project authority");
+  symlinkSync(outside, join(workspace, "project.yaml"));
+  const mission = join(workspace, "missions", "release-0.5.9"); mkdirSync(mission, { recursive: true });
+  symlinkSync(outside, join(mission, "SPEC.md"));
+  t.source.submit({ ...t.cp, authorityPaths: { project: [outside, arbitrary, spec], mission: [join(mission, "SPEC.md")], slice: [] } }, "author@rig");
+  const record = t.projection.list().records[0]!;
+  const authority = healthAuthority(workspace, t.source, record);
+  expect(authority.find((a) => a.path === spec)).toMatchObject({ state: "available", content: "# Project authority" });
+  for (const path of [outside, arbitrary, join(workspace, "project.yaml"), join(mission, "SPEC.md")]) {
+    expect(authority.find((a) => a.path === path)).toMatchObject({ state: "unavailable" });
+  }
+  expect(JSON.stringify(authority)).not.toContain("outside-marker");
+  expect(JSON.stringify(authority)).not.toContain("arbitrary-marker");
+});
+
+
+it("rechecks evidence availability after submission and refuses empty, non-file and escaped evidence", async () => {
+  const t = await checkpointSetup(); const p = t.policy.read().policy;
+  t.policy.apply({ ...p, diagnosis: { ...p.diagnosis, enabled: true, owner: "owner@rig" } }, "actor@rig");
+  t.source.submit(t.cp, "author@rig");
+  expect(t.projection.list().records[0]!.status).toBe("active");
+  const evidence = t.cp.productCensusRef;
+  for (const state of ["empty", "directory", "symlink", "missing"]) {
+    rmSync(evidence, { force: true, recursive: true });
+    if (state === "empty") writeFileSync(evidence, "");
+    if (state === "directory") mkdirSync(evidence);
+    if (state === "symlink") { const outside = join(t.home, "outside-evidence.md"); writeFileSync(outside, "Unapproved evidence"); symlinkSync(outside, evidence); }
+    expect(t.projection.list().records[0]!.status).toBe("indeterminate");
+    expect((await t.service.evaluate("actor@rig", true)).actions).toHaveLength(0);
+    expect(t.service.list()).toHaveLength(0);
+  }
 });

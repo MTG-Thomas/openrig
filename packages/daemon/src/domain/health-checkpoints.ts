@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { readHealthArtifact } from "./health-context.js";
 import type { QueueRepository } from "./queue-repository.js";
 import { healthHash, object, type HealthPolicyStore } from "./health-policy.js";
 import { adaptQueueTransitionEvidence, adaptLifecycleReceiptEvidence, boundHealthEvidence, deriveHealthSourceFreshness, type HealthScope } from "./health-projection.js";
@@ -31,7 +32,7 @@ function scope(value: unknown): asserts value is HealthScope {
 }
 export class HealthCheckpointSource implements HealthObservationSource {
   private readonly dir: string;
-  constructor(home: string, private readonly queue: QueueRepository, private readonly policy: HealthPolicyStore, private readonly now = () => new Date().toISOString()) {
+  constructor(home: string, private readonly queue: QueueRepository, private readonly policy: HealthPolicyStore, private readonly now = () => new Date().toISOString(), private readonly workspace = join(home, "workspace")) {
     this.dir = join(home, "health", "checkpoints");
   }
   private validate(value: unknown): HealthCheckpoint {
@@ -113,10 +114,17 @@ export class HealthCheckpointSource implements HealthObservationSource {
       const refs = [...c.productOutcomes.map((p) => ({ id: p.evidenceRef, at: p.observedAt, outcome: p.id })),
         { id: current.productCensusRef, at: current.observedAt, outcome: `product census by ${stored.actor}: ${current.productOutcomes.length} outcomes` },
         { id: current.boundedAuthority.evidenceRef, at: current.observedAt, outcome: `bounded authority: ${String(current.boundedAuthority.applies)}` }];
-      const receipts = refs.map((r, i) => adaptLifecycleReceiptEvidence({ receiptId: r.id, operation: "health-outcome-checkpoint", outcome: r.outcome, observedAt: r.at, sourceOrder: evidence.length + i }));
-      const available = transitions.length === ids.size && current.boundedAuthority.applies !== null;
+      const resolved = new Map([...new Set([...c.productOutcomes, ...current.productOutcomes].map((p) => p.evidenceRef)
+        .concat(c.productCensusRef, c.boundedAuthority.evidenceRef, current.productCensusRef, current.boundedAuthority.evidenceRef))]
+        .map((ref) => [ref, readHealthArtifact(this.workspace, ref)]));
+      const missing = [...resolved].filter(([, result]) => result.state !== "available").map(([ref]) => ref);
+      const receipts = refs.flatMap((r, i) => {
+        const result = resolved.get(r.id)!;
+        return result.state === "available" ? [adaptLifecycleReceiptEvidence({ receiptId: r.id, operation: "health-outcome-checkpoint", outcome: `${r.outcome}; sha256:${result.sha256}`, observedAt: r.at, sourceOrder: evidence.length + i })] : [];
+      });
+      const available = transitions.length === ids.size && current.boundedAuthority.applies !== null && missing.length === 0;
       return [{ kind: "coordination-lineage" as const, scope: current.scope, episodeStartedAt: stored.episodeStartedAt,
-        lastObservedAt: current.observedAt, conditionCleared: !active, confidence: "medium" as const, sourceDescription: `Outcome census attributed to ${stored.actor}; latest census: ${current.transitionIds.length} transitions, ${current.productOutcomes.length} product outcomes, bounded authority ${String(current.boundedAuthority.applies)}. Product and authority meaning are authored evidence, not inferred by the daemon.`, lineageId: c.lineageQitemId,
+        lastObservedAt: current.observedAt, conditionCleared: !active, confidence: "medium" as const, sourceDescription: `Outcome census attributed to ${stored.actor}; latest census: ${current.transitionIds.length} transitions, ${current.productOutcomes.length} product outcomes, bounded authority ${String(current.boundedAuthority.applies)}. Product and authority meaning are authored evidence, not inferred by the daemon. Unavailable references: ${missing.length ? missing.join(", ") : "none"}.`, lineageId: c.lineageQitemId,
         coordinationTransitions: c.transitionIds.length, productStateChanges: c.productOutcomes.length, boundedAuthority: false,
         reviewReturns: 0, candidateChanges: 0, newRiskClasses: 0,
         source: boundHealthEvidence([...evidence, ...receipts], { source: "mixed", startedAt: new Date(Math.max(Date.parse(c.startedAt), Date.parse(now) - policy.observationWindowSeconds * 1000)).toISOString(), endedAt: now, limit: 11002, retentionSeconds: policy.observationWindowSeconds }, deriveHealthSourceFreshness({ evaluatedAt: now, newestSourceAt: current.observedAt, maxAgeSeconds: policy.freshnessSeconds, available })) }];

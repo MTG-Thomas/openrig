@@ -1,6 +1,7 @@
-import { readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, statSync, realpathSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { resolveAllowedFile } from "./files/path-safety.js";
 import type { HealthRecord } from "./health-projection.js";
 import type { AuthorityReference } from "./health-diagnosis.js";
 import type { HealthCheckpointSource } from "./health-checkpoints.js";
@@ -8,6 +9,24 @@ import { loadHumanRegistry } from "./gateway/human-registry.js";
 import { loadConfig } from "./gateway/slack/config.js";
 import { resolveSecret } from "./gateway/slack/secrets.js";
 import { verifyScopes, verifyChannelMembership } from "./gateway/slack/slack-api.js";
+
+/** Local evidence files only. Unsupported addresses retain unavailable truth.
+ * Reuse the file surface's realpath resolver; callers choose whether to embed bytes. */
+export function readHealthArtifact(workspace: string, path: string, maxBytes = 1048576, embed = false): AuthorityReference {
+  try {
+    const root = realpathSync(workspace);
+    const canonical = resolveAllowedFile([{ name: "workspace", canonicalPath: root }], "workspace", relative(resolve(workspace), resolve(workspace, path)));
+    const size = statSync(canonical).size;
+    if (size === 0 || size > maxBytes) return { path, state: "unavailable" };
+    const bytes = readFileSync(canonical);
+    return { path, state: "available", ...(embed ? { content: bytes.toString("utf8") } : {}), sha256: createHash("sha256").update(bytes).digest("hex") };
+  } catch { return { path, state: "unavailable" }; }
+}
+
+// Context is the work tree's canonical authority files, never an arbitrary file browser.
+function canonicalAuthorityPath(path: string): boolean {
+  return /^(SPEC\.md|project\.yaml|missions\/[^/]+\/(SPEC\.md|mission\.yaml)|missions\/[^/]+\/slices\/[^/]+\/(SPEC\.md|slice\.yaml))$/.test(path);
+}
 
 export function healthAuthority(workspace: string, checkpoints: HealthCheckpointSource, record: HealthRecord): AuthorityReference[] {
   const lineage = record.evidence.find((e) => e.type === "queue-transition");
@@ -20,9 +39,10 @@ export function healthAuthority(workspace: string, checkpoints: HealthCheckpoint
   }
   return [...paths].map((path) => {
     try {
-      if (!/\.(md|yaml|yml)$/i.test(path) || statSync(path).size > 65536) return { path, state: "unavailable" };
-      const content = readFileSync(path, "utf8");
-      return { path, state: "available", content, sha256: createHash("sha256").update(content).digest("hex") };
+      const selected = relative(resolve(workspace), resolve(workspace, path));
+      const actual = relative(realpathSync(workspace), realpathSync(resolve(workspace, path)));
+      if (!canonicalAuthorityPath(selected) || actual !== selected) return { path, state: "unavailable" };
+      return readHealthArtifact(workspace, path, 65536, true);
     } catch { return { path, state: "unavailable" }; }
   });
 }

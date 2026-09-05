@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { HealthDiagnosisService } from "../domain/health-diagnosis.js";
 import type { HealthPolicyStore } from "../domain/health-policy.js";
 import type { HealthCheckpointSource } from "../domain/health-checkpoints.js";
-import { requireSenderIdentity } from "./require-sender-identity.js";
+import { requireSenderIdentity, resolveRecordedProvenance } from "./require-sender-identity.js";
 
 export function healthDiagnosisRoutes(): Hono {
   const app = new Hono();
@@ -29,8 +29,8 @@ export function healthDiagnosisRoutes(): Hono {
       if (body.apply !== undefined && typeof body.apply !== "boolean") throw new Error("apply must be a boolean");
       return c.json(await service.evaluate(sender.session, body.apply === true));
     }
-    if (route[1] === "disposition") return c.json(service.dispose(route[0]!, sender.session, body.value));
-    if (route[1] === "notify") return c.json(await service.notify(route[0]!, sender.session));
+    if (route[1] === "disposition") return c.json(service.dispose(route[0]!, sender.session, body.value, resolveRecordedProvenance(c, sender)));
+    if (route[1] === "notify") return c.json(await service.notify(route[0]!, sender.session, resolveRecordedProvenance(c, sender)));
     return c.json({ error: "not_found" }, 404);
   });
   return app;

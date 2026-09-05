@@ -34,8 +34,8 @@ export class HealthDiagnosisService {
   }) {}
   private now(): string { return this.deps.now?.() ?? new Date().toISOString(); }
   private id(findingId: string): string { return `qitem-health-diagnosis-${findingId}`; }
-  private receipt(qitemId: string, actor: string, value: Omit<Receipt, "kind" | "at">): void {
-    this.deps.queue.update({ qitemId, actorSession: actor, transitionNote: JSON.stringify({ kind: "health-diagnosis", at: this.now(), ...value }) });
+  private receipt(qitemId: string, actor: string, value: Omit<Receipt, "kind" | "at">, identityProvenance: string | null = null): void {
+    this.deps.queue.update({ qitemId, actorSession: actor, identityProvenance, transitionNote: JSON.stringify({ kind: "health-diagnosis", at: this.now(), ...value }) });
   }
   show(qitemId: string) {
     const row = this.deps.queue.getById(qitemId);
@@ -109,26 +109,32 @@ export class HealthDiagnosisService {
     }
     return { policyVersion: effective.version, enabled: true, actions };
   }
-  dispose(qitemId: string, actor: string, value: unknown) {
-    this.show(qitemId);
+  private requireOwner(qitemId: string, actor: string) {
+    const diagnosis = this.show(qitemId);
+    if (diagnosis.row.destinationSession !== actor) throw new Error("health_diagnosis_owner_required");
+    return diagnosis;
+  }
+  dispose(qitemId: string, actor: string, value: unknown, identityProvenance: string | null = null) {
+    this.requireOwner(qitemId, actor);
     const d = object(value, ["verdict", "causalStart", "steering", "uncertainty", "evidenceRefs"]);
     if (!DIAGNOSIS_VERDICTS.includes(d.verdict as HealthDisposition["verdict"]) || (d.causalStart !== null && typeof d.causalStart !== "string")
       || typeof d.steering !== "string" || !d.steering.trim() || typeof d.uncertainty !== "string" || !d.uncertainty.trim()
       || !Array.isArray(d.evidenceRefs) || !d.evidenceRefs.length || d.evidenceRefs.some((r) => typeof r !== "string" || !r.trim())) throw new Error("Invalid or incomplete health disposition");
     if (healthHash(this.show(qitemId).disposition) === healthHash(d)) return this.show(qitemId);
-    this.receipt(qitemId, actor, { action: "disposition", disposition: d as unknown as HealthDisposition });
+    this.receipt(qitemId, actor, { action: "disposition", disposition: d as unknown as HealthDisposition }, identityProvenance);
     return this.show(qitemId);
   }
-  async notify(qitemId: string, actor: string) {
-    const diagnosis = this.show(qitemId);
+  async notify(qitemId: string, actor: string, identityProvenance: string | null = null) {
+    const diagnosis = this.requireOwner(qitemId, actor);
     const { human } = this.deps.policy.read().policy;
     const allowed = (human.conditions.includes("critical") && diagnosis.finding.severity === "critical" && diagnosis.finding.status === "active")
       || (human.conditions.includes("established pathology") && diagnosis.disposition?.verdict === "established pathology");
     if (!human.address || !allowed) throw new Error("health_human_policy_does_not_admit");
     const ready = await this.deps.humanReadiness?.(human.address);
     if (!ready?.ready) throw new Error(`health_human_readiness_unavailable: ${ready?.reason ?? "no verified delivery readiness"}`);
+    this.requireOwner(qitemId, actor); // Readiness may await external I/O; custody still governs the effect.
     const id = `qitem-health-human-${diagnosis.packet.finding.id}`;
-    const row = this.deps.queue.getById(id) ?? await this.deps.queue.create({ qitemId: id, sourceSession: actor, destinationSession: human.address,
+    const row = this.deps.queue.getById(id) ?? await this.deps.queue.create({ qitemId: id, sourceSession: actor, destinationSession: human.address, identityProvenance,
       body: JSON.stringify({ diagnosis: qitemId, finding: diagnosis.finding, disposition: diagnosis.disposition }, null, 2),
       summary: `System Health: ${diagnosis.finding.summary}`, evidenceRef: qitemId, tags: ["health-human", diagnosis.finding.id] });
     return { qitemId: row.qitemId, deliveryOutcome: row.deliveryOutcome ?? "pending", nextInspection: `rig queue transitions ${row.qitemId}` };
