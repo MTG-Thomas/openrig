@@ -22,6 +22,14 @@ describe("wrapPaneEnvelope — slice 23 envelope renderer (daemon-side)", () => 
     expect(out).toContain('↩ Reply: rig send driver-3@my-rig "..."');
   });
 
+  it("routes an external sender's reply through the durable human queue", () => {
+    const out = wrapPaneEnvelope("decision-maker@external", "driver@rig", "Decision received.");
+    expect(out).toContain("From: decision-maker@external");
+    expect(out).toContain('↩ Reply if needed: rig queue create --destination decision-maker@external --body "..." --verify');
+    expect(out).not.toContain("rig send decision-maker@external");
+    expect(wrapPaneEnvelope("driver@external-tools", "guard@rig", "Status.")).toContain('↩ Reply: rig send driver@external-tools "..."');
+  });
+
   it("preserves the original body verbatim between the dash separators", () => {
     const body = "Multi-line\nbody with\nthree lines.";
     const out = wrapPaneEnvelope("a@r", "b@r", body);

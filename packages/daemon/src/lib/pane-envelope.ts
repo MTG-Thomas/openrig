@@ -114,5 +114,8 @@ export function wrapPaneEnvelope(
     const genSuffix = meta.genUuid && meta.genUuid.length > 0 ? ` · gen ${meta.genUuid.slice(0, 8)}` : "";
     header.push(`Sent: ${renderShortStamp(meta.stampISO)}${genSuffix}`);
   }
-  return [...header, "---", body, "---", `↩ Reply: rig send ${senderLabel} "..."`].join("\n");
+  const reply = senderLabel.endsWith("@external")
+    ? `↩ Reply if needed: rig queue create --destination ${senderLabel} --body "..." --verify`
+    : `↩ Reply: rig send ${senderLabel} "..."`;
+  return [...header, "---", body, "---", reply].join("\n");
 }
