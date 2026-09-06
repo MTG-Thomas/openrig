@@ -1,7 +1,8 @@
 import { HealthPolicyStore } from "./domain/health-policy.js";
 import { HealthCheckpointSource } from "./domain/health-checkpoints.js";
+import { PassiveCeremonySource } from "./domain/health-passive-ceremony.js";
 import { HealthDiagnosisService } from "./domain/health-diagnosis.js";
-import { healthAuthority, healthHumanReadiness } from "./domain/health-context.js";
+import { readHealthArtifact, healthAuthority, healthHumanReadiness } from "./domain/health-context.js";
 import type { Hono } from "hono";
 import type Database from "better-sqlite3";
 import type { ExecFn } from "./adapters/tmux.js";
@@ -955,9 +956,11 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
   });
   const healthPolicy = new HealthPolicyStore(OPENRIG_HOME, () => healthSettingsStore.resolveContextPressurePolicy());
   const healthCheckpoints = new HealthCheckpointSource(OPENRIG_HOME, queueRepoInstance, healthPolicy, undefined, healthSettingsStore.resolveOne("workspace.root").value as string);
-  const healthProjection = new HealthProjectionService({ read: () => [...contextHealthSource.read(), ...healthCheckpoints.read()] }, () => healthPolicy.read());
+  const passiveCeremony = new PassiveCeremonySource(healthSettingsStore.resolveOne("workspace.root").value as string, queueRepoInstance, healthPolicy, undefined, healthCheckpoints);
+  const healthProjection = new HealthProjectionService({ read: () => [...contextHealthSource.read(), ...healthCheckpoints.read(), ...passiveCeremony.read()] }, () => healthPolicy.read());
   const healthDiagnosis = new HealthDiagnosisService({ queue: queueRepoInstance, projection: healthProjection, policy: healthPolicy,
     authority: (record) => healthAuthority(healthSettingsStore.resolveOne("workspace.root").value as string, healthCheckpoints, record),
+    resolveEvidence: (path) => readHealthArtifact(healthSettingsStore.resolveOne("workspace.root").value as string, path),
     humanReadiness: (address) => healthHumanReadiness(OPENRIG_HOME, address, deps.gatewaySubsystem?.status().state === "active"),
   });
   // OPR.0.4.3.20 FR-4 — inject contextUsageStore so refresh() can null-fill a

@@ -227,6 +227,7 @@ function renderExplanation(record: HealthRecord): void {
   console.log(`  Policy:      ${record.policyVersion ?? "not reported by source"}`);
   console.log(`  Explanation: ${record.explanation}`);
   console.log(`  Evidence:    ${JSON.stringify(record.evidence)}`);
+  if (record.ceremony) console.log(`  Diagnosis stage: ${record.ceremony.stage}\n  Normal context: ${JSON.stringify(record.ceremony)}`);
   console.log(`  Inspect:     ${record.suggestedInspection}`);
 }
 
@@ -347,10 +348,11 @@ list/explain never mutate. Diagnosis mutations use explicit subcommands; automat
     } else {
       const entries = Array.isArray(response.data) ? response.data : [response.data];
       if (!entries.length) console.log("No diagnostic occurrences. This is not a healthy assertion.");
-      for (const entry of entries as Array<{ row: { qitemId: string }; finding: HealthRecord; disposition: { verdict: string; causalStart: string | null; steering: string; uncertainty: string; evidenceRefs: string[] } | null; packet: { instructions: string }; humanDelivery: { qitemId: string; outcome: string } | null; authority: Array<{ path: string; state: string }> }>) {
+      for (const entry of entries as Array<{ row: { qitemId: string }; finding: HealthRecord; disposition: { verdict: string; causalStart: string | null; steering: string; uncertainty: string; evidenceRefs: string[] } | null; packet: { instructions: string }; humanDelivery: { qitemId: string; outcome: string } | null; notificationReadiness?: { ready: boolean; reason: string } | null; authority: Array<{ path: string; state: string }> }>) {
         console.log(`${entry.row.qitemId}  ${entry.finding.status}  ${entry.finding.detector}`);
         console.log(`  Disposition: ${entry.disposition?.verdict ?? "awaiting agent investigation"}`);
         if (path) {
+          if (entry.notificationReadiness) console.log(`  Human readiness: ${entry.notificationReadiness.ready ? "ready" : "unavailable"} — ${entry.notificationReadiness.reason}`);
           if (entry.humanDelivery) console.log(`  Human delivery: ${entry.humanDelivery.outcome} (${entry.humanDelivery.qitemId})`);
           console.log(`  Finding: ${entry.finding.id}  Policy: ${entry.finding.policyVersion ?? "unreported"}`);
           console.log(`  ${entry.finding.explanation}`);

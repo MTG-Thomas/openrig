@@ -10,7 +10,7 @@ export interface HealthPolicy {
   observationWindowSeconds: number;
   freshnessSeconds: number;
   diagnosis: { enabled: boolean; owner: string | null; detectors: string[]; cooldownSeconds: number; maxRepresentations: number };
-  human: { address: string | null; conditions: Array<"critical" | "established pathology"> };
+  human: { address: string | null; conditions: Array<"critical" | "established pathology" | "confirmed ceremony"> };
 }
 export interface EffectiveHealthPolicy {
   version: string;
@@ -53,7 +53,7 @@ export function validateHealthPolicy(value: unknown): HealthPolicy {
   number(d.cooldownSeconds, 60, 604800); number(d.maxRepresentations, 0, 10);
   const h = object(p.human, ["address", "conditions"]);
   if (h.address !== null && (typeof h.address !== "string" || !/^[a-z0-9._-]+@external$/.test(h.address))) throw new Error("Human address must be registered @external");
-  if (!Array.isArray(h.conditions) || h.conditions.some((c) => c !== "critical" && c !== "established pathology")) throw new Error("Unknown human escalation condition");
+  if (!Array.isArray(h.conditions) || h.conditions.some((c) => c !== "critical" && c !== "established pathology" && c !== "confirmed ceremony")) throw new Error("Unknown human escalation condition");
   if (h.conditions.length && !h.address) throw new Error("Human escalation requires a registered address");
   return structuredClone(value as HealthPolicy);
 }

@@ -34,7 +34,7 @@ notification. Other agents can advise the owner; a policy-owner change does not
 grant custody of existing occurrences. Writes retain the sender's identity
 provenance on the queue transition.
 
-Policy controls detector enablement, ceremony/review/wake thresholds, checkpoint
+Policy controls detector enablement, ceremony/review/wake thresholds, source
 observation window and freshness, diagnostic owner, cooldown, re-presentation
 bound, and human-escalation conditions. Edit plain JSON and apply it with the
 command; unknown keys and invalid values refuse without changing the policy.
@@ -44,7 +44,69 @@ the existing `health.context_pressure.warning_percent` and `critical_percent`
 settings, which remain configurable with `rig config`. Their defaults are 95
 and 99. CLI/TUI finding explanations show the policy version used.
 
-## Supply an outcome-boundary checkpoint
+## Passive ceremony diagnosis
+
+Ordinary queue activity can admit a diagnosis without a health checkpoint.
+The source discovers declared handoff families touched in the observation window,
+uses their explicit `mission:` / `slice:` tags, and collects exact transition IDs,
+normal project/mission/slice authority, progress and proof references, and workflow
+closure evidence. It never interprets Markdown or counts proof files, approvals,
+C1 pairing, commits, tests, or terminal rows as accepted product outcomes.
+
+At the configured traffic threshold (20 transitions by default), a fresh,
+complete family becomes `ceremony.stage=needs-diagnosis`, `status=indeterminate`,
+and `severity=info`. CLI/TUI call this **needs diagnosis**, not a confirmed
+warning. Enabled diagnosis policy admits one bounded packet even though the
+product denominator is unknown. Ordinary unavailable/stale detector records
+remain ineligible. Diagnosis and human-notification traffic are excluded from
+the numerator and cannot recursively generate another investigation.
+
+The agent reads the actual evidence, including beyond the supplied references,
+and resolves the semantic outcome granularity and consequence boundary. Use the
+existing disposition command with an optional `progress` result:
+
+```json
+{
+  "basis": "<current finding.ceremony.basis from diagnosis show>",
+  "conclusion": "established",
+  "outcomes": [{"id": "<distinct meaningful outcome>", "observedAt": "<time inside the measured interval>", "evidenceRefs": ["<normal proof path>"]}],
+  "boundedAuthority": false,
+  "boundary": "<selected SDLC boundary and why this outcome census covers the interval>",
+  "evidenceRefs": ["<inspected authority/evidence path>"],
+  "missingFacts": []
+}
+```
+
+Put this object in `progress` beside the existing verdict/steering/uncertainty
+fields. `established` affirms a complete census for the exact interval; an empty
+outcome list affirms zero outcomes, not failed discovery. `false-positive`
+clears the suspicion without inventing a denominator. `indeterminate` supplies
+no outcomes and names the missing fact in `missingFacts`. Required references
+must resolve inside the workspace; extra evidence beyond the initial packet is
+allowed. The receipt retains the actual actor, timestamp, identity provenance,
+source basis, and evidence hashes. A changed basis refuses a stale submission.
+Later evidence changes make confirmation indeterminate rather than preserving
+a false ratio. Outcome meaning remains attributed agent judgment.
+
+Only an established, current assessment permits a ratio. The projector computes
+it from the distinct listed outcomes and exact transitions; a qualifying ratio
+with no bounded-authority counter-signal becomes `confirmed` / `active` /
+`warning`. Proportionate or bounded-authority results clear the episode. An
+explicitly cleared assessment marks the end of that interval; sufficient later
+traffic in the same family starts a new episode. Repeated reads never advance
+these boundaries. One occurrence and the existing owner cooldown apply to each
+episode; a disposition stops repeated requests.
+
+This bounded source covers explicitly tagged mission work: at most 2,000 touched
+qitems, 200 roots, 1,000 members / 10,000 transitions per family, 200 workflow
+receipts, 200 declared slices, and 100 proof files per selected slice. Overflow
+refuses visibly. Context files are bounded to 64 KiB. A lineage beginning before
+the retained window remains indeterminate, with the missing interval named.
+Untagged or ambiguously mission-tagged work is outside this source's coverage;
+absence is not health. The packet includes missing context references so an agent
+can name or repair its own knowledge gap without manufacturing source truth.
+
+## Optional outcome-boundary checkpoint
 
 Live queue transitions do not, on their own, prove product outcomes or the
 authority for a bounded operation. At a meaningful outcome boundary, the agent
@@ -52,7 +114,9 @@ holding those facts may submit a census for one qitem lineage and time window. S
 to follow its declared handoff descendants; this is the normal path for work that
 passed between seats. The root alone usually misses the review/return traffic.
 Prefer the existing proof/progress/outcome artifact as evidence. Do not add a
-checkpoint to each edit or message. No checkpoint means no ceremony inference.
+checkpoint to each edit or message. This is a fallback for explicitly supplied evidence;
+normal activity uses passive diagnosis above. An existing checkpoint owns its
+lineage so the passive source does not create a duplicate episode.
 
 ```json
 {
@@ -173,21 +237,27 @@ recorded separately from an agent declaring the problem resolved.
 
 ## Human delivery
 
-Human escalation is an explicit agent action:
+An assigned agent may explicitly request human escalation:
 
 ```sh
 rig health diagnosis notify <qitem-id>
 ```
 
 It requires a registered `human.address` and an admitted `human.conditions`
-entry (`critical` or `established pathology`). The connector must be enabled
+entry (`critical`, `established pathology`, or `confirmed ceremony`). The connector must be enabled
 and pass live readiness checks. The current connector implementation verifies
 Slack scopes and channel membership; the diagnosis service itself uses a
 transport-neutral readiness port. The existing gateway owns delivery policy
 and posting. One human request is retained per episode, and its actual delivery
 outcome comes from queue receipts. `pending` is never presented as `posted`.
 Inspect the returned qitem's transitions for the connector receipt. No periodic
-health check sends a human notification or performs remediation.
+health check performs remediation. With `human.conditions=["confirmed ceremony"]`,
+the enabled diagnosis loop automatically requests one notification for an active,
+confirmed passive ceremony episode. Provisional, indeterminate, cleared, and stale
+episodes never notify. The existing readiness/gateway path owns the effect; an
+unready connector leaves a visible, deduplicated readiness receipt. Later checks
+may retry readiness but never create a second request for an existing episode.
+Read-only list/explain/preview commands never send.
 
 ## Read-only consumers and calibration
 
@@ -206,17 +276,19 @@ Lists default to 100 and cap at 200, with `total` and `truncated` explicit.
 Ceremony findings take precedence before the cap so context pressure cannot
 hide the primary signal. Narrow a truncated query; do not certify the unseen
 remainder. Empty is not healthy, unavailable is not empty, and an indeterminate
-finding cannot authorize a diagnostic occurrence. An existing occurrence may
+finding cannot authorize a diagnostic occurrence except the explicit, fresh
+`needs-diagnosis` passive candidate described above. An existing occurrence may
 receive one status-observation receipt when its source becomes indeterminate;
 that does not create another obligation or wake.
 
-Live sources currently supply context pressure and ceremony checkpoints.
+Live sources supply context pressure, passive ceremony candidates and attributed
+assessments, plus optional ceremony checkpoints.
 Behavioral and epistemic categories intentionally have no detector. Review
 carousel, redundant wakes, stale directives and scope admission have typed
 evaluators and replay controls, but the live source does not infer their missing
 candidate-change, rescue, directive-conflict or admission-authority facts.
-Unsubmitted outcome censuses and unlinked work roots remain outside ceremony
-coverage. A small lineage below the configured threshold may still deserve an
+Untagged work and undeclared relationships remain outside passive ceremony
+coverage; normal tagged work no longer requires a special outcome census. A small lineage below the configured threshold may still deserve an
 agent's inspection; the threshold is a conservative admission rule, not a
 definition of good process.
 

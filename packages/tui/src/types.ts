@@ -272,6 +272,12 @@ export interface HealthEvidenceReference {
 }
 
 export interface HealthRecord {
+  /** Passed through from the daemon; the TUI never derives confirmation. */
+  ceremony?: {
+    stage: "needs-diagnosis" | "confirmed" | "cleared" | "indeterminate";
+    basis: string;
+    context: Array<{ path: string; state: "available" | "unavailable"; sha256?: string; role: string }>;
+  };
   policyVersion?: string;
   schema: "openrig.health/v0alpha1";
   id: string;

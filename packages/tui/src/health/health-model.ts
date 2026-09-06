@@ -272,6 +272,7 @@ export function healthDetailLines(snap: FleetSnapshot, findingId: string, width:
     ...wrap("category", record.category, width),
     ...wrap("severity", record.severity, width, tokenFor(record)),
     ...wrap("status", record.status, width),
+    ...(record.ceremony ? wrap("diagnosis stage", record.ceremony.stage, width) : []),
     ...wrap("confidence", record.confidence, width),
     ...wrap("freshness", `${record.freshness.state} · source age ${age(record)}`, width),
     ...wrap("started", record.startedAt ?? "—", width),
@@ -286,6 +287,10 @@ export function healthDetailLines(snap: FleetSnapshot, findingId: string, width:
     { text: "" },
     sectionRule(`EVIDENCE · ${record.evidence.length}`, width),
   ];
+  if (record.ceremony) {
+    for (const ref of record.ceremony.context) lines.push(...wrap("normal context", `${ref.role}: ${ref.path} (${ref.state}${ref.sha256 ? ` sha256:${ref.sha256}` : ""})`, width));
+    lines.push(...wrap("assessment basis", record.ceremony.basis, width));
+  }
   if (record.evidence.length === 0) lines.push(...wrap("evidence", "none served", width, "warn"));
   for (const evidence of record.evidence) {
     lines.push(...wrap(evidence.type, evidenceText(evidence), width));

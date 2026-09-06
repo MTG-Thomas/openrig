@@ -110,7 +110,31 @@ export interface BoundedHealthEvidence {
   };
 }
 
+/** Passive traffic is a question for an agent, not a ratio or a diagnosis. */
+export interface CeremonyProgressAssessment {
+  basis: string;
+  conclusion: "established" | "false-positive" | "indeterminate";
+  outcomes: Array<{ id: string; observedAt: string; evidenceRefs: string[] }>;
+  boundedAuthority: boolean | null;
+  boundary: string;
+  evidenceRefs: string[];
+  missingFacts: string[];
+}
+export interface PassiveCeremony {
+  origin: "passive";
+  stage: "needs-diagnosis" | "confirmed" | "cleared" | "indeterminate";
+  lineageId: string;
+  basis: string;
+  transitionIds: number[];
+  context: Array<{ path: string; state: "available" | "unavailable"; sha256?: string; role: string }>;
+  workflowReceipts: Array<{ trailId: string; instanceId: string; stepId: string; qitemId: string; closureReason: string; actor: string; at: string; evidence: unknown }>;
+  assessment?: { result: CeremonyProgressAssessment; actor: string; at: string; transitionId: number; identityProvenance: string | null };
+  missingFacts: string[];
+}
+
 export interface HealthRecordDraft {
+  episodeKey?: string;
+  ceremony?: PassiveCeremony;
   detector: string;
   category: HealthCategory;
   scope: HealthScope;
@@ -127,6 +151,7 @@ export interface HealthRecordDraft {
 }
 
 export interface HealthRecord {
+  ceremony?: PassiveCeremony;
   policyVersion?: string;
   schema: typeof HEALTH_RECORD_SCHEMA;
   id: string;
@@ -388,7 +413,8 @@ export function projectHealthRecord(draft: HealthRecordDraft): HealthRecord {
   const episodeStartedAt = draft.startedAt ?? draft.source.query.startedAt;
   return {
     schema: HEALTH_RECORD_SCHEMA,
-    id: healthEpisodeId(detector, draft.scope, episodeStartedAt),
+    id: healthEpisodeId(detector, draft.scope, episodeStartedAt, draft.episodeKey),
+    ...(draft.ceremony ? { ceremony: structuredClone(draft.ceremony) } : {}),
     detector,
     category: draft.category,
     scope: cloneScope(draft.scope),
@@ -408,10 +434,10 @@ export function projectHealthRecord(draft: HealthRecordDraft): HealthRecord {
   };
 }
 
-export function healthEpisodeId(detector: string, scope: HealthScope, episodeStartedAt: string): string {
+export function healthEpisodeId(detector: string, scope: HealthScope, episodeStartedAt: string, episodeKey?: string): string {
   timestampMs("episodeStartedAt", episodeStartedAt);
   const digest = createHash("sha256")
-    .update(stableJson({ detector: requiredText("detector", detector), scope: cloneScope(scope), episodeStartedAt }))
+    .update(stableJson({ detector: requiredText("detector", detector), scope: cloneScope(scope), episodeStartedAt, ...(episodeKey ? { episodeKey } : {}) }))
     .digest("hex")
     .slice(0, 24);
   return `health-${digest}`;

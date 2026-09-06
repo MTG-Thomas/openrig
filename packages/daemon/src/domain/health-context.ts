@@ -44,7 +44,7 @@ export function healthAuthority(workspace: string, checkpoints: HealthCheckpoint
   const groups: Record<AuthorityLevel, string[]> = {
     project: [join(workspace, "SPEC.md"), join(workspace, "project.yaml"), ...checkpoint?.authorityPaths.project ?? []],
     mission: [...(mission ? [join(workspace, "missions", mission, "SPEC.md"), join(workspace, "missions", mission, "mission.yaml")] : []), ...checkpoint?.authorityPaths.mission ?? []],
-    slice: checkpoint?.authorityPaths.slice ?? [],
+    slice: [...checkpoint?.authorityPaths.slice ?? [], ...record.ceremony?.context.filter((r) => r.role.startsWith("slice authority")).map((r) => r.path).filter((p) => /(?:SPEC\.md|slice\.yaml)$/.test(p)) ?? []],
   };
   const belongs = (level: AuthorityLevel, path: string): boolean => {
     const parts = relative(resolve(workspace), resolve(workspace, path)).split("/");

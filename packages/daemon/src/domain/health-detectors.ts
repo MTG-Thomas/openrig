@@ -10,6 +10,7 @@ import {
   type HealthConfidence,
   type HealthEvidenceReference,
   type HealthRecord,
+  type PassiveCeremony,
   type HealthScope,
   type HealthSeverity,
   type HealthStatus,
@@ -26,6 +27,8 @@ const LIVE_CONTEXT_FRESHNESS_SECONDS = 600;
 export const HEALTH_LIST_SCHEMA = "openrig.health-list/v0alpha1" as const;
 
 interface ObservationBase {
+  episodeKey?: string;
+  ceremony?: PassiveCeremony;
   conditionCleared?: boolean;
   confidence?: HealthConfidence;
   sourceDescription?: string;
@@ -312,6 +315,7 @@ function evaluateCoordination(
   observation: Extract<HealthDetectorObservation, { kind: "coordination-lineage" }>,
   policy: HealthPolicy,
 ): HealthRecord[] {
+  if (observation.ceremony) return [evaluatePassiveCeremony(observation, policy)];
   const records: HealthRecord[] = [];
   const ratio = observation.productStateChanges === null ? null
     : observation.coordinationTransitions / Math.max(observation.productStateChanges, 1);
@@ -347,6 +351,27 @@ function evaluateCoordination(
     }));
   }
   return records;
+}
+
+function evaluatePassiveCeremony(o: Extract<HealthDetectorObservation, { kind: "coordination-lineage" }>, policy: HealthPolicy): HealthRecord {
+  const c = structuredClone(o.ceremony!);
+  const result = c.assessment?.result;
+  const current = o.source.freshness.state === "fresh";
+  const known = current && result?.conclusion === "established" && result.boundedAuthority !== null && c.missingFacts.length === 0;
+  const ratio = known ? o.coordinationTransitions / Math.max(result.outcomes.length, 1) : null;
+  const cleared = current && c.missingFacts.length === 0 && (result?.conclusion === "false-positive" || (known && (result.boundedAuthority || ratio! < policy.thresholds.ceremonyRatio)));
+  c.stage = cleared ? "cleared" : known ? "confirmed" : !current || c.assessment || c.missingFacts.length ? "indeterminate" : "needs-diagnosis";
+  const count = `${o.coordinationTransitions} coordination transitions in the declared ${o.lineageId} handoff family`;
+  const explanation = ratio === null ? `${count}; no ratio is computed. Product progress and the selected SDLC boundary require agent judgment.`
+    : `${count} for ${result!.outcomes.length} attributed meaningful product outcomes (${ratio.toFixed(1)}:1). Bounded authority: ${String(result!.boundedAuthority)}.`;
+  return record({ ...o, ceremony: c, conditionCleared: cleared }, {
+    detector: "process.ceremony-amplification", category: "process", severity: c.stage === "confirmed" ? "warning" : "info",
+    status: c.stage === "confirmed" ? "active" : cleared ? "cleared" : "indeterminate", confidence: "medium",
+    summary: `${c.stage === "needs-diagnosis" ? "Needs diagnosis: suspected ceremony amplification" : c.stage === "confirmed" ? "Confirmed ceremony signal from attributed progress" : cleared ? "Ceremony suspicion cleared by agent assessment" : "Ceremony assessment is indeterminate"} for ${o.lineageId}.`,
+    threshold: `Candidate: coordinationTransitions >= ${policy.thresholds.ceremonyTransitions}; confirmation requires attributed outcomes, ratio >= ${policy.thresholds.ceremonyRatio}, and boundedAuthority = false. Counts alone never confirm.`,
+    explanation: `${explanation}${c.assessment ? ` Assessed by ${c.assessment.actor} at ${c.assessment.at}, transition ${c.assessment.transitionId}. Boundary: ${result!.boundary}.` : ""} Missing facts: ${[...c.missingFacts, ...result?.missingFacts ?? [], ...(!current ? [`source freshness is ${o.source.freshness.state}`] : [])].join("; ") || (result ? "none declared by assessor" : "semantic outcome/boundary assessment pending")}.`,
+    suggestedInspection: `Read the normal scope/proof/workflow evidence and current authority; extend beyond this packet. Record a progress assessment with the existing diagnosis disposition for ${o.lineageId}.`,
+  });
 }
 
 function evaluateWake(
@@ -472,6 +497,8 @@ function record(
   },
 ): HealthRecord {
   return projectHealthRecord({
+    episodeKey: observation.episodeKey,
+    ceremony: observation.ceremony,
     detector: fields.detector,
     category: fields.category,
     scope: observation.scope,
