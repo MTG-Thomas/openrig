@@ -80,7 +80,9 @@ existing disposition command with an optional `progress` result:
 Put this object in `progress` beside the existing verdict/steering/uncertainty
 fields. `established` affirms a complete census for the exact interval; an empty
 outcome list affirms zero outcomes, not failed discovery. `false-positive`
-clears the suspicion without inventing a denominator. `indeterminate` supplies
+clears the suspicion without inventing a denominator when no missing facts remain.
+A false-positive assessment that still names missing facts stays indeterminate
+and does not close the episode interval. `indeterminate` supplies
 no outcomes and names the missing fact in `missingFacts`. Required references
 must resolve inside the workspace; extra evidence beyond the initial packet is
 allowed. The receipt retains the actual actor, timestamp, identity provenance,

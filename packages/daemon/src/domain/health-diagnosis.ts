@@ -138,7 +138,7 @@ export class HealthDiagnosisService {
     if (healthHash(this.show(qitemId).disposition) === healthHash(d)) return this.show(qitemId);
     const progressEvidence = d.progress === undefined ? undefined : this.validateProgress(d.progress, diagnosis.finding);
     const progress = d.progress as CeremonyProgressAssessment | undefined;
-    const episodeCleared = progress && (progress.conclusion === "false-positive" || (progress.conclusion === "established"
+    const episodeCleared = progress && progress.missingFacts.length === 0 && (progress.conclusion === "false-positive" || (progress.conclusion === "established"
       && (progress.boundedAuthority === true || diagnosis.finding.ceremony!.transitionIds.length / Math.max(progress.outcomes.length, 1) < this.deps.policy.read().policy.thresholds.ceremonyRatio)));
     if (progress?.conclusion === "established" && !episodeCleared && ["false positive", "insufficient evidence", "resolved"].includes(String(d.verdict))) throw new Error("health_progress_contradicts_disposition");
     this.receipt(qitemId, actor, { action: "disposition", disposition: d as unknown as HealthDisposition,

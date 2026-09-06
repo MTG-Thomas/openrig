@@ -357,9 +357,10 @@ function evaluatePassiveCeremony(o: Extract<HealthDetectorObservation, { kind: "
   const c = structuredClone(o.ceremony!);
   const result = c.assessment?.result;
   const current = o.source.freshness.state === "fresh";
-  const known = current && result?.conclusion === "established" && result.boundedAuthority !== null && c.missingFacts.length === 0;
+  const complete = c.missingFacts.length === 0 && !result?.missingFacts.length;
+  const known = current && complete && result?.conclusion === "established" && result.boundedAuthority !== null;
   const ratio = known ? o.coordinationTransitions / Math.max(result.outcomes.length, 1) : null;
-  const cleared = current && c.missingFacts.length === 0 && (result?.conclusion === "false-positive" || (known && (result.boundedAuthority || ratio! < policy.thresholds.ceremonyRatio)));
+  const cleared = current && complete && (result?.conclusion === "false-positive" || (known && (result.boundedAuthority || ratio! < policy.thresholds.ceremonyRatio)));
   c.stage = cleared ? "cleared" : known ? "confirmed" : !current || c.assessment || c.missingFacts.length ? "indeterminate" : "needs-diagnosis";
   const count = `${o.coordinationTransitions} coordination transitions in the declared ${o.lineageId} handoff family`;
   const explanation = ratio === null ? `${count}; no ratio is computed. Product progress and the selected SDLC boundary require agent judgment.`

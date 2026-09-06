@@ -120,6 +120,32 @@ it("rejects stale basis, wrong custody, missing refs, duplicate outcomes and inv
   expect(t.projection.list().records[0]!.explanation).not.toContain("30.0:1");
 });
 
+it("retains uncertainty and the episode boundary when a false-positive assessment names missing facts", async () => {
+  const t = await setup(); const p = t.policy.read().policy;
+  t.policy.apply({ ...p, human: { address: "operator@external", conditions: ["confirmed ceremony"] } }, "operator@rig");
+  t.setReady(true);
+  const first = t.projection.list().records[0]!;
+  const id = (await t.service.evaluate("system:health", true)).actions[0]!.qitemId;
+  const missingFacts = ["A complete product-outcome census for the observed interval"];
+  t.dispose(id, { ...t.assessment("false-positive"), missingFacts });
+  expect(t.projection.get(first.id)).toMatchObject({ status: "indeterminate", ceremony: { stage: "indeterminate", assessment: { result: { missingFacts } } } });
+  expect(t.service.show(id).receipts.filter((r) => r.action === "disposition").at(-1)?.episodeCleared).toBe(false);
+  await expect(t.service.notify(id, "owner@rig")).rejects.toThrow("confirmed_active");
+  expect(t.readiness).not.toHaveBeenCalled();
+
+  for (let i = 0; i < 20; i++) t.db.prepare("INSERT INTO queue_transitions(qitem_id,ts,state,actor_session) VALUES(?,?,?,?)").run("root", `2026-09-05T12:02:${String(i).padStart(2, "0")}.000Z`, "pending", "builder@rig");
+  t.time("2026-09-05T12:02:30.000Z");
+  expect(t.projection.list().records).toHaveLength(1);
+  expect(t.projection.list().records[0]).toMatchObject({ id: first.id, status: "indeterminate" });
+  expect(t.projection.get(first.id)?.ceremony?.transitionIds).toHaveLength(50);
+  await t.service.evaluate("system:health", true);
+  expect(t.service.list()).toHaveLength(1); expect(t.send).toHaveBeenCalledTimes(1);
+  expect(t.queue.list({ tag: "health-human" })).toHaveLength(0);
+
+  t.dispose(id, t.assessment("false-positive"));
+  expect(t.projection.get(first.id)).toMatchObject({ status: "cleared", ceremony: { stage: "cleared" } });
+});
+
 it("neither recursive diagnosis traffic nor prose closures become product progress; old source cannot wake", async () => {
   const t = await setup(); await t.service.evaluate("system:health", true);
   const id = t.service.list()[0]!.row.qitemId;
