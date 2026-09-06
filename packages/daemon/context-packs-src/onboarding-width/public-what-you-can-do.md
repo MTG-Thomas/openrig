@@ -11,7 +11,7 @@ not know exists.** So the point of what follows is not skill. It is recognition:
 lands, something rhymes, and you go check instead of building.
 
 Eighty-one-plus top-level verbs ship (capability canon refreshed through
-`capability-delta-v0.5.9`). Read this once for shape, and let it make you suspicious that a thing
+`capability-delta-v0.5.10`). Read this once for shape, and let it make you suspicious that a thing
 already exists. Model-divergence proclamations are live product (trust them; pins use canonical
 model IDs).
 
@@ -46,6 +46,11 @@ one command away. Your memory of the fleet is a claim about the past.
   daemon behaviour. They are configuration. **Watch one thing:** `source: default` does not mean
   "the documented default" — it means *derived on this box*, and can resolve somewhere quite unlike
   the path in the help text.
+- **`rig health`** — inspect bounded, explainable findings for the current seat, one stable seat,
+  a rig, or the local instance; `rig health explain <finding-id>` shows the exact window, source,
+  freshness, rule, evidence, confidence, and next inspection. Use the TUI's HEALTH tab for the
+  same records when a human also needs to see them. Empty output is never a healthy assertion,
+  list/explain never mutate, and diagnostic presentation remains explicit opt-in policy.
 
 ## Reaching another agent
 
