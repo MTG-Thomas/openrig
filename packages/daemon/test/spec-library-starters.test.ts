@@ -80,17 +80,21 @@ const DEPRECATED_KEY_PATHS: string[] = [
   "resources.hooks",
   "profiles.*.uses.hooks",
 ];
-const STARTER_AGENT_SPECS = [
-  "agents/conveyor/lead/agent.yaml",
-  "agents/conveyor/planner/agent.yaml",
-  "agents/conveyor/builder/agent.yaml",
-  "agents/conveyor/reviewer/agent.yaml",
-  "agents/design/product-designer/agent.yaml",
+// These roles resolve the work's selection instead of preloading a pipeline.
+const SELECTION_DRIVEN_AGENT_SPECS = [
   "agents/development/implementer/agent.yaml",
   "agents/development/qa/agent.yaml",
   "agents/review/independent-reviewer/agent.yaml",
   "agents/orchestration/orchestrator/agent.yaml",
 ];
+
+function expectSelectedWorkEntry(content: string): void {
+  const text = content.replace(/\s+/g, " ");
+  expect(text).toMatch(/project\.yaml -> mission\.yaml -> active slice\.yaml -> selected component or wave map -> addressed context/);
+  expect(text).toContain("product-journey-sdlc.md#resolve-the-selected-path");
+  expect(text).toMatch(/No (?:composition|selection) means light Part A/);
+}
+
 
 function assertAcyclicLaunchDependencyGraph(file: string, parsed: Record<string, unknown>): void {
   const pods = (parsed["pods"] as Array<Record<string, unknown>> | undefined) ?? [];
@@ -253,7 +257,9 @@ describe("Starter specs", () => {
 
     expect(conveyor?.summary?.toLowerCase()).toContain("station pipeline");
     expect(conveyor?.summary?.toLowerCase()).toContain("starter");
-    expect(implementationPair?.summary?.toLowerCase()).toContain("first success");
+    expect(implementationPair?.summary?.toLowerCase()).toMatch(/implementation and qa capabilities/);
+    expect(implementationPair?.summary?.toLowerCase()).toMatch(/components choose the work/);
+    expect(implementationPair?.summary?.toLowerCase()).toMatch(/no composition means light part a/);
     expect(demo?.summary?.toLowerCase()).toContain("launch-grade");
     expect(demo?.summary?.toLowerCase()).not.toContain("advanced preview");
     expect(productTeam?.summary?.toLowerCase()).toContain("advanced product-development starter");
@@ -356,10 +362,9 @@ describe("Starter specs", () => {
       expect(content).toContain("# Role:");
       // Must have substantive content (at least 200 chars)
       expect(content.length).toBeGreaterThan(200);
-      // Must mention responsibilities
-      expect(content.toLowerCase()).toContain("responsibilities");
-      // Must mention principles
-      expect(content.toLowerCase()).toContain("principles");
+      // Section titles are editorial; the four selection-driven entry contracts
+      // are checked below rather than requiring retired literal headings.
+      expect(content).toMatch(/^## .+/m);
     }
   });
 
@@ -549,21 +554,27 @@ describe("Starter specs", () => {
     expect(missing).toEqual([]);
   });
 
-  it("starter role guidance explicitly names every packaged default skill it expects agents to load", () => {
-    for (const file of STARTER_AGENT_SPECS) {
-      const yaml = readFileSync(join(SPECS_ROOT, file), "utf-8");
-      const raw = parseAgentSpec(yaml) as Record<string, unknown>;
-      const profiles = (raw["profiles"] as Record<string, Record<string, unknown>> | undefined) ?? {};
-      const defaultProfile = profiles["default"] ?? {};
-      const uses = (defaultProfile["uses"] as Record<string, unknown> | undefined) ?? {};
-      const skills = (uses["skills"] as string[] | undefined) ?? [];
+  it("SDLC role guidance resolves selected work without treating profile skills as a reading list", () => {
+    for (const file of SELECTION_DRIVEN_AGENT_SPECS) {
       const rolePath = join(SPECS_ROOT, file.replace("/agent.yaml", ""), "guidance/role.md");
-      const content = readFileSync(rolePath, "utf-8");
-
-      for (const skillId of skills) {
-        expect(content).toContain(`\`${skillId}\``);
-      }
+      const content = readFileSync(rolePath, "utf-8").replace(/\s+/g, " ");
+      expectSelectedWorkEntry(content);
+      expect(content).toMatch(/capabilities, not a mandatory reading list/);
+      expect(content).toMatch(/Role names and idle seats add no gates/);
+      expect(content).toMatch(/Explicit rigor and authored wave boundaries retain their named checks/);
     }
+
+    // Check the address actually leads to the authority it promises. Selection
+    // preserves explicit exceptions and does not silently downgrade missing refs.
+    const authority = readFileSync(resolve(SPECS_ROOT, "../../../docs/reference/product-journey-sdlc.md"), "utf8")
+      .split("## Resolve the selected path\n")[1]?.split("\n## ")[0]?.replace(/\s+/g, " ");
+    expect(authority).toBeDefined();
+    expect(authority).toMatch(/project defaults, mission defaults, then the active slice's explicit selection/);
+    expect(authority).toMatch(/narrower explicit selection replaces the broader component list/);
+    expect(authority).toMatch(/wave map for its membership, review model and boundary/);
+    expect(authority).toMatch(/named-slice exception applies only to that slice/);
+    expect(authority).toContain("sdlc-conventions.md#a1-the-flow-in-one-pass");
+    expect(authority).toMatch(/do not silently fall back from an explicitly selected rigorous path/);
   });
 
   it("public builtin agent profiles do not reference deprecated HA skill", () => {
@@ -768,20 +779,21 @@ describe("Starter specs", () => {
     expect(roleContent.toLowerCase()).toContain("principles");
   });
 
-  it("demo culture owns its roster while the orchestration skill requires topology settlement without hardcoding it", () => {
-    const demoCulture = readFileSync(join(SPECS_ROOT, "rigs/launch/demo/CULTURE.md"), "utf-8");
+  it("demo and orchestration enter selected work without waiting for unneeded seats", () => {
+    const demoCulture = readFileSync(join(SPECS_ROOT, "rigs/launch/demo/CULTURE.md"), "utf-8").replace(/\s+/g, " ");
     const orchestrationSkill = readFileSync(
       join(SPECS_ROOT, "agents/shared/skills/pods/orchestration-team/SKILL.md"),
       "utf-8",
-    );
+    ).replace(/\s+/g, " ");
 
-    expect(demoCulture).toContain("full expected demo topology");
-    expect(demoCulture).toContain("dev1.qa");
-    expect(demoCulture).toContain("rev1.r1");
-    expect(demoCulture).toContain("rev1.r2");
-    expect(orchestrationSkill).toContain("wait for the expected topology to settle");
-    expect(orchestrationSkill).toContain("Do not silently shrink the team model");
-    expect(orchestrationSkill).toContain("Your rig's roster is a fact you READ");
+    for (const content of [demoCulture, orchestrationSkill]) expectSelectedWorkEntry(content);
+    expect(demoCulture).toMatch(/Only the selected work's required capabilities need to be ready/);
+    expect(demoCulture).toMatch(/independent review fires once over the accumulated wave/);
+    expect(demoCulture).toMatch(/named rigorous slice retains its selected checks/);
+    expect(orchestrationSkill).toMatch(/Do not wait for an entire starter topology or assign extra reviews/);
+    expect(orchestrationSkill).toMatch(/Independent review fires once at the authored wave boundary/);
+    expect(orchestrationSkill).toMatch(/Preserve separately named rigorous-slice exceptions/);
+    expect(orchestrationSkill).not.toMatch(/wait for the expected topology to settle|Do not silently shrink the team model/);
     for (const demoSeat of ["orch1.lead", "dev1.qa", "rev1.r1", "rev1.r2"]) {
       expect(orchestrationSkill).not.toContain(demoSeat);
     }
