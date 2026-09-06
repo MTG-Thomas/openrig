@@ -305,6 +305,12 @@ describe("rig queue CLI", () => {
     },
   );
 
+  it("delivery verification preserves an HTTP refusal as indeterminate", async () => {
+    const result = await waitForDeliveryOutcome({ get: async <T>() => ({ status: 503, data: { error: "projection unavailable" } as T }) }, "qitem-human-http");
+    expect(result).toMatchObject({ outcome: "indeterminate", connectorAccepted: null, humanReadership: "unknown" });
+    expect(result.detail).toContain("HTTP 503");
+  });
+
   it("delivery verification reports an unreadable receipt as indeterminate, not rejected", async () => {
     const result = await waitForDeliveryOutcome(
       { get: async () => { throw new Error("daemon read timed out"); } } as never,

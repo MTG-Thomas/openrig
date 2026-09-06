@@ -75,6 +75,16 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
     logSpy.mockClear();
   });
 
+  it("records binding changes and repeats without embedding binding secrets or handles", async () => {
+    const args = ["node", "rig", "human", "set", "mike", "binding.0", "slack:backup:vault://private-marker:primary:handle=U-PRIVATE", "--reason", "change primary connector"];
+    await gatewayCommand().parseAsync(args);
+    await gatewayCommand().parseAsync(args);
+    const rows = readFileSync(join(home, "state", "human-channel-operations.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((row) => row.effect !== "started");
+    expect(rows.slice(-2).map((row) => row.effect)).toEqual(["applied", "no-op"]);
+    expect(rows.at(-1)).toMatchObject({ action: "binding", subject: "mike@external", reason: "change primary connector", provenance: "claimed:v1" });
+    expect(JSON.stringify(rows)).not.toMatch(/private-marker|U-PRIVATE/);
+  });
+
   const ready = async () => ({
     state: "ready" as const,
     configured: true,

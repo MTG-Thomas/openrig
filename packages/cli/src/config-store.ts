@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { userInfo, homedir } from "node:os";
+import { homedir } from "node:os";
 import {
   getDefaultOpenRigPath,
   readOpenRigEnv,
@@ -27,11 +27,7 @@ export interface RiggedConfig {
     pollIntervalSeconds: number;
   };
   // User Settings v0 — workspace paths.
-  // V0.3.1 slice 05 kernel-rig-as-default — operatorSeatName carries the
-  // workspace's operator seat session name (default
-  // `operator-${USER}@kernel`). Read by mission-control read layer and
-  // 2 UI cosmetic sites to replace the legacy hardcoded
-  // "human-operator@kernel" constant.
+  // Explicit operator selection; unset delegates human discovery to the registry.
   workspace: {
     root: string;
     slicesRoot: string;
@@ -229,10 +225,7 @@ const DEFAULTS = {
     specsRoot: "",
     projectsRoot: "",
     catalogPath: "",
-    // V0.3.1 slice 05 — empty default; resolve() picks up the derived
-    // `operator-${USER}@kernel` at read time via the deriveWorkspaceDefault
-    // helper so the default tracks the OS username without caching at
-    // module-load time.
+    // No synthetic username-based human address.
     operatorSeatName: "",
   },
   // OPR.0.5.3.6 D1 — derived under the OpenRig home, never a shared-docs literal.
@@ -386,10 +379,7 @@ export const VALID_KEYS = [
   // V1 Phase 4 SC-29 exception — allowlist-only additions.
   "agents.advisor_session",
   "agents.operator_session",
-  // V0.3.1 slice 05 kernel-rig-as-default — operator seat name used by
-  // mission-control read layer + 2 UI sites; default
-  // `operator-${USER}@kernel` derived in resolve(). OPENRIG_* only;
-  // no RIGGED_* legacy alias.
+  // Explicit operator override (OPENRIG_* only; no legacy alias).
   "workspace.operator_seat_name",
   // V1 Phase 5 P5-3 SC-29 exception — allowlist-only additions.
   "feed.subscriptions.action_required",
@@ -694,11 +684,8 @@ export function deriveWorkspaceDefault(key: ValidKey, workspaceRoot: string): st
     case "workspace.catalog_path":     return join(workspaceRoot, "workspace.yaml");
     case "files.allowlist":            return `workspace:${workspaceRoot}`;
     case "progress.scan_roots":        return `workspace:${workspaceRoot}`;
-    // V0.3.1 slice 05 — `operator-${USER}@kernel` derived from the
-    // OS username at resolve() time. Lockstep with the daemon's
-    // settings-store getDefaultValue("workspace.operator_seat_name")
-    // case so both sides resolve to the same default.
-    case "workspace.operator_seat_name": return `operator-${userInfo().username}@kernel`;
+    // Same unset default as the daemon settings store.
+    case "workspace.operator_seat_name": return ""; // unset: discover a registered human, never invent a kernel seat
     default: return "";
   }
 }

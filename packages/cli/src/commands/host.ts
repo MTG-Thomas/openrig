@@ -594,8 +594,9 @@ export function hostCommand(doctorDepsOverride?: DoctorDeps): Command {
     .argument("<url>", "The target daemon's address (http[s]://host:port, or host:port)")
     .option("--id <id>", "Registry id for the new host (default: derived from the hostname)")
     .option("--timeout <seconds>", "How long to wait for the target-side approval", "600")
+    .option("--human <address>", "Registered @external approval recipient on the target (required when several exist)")
     .option("--json", "JSON output")
-    .action(async (rawUrl: string, opts: { id?: string; timeout?: string; json?: boolean }) => {
+    .action(async (rawUrl: string, opts: { id?: string; timeout?: string; json?: boolean; human?: string }) => {
       // OPR.0.4.6.MH1 FR-6 — THE founder-simple add path: one pasted
       // address, one approval ON the target, done. The flag-heavy
       // `rig host add` stays as the unchanged advanced path. B1: the CLI
@@ -668,6 +669,7 @@ export function hostCommand(doctorDepsOverride?: DoctorDeps): Command {
       try {
         const res = await httpPost(`${targetBase}/api/hosts/pair-request`, {
           requester: `${userInfo().username}@${osHostname()}`,
+          ...(opts.human ? { human: opts.human } : {}),
         });
         issued = parseJson(res.body) as typeof issued;
         if (res.status !== 200 || !issued.pairId || !issued.code) {

@@ -17,6 +17,8 @@ import { OPENRIG_HOME } from "../openrig-compat.js";
 import { loadHumanRegistry } from "../domain/gateway/human-registry.js";
 import { resolveSecret } from "../domain/gateway/slack/secrets.js";
 import { resolveHumanDeliveryReadiness, type HumanDeliveryReadiness } from "../domain/gateway/human-readiness.js";
+import { requireSenderIdentity } from "./require-sender-identity.js";
+import { runChannelOperation } from "../domain/gateway/channel-operations.js";
 
 interface SubsystemHandle {
   restart: () => void;
@@ -28,6 +30,7 @@ export function gatewayRoutes(opts: {
   readiness?: (entityId: string, gatewayState: string) => Promise<HumanDeliveryReadiness | null>;
 } = {}): Hono {
   const app = new Hono();
+  let adminTail: Promise<unknown> = Promise.resolve();
 
   app.get("/human/:entityId/readiness", async (c) => {
     const entityId = c.req.param("entityId");
@@ -48,31 +51,46 @@ export function gatewayRoutes(opts: {
     return c.json({ ok: true, readiness });
   });
 
-  app.post("/slack/enable", async (c) => {
+  app.post("/slack/:operation", async (c) => {
+    const operation = c.req.param("operation");
+    if (operation !== "enable" && operation !== "disable") return c.notFound();
+    const body = (await c.req.json<{ actor?: string; reason?: string }>().catch(() => ({} as { actor?: string; reason?: string }))) ?? {};
+    const actor = requireSenderIdentity(c, { verb: `slack ${operation}`, bodyClaim: typeof body.actor === "string" ? body.actor : null });
+    if (!actor.ok) return actor.response;
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (operation === "disable" && !reason) return c.json({ error: "reason_required", message: "Disabling human delivery requires --reason describing the shutdown." }, 400);
     const queueRepo = c.get("queueRepo" as never) as QueueRepository | undefined;
     const subsystem = c.get("gatewaySubsystem" as never) as SubsystemHandle | undefined;
-    if (!queueRepo || !subsystem) return c.json({ error: "gateway_admin_unavailable" }, 503);
+    if (!subsystem || (operation === "enable" && !queueRepo)) return c.json({ error: "gateway_admin_unavailable" }, 503);
     const home = opts.home ?? OPENRIG_HOME;
-    const cfg = loadConfig(home);
-    // Item 9 — seed the pre-existing backlog as history BEFORE the wire goes live.
-    const seen = new SeenStore(path.join(home, "state", "slack-outbound-seen.jsonl"));
-    const { seeded, onlineStatus } = await seedBacklogAsHistory({
-      queue: makeQueuePorts(queueRepo),
-      seen,
-      filter: { minimumLevel: cfg.minimumLevelThatPosts },
+    const pending = adminTail.then(async () => {
+      const cfg = loadConfig(home);
+      const enabled = operation === "enable";
+      const state = () => ({ enabled: loadConfig(home).enabled, active: subsystem.status().state === "active" });
+      return runChannelOperation({
+        action: operation, subject: "slack", actor: actor.session, provenance: actor.provenance,
+        reason: reason || "enable human delivery", before: state(),
+        run: async () => {
+          let value = { seeded: 0, onlineStatus: `slack connector already ${enabled ? "enabled" : "disabled"}; no change` };
+          if (cfg.enabled === enabled) return { value, after: state(), effect: "no-op" };
+          if (enabled) {
+            const registry = loadHumanRegistry(home);
+            if (!registry.ok) throw new Error(`Cannot seed the existing delivery backlog: ${registry.error}`);
+            const seen = new SeenStore(path.join(home, "state", "slack-outbound-seen.jsonl"));
+            value = await seedBacklogAsHistory({
+              queue: makeQueuePorts(queueRepo!, { loadHumanRegistry: () => registry }), seen,
+              filter: { minimumLevel: cfg.minimumLevelThatPosts },
+            });
+          } else value.onlineStatus = "slack connector disabled";
+          saveConfig({ ...cfg, enabled }, home);
+          subsystem.restart();
+          return { value, after: state(), effect: "applied" };
+        },
+      }, home);
     });
-    saveConfig({ ...cfg, enabled: true }, home);
-    subsystem.restart();
-    return c.json({ ok: true, seeded, onlineStatus, subsystem: subsystem.status() });
-  });
-
-  app.post("/slack/disable", (c) => {
-    const subsystem = c.get("gatewaySubsystem" as never) as SubsystemHandle | undefined;
-    if (!subsystem) return c.json({ error: "gateway_admin_unavailable" }, 503);
-    const home = opts.home ?? OPENRIG_HOME;
-    saveConfig({ ...loadConfig(home), enabled: false }, home);
-    subsystem.restart();
-    return c.json({ ok: true, subsystem: subsystem.status() });
+    adminTail = pending.catch(() => undefined);
+    const result = await pending;
+    return c.json({ ok: true, ...result.value, receipt: result.receipt, subsystem: subsystem.status() });
   });
 
   return app;

@@ -13,6 +13,7 @@
 // never in the repo.
 import { Command } from "commander";
 import { DaemonClient } from "../client.js";
+import { resolveSenderSession, SENDER_FALLBACK } from "../sender-identity.js";
 import type {
   loadConfig as LoadConfigFn,
   saveConfig as SaveConfigFn,
@@ -81,6 +82,8 @@ export function slackCommand(deps: SlackDeps = {}): Command {
     .option("--source-label <label>", "label shown in the posted message footer (where the queue lives)")
     .option("--secrets-env-file <path>", "path to the 0600 env file with SLACK_BOT_TOKEN / SLACK_APP_TOKEN")
     .option("--required-scopes <csv>", "comma-separated bot scopes to require at verify time")
+    .option("--reason <reason>", "Reason recorded with the configuration change", "configure human delivery")
+    .option("--actor <actor>", "Named operator when outside a managed seat")
     .action(async (opts) => {
       const surface = await loadSurface();
       const cur = surface.loadConfig(deps.home);
@@ -94,8 +97,14 @@ export function slackCommand(deps: SlackDeps = {}): Command {
         secretsEnvFile: opts.secretsEnvFile ?? cur.secretsEnvFile,
         requiredScopes: opts.requiredScopes ? String(opts.requiredScopes).split(",").map((s: string) => s.trim()).filter(Boolean) : cur.requiredScopes,
       };
-      const p = surface.saveConfig(next, deps.home);
-      log(`wrote ${p}`);
+      const { runChannelOperation, channelStateDigest } = await import("@openrig/daemon/gateway-slack");
+      const result = await runChannelOperation({
+        actor: resolveSenderSession() ?? opts.actor ?? SENDER_FALLBACK, provenance: "claimed:v1",
+        reason: opts.reason, action: "configure", subject: "slack", before: { digest: channelStateDigest(cur) },
+        run: async () => ({ value: surface.saveConfig(next, deps.home), after: { digest: channelStateDigest(next) },
+          effect: channelStateDigest(cur) === channelStateDigest(next) ? "no-op" : "applied" }),
+      }, deps.home);
+      log(`wrote ${result.value}; receipt ${result.receipt.id} (${result.receipt.effect})`);
       log(`Next: put SLACK_BOT_TOKEN / SLACK_APP_TOKEN in ${next.secretsEnvFile ?? "<--secrets-env-file> (0600)"}, then \`rig slack verify\`, then \`rig slack enable\`.`);
     });
 
@@ -124,21 +133,33 @@ export function slackCommand(deps: SlackDeps = {}): Command {
     .command("verify")
     .description("Live-verify GRANTED Slack scopes (from response headers) + channel membership")
     .option("--json", "JSON output")
+    .option("--reason <reason>", "Reason recorded with the verification", "verify human delivery")
+    .option("--actor <actor>", "Named operator when outside a managed seat")
     .action(async (opts) => {
       const surface = await loadSurface();
       const cfg = surface.loadConfig(deps.home);
       const s = resolveSecrets(surface, cfg);
+      const { runChannelOperation, channelStateDigest } = await import("@openrig/daemon/gateway-slack");
+      const verification = await runChannelOperation({
+        actor: resolveSenderSession() ?? opts.actor ?? SENDER_FALLBACK, provenance: "claimed:v1",
+        reason: opts.reason, action: "verify", subject: "slack", before: { digest: channelStateDigest(cfg) },
+        run: async () => {
+          const scope = s.bot ? await surface.verifyScopes(s.bot, cfg.requiredScopes, deps.fetchImpl) : null;
+          const member = s.bot && cfg.channel ? await surface.verifyChannelMembership(s.bot, cfg.channel, deps.fetchImpl) : null;
+          const ready = scope === null || scope.error || member?.error ? null : scope.ok && (member?.isMember ?? false);
+          return { value: { scope, member }, after: { ready }, effect: "observed" };
+        },
+      }, deps.home);
       if (!s.bot) {
         log("✗ bot token unresolved — set SLACK_BOT_TOKEN (env or secrets env file). Cannot verify.");
         process.exitCode = 1;
         return;
       }
-      const scope = await surface.verifyScopes(s.bot, cfg.requiredScopes, deps.fetchImpl);
-      let member: { ok: boolean; isMember: boolean; name?: string; error?: string } | null = null;
-      if (cfg.channel) member = await surface.verifyChannelMembership(s.bot, cfg.channel, deps.fetchImpl);
+      const scope = verification.value.scope!;
+      const member = verification.value.member;
       const ready = scope.ok && (member ? member.isMember : false);
       if (opts.json) {
-        log(JSON.stringify({ scope, member, ready }));
+        log(JSON.stringify({ scope, member, ready, receipt: verification.receipt }));
       } else {
         log(`granted scopes: ${scope.granted.join(", ") || "(none)"}`);
         if (!scope.ok) log(`✗ MISSING scopes (configured != granted — reinstall the app): ${scope.missing.join(", ")}${scope.error ? ` [${scope.error}]` : ""}`);
@@ -154,9 +175,12 @@ export function slackCommand(deps: SlackDeps = {}): Command {
   cmd
     .command("enable")
     .description("Enable the connector (daemon seeds the current backlog as history — no replay storm — then rewires)")
-    .action(async () => {
+    .option("--reason <reason>", "Reason recorded with the change", "enable human delivery")
+    .option("--actor <actor>", "Named operator when outside a managed seat")
+    .action(async (opts) => {
       try {
-        const res = await clientFactory().post<{ ok: boolean; seeded: number; onlineStatus: string }>("/api/gateway/slack/enable", {});
+        const res = await clientFactory().post<{ ok: boolean; seeded: number; onlineStatus: string }>("/api/gateway/slack/enable", { reason: opts.reason, actor: resolveSenderSession() ?? opts.actor ?? SENDER_FALLBACK });
+        if (res.status !== 200 || res.data.ok !== true) throw new Error(`daemon refused enable (HTTP ${res.status}): ${JSON.stringify(res.data)}`);
         log(res.data.onlineStatus);
       } catch (e) {
         log(`✗ enable failed: ${(e as Error).message}`);
@@ -167,9 +191,12 @@ export function slackCommand(deps: SlackDeps = {}): Command {
   cmd
     .command("disable")
     .description("Disable the connector (the daemon rewires to an inert delivery path)")
-    .action(async () => {
+    .requiredOption("--reason <reason>", "Why human delivery is being shut down (recorded in the lifecycle receipt)")
+    .option("--actor <actor>", "Named operator when outside a managed seat")
+    .action(async (opts) => {
       try {
-        await clientFactory().post<{ ok: boolean }>("/api/gateway/slack/disable", {});
+        const res = await clientFactory().post<{ ok: boolean }>("/api/gateway/slack/disable", { reason: opts.reason, actor: resolveSenderSession() ?? opts.actor ?? SENDER_FALLBACK });
+        if (res.status !== 200 || res.data.ok !== true) throw new Error(`daemon refused disable (HTTP ${res.status}): ${JSON.stringify(res.data)}`);
         log("slack connector disabled");
       } catch (e) {
         log(`✗ disable failed: ${(e as Error).message}`);

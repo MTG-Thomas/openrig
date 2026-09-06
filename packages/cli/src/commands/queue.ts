@@ -54,6 +54,7 @@ export async function waitForDeliveryOutcome(
   for (;;) {
     try {
       const response = await client.get<Record<string, unknown>>(`/api/queue/${encodeURIComponent(qitemId)}`);
+      if (response.status !== 200) throw new Error(`receipt lookup returned HTTP ${response.status}`);
       const outcome = response.data.deliveryOutcome;
       if (outcome === "posted") {
         return { outcome, connectorAccepted: true, humanReadership: "unknown", nextAction: null };

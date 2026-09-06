@@ -2,8 +2,13 @@
 // silently no-op, never run a second delivery path): successor replaces predecessor. The admin
 // verbs (enable/disable) route to the daemon, where the seeding rule executes before the wire
 // goes live. setup/status ride the daemon-homed config surface unchanged.
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { slackCommand, type SlackDeps } from "../src/commands/slack.js";
+const homes: string[] = [];
+afterEach(() => homes.splice(0).forEach((home) => rmSync(home, { recursive: true, force: true })));
 
 function run(cmd: ReturnType<typeof slackCommand>, argv: string[]): Promise<void> {
   return cmd.parseAsync(["node", "slack", ...argv]).then(() => {});
@@ -18,6 +23,7 @@ function makeDeps(overrides: Partial<SlackDeps> = {}): { deps: SlackDeps; logs: 
     secretsEnvFile: null, queueUrl: null, minimumLevelThatPosts: "NOTICE", minimumLevelThatInterrupts: "ALERT",
   };
   const deps: SlackDeps = {
+    home: (() => { const home = mkdtempSync(join(tmpdir(), "slack-verb-")); homes.push(home); return home; })(),
     log: (m) => logs.push(m),
     surface: async () => ({
       loadConfig: () => ({ ...cfg }),
@@ -63,6 +69,29 @@ describe("S10 CLI cutover — retired relay runners refuse with teaching", () =>
 });
 
 describe("S10 CLI cutover — admin verbs route to the daemon", () => {
+  it.each(["enable", "disable"])("%s reports an HTTP refusal without claiming the effect", async (verb) => {
+    const { deps, logs } = makeDeps({ clientFactory: () => ({ post: async <T>() => ({ status: 503, data: { error: "gateway_admin_unavailable" } as T }) }) });
+    await run(slackCommand(deps), [verb, "--reason", "fixture operation"]);
+    expect(process.exitCode).toBe(1);
+    expect(logs.join("\n")).toContain("HTTP 503");
+    process.exitCode = 0;
+  });
+  it("refuses a shutdown without a reason before contacting the daemon", async () => {
+    const { deps, posts } = makeDeps();
+    const cmd = slackCommand(deps);
+    cmd.commands.find((command) => command.name() === "disable")!.exitOverride();
+    await expect(run(cmd, ["disable"])).rejects.toThrow(/reason/);
+    expect(posts).toHaveLength(0);
+  });
+
+  it("records unavailable verification honestly with no credential value", async () => {
+    const { deps } = makeDeps();
+    await run(slackCommand(deps), ["verify", "--json"]);
+    const rows = readFileSync(join(deps.home!, "state", "human-channel-operations.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(rows.at(-1)).toMatchObject({ action: "verify", effect: "observed", after: { ready: null }, provenance: "claimed:v1" });
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
+  });
   it("`rig slack enable` POSTs /api/gateway/slack/enable and prints the honest online-status", async () => {
     const { deps, logs, posts } = makeDeps();
     await run(slackCommand(deps), ["enable"]);
@@ -72,7 +101,7 @@ describe("S10 CLI cutover — admin verbs route to the daemon", () => {
 
   it("`rig slack disable` POSTs /api/gateway/slack/disable", async () => {
     const { deps, posts } = makeDeps();
-    await run(slackCommand(deps), ["disable"]);
+    await run(slackCommand(deps), ["disable", "--reason", "maintenance"]);
     expect(posts.map((p) => p.path)).toEqual(["/api/gateway/slack/disable"]);
   });
 

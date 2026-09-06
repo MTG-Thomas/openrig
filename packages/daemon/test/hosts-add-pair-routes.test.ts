@@ -33,17 +33,19 @@ import { QueueRepository } from "../src/domain/queue-repository.js";
 import { isHumanSeatSessionRef, parseSessionName } from "../src/domain/session-name.js";
 import { addHostEntry as daemonAddHostEntry } from "../src/domain/hosts/hosts-registry-writer.js";
 import { addHostEntry as cliAddHostEntry } from "../../cli/src/host-registry.js";
+import type { HumanFragment, LoadResult } from "../src/domain/gateway/human-registry.js";
 import { hostsRoutes } from "../src/routes/hosts.js";
 
 const BEARER = "test-bearer-token-fixture";
 
-function buildApp(queueRepo: QueueRepository, bearerToken: string | null): Hono {
+const human = { entityId: "alex", address: "alex@external", class: "human" } as HumanFragment;
+function buildApp(queueRepo: QueueRepository, bearerToken: string | null, humanRegistry: () => LoadResult = () => ({ ok: true, entities: [human] })): Hono {
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.set("queueRepo" as never, queueRepo);
     await next();
   });
-  app.route("/api/hosts", hostsRoutes({ bearerToken }));
+  app.route("/api/hosts", hostsRoutes({ bearerToken, humanRegistry }));
   return app;
 }
 
@@ -223,10 +225,24 @@ describe("pair-request — the target-side issuance handshake (FR-6)", () => {
     expect(((await res.json()) as { error: string }).error).toBe("pair_target_no_bearer");
   });
 
+  it("missing or ambiguous humans refuse before minting an approval; explicit selection resolves ambiguity", async () => {
+    for (const entities of [[], [human, { ...human, entityId: "blair", address: "blair@external" }]]) {
+      const target = buildApp(repo, BEARER, () => ({ ok: true, entities }));
+      const response = await target.request("/api/hosts/pair-request", { method: "POST", body: "{}" });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: "pair_human_required" });
+      expect(repo.list({ limit: 100 })).toHaveLength(0);
+    }
+    const target = buildApp(repo, BEARER, () => ({ ok: true, entities: [human, { ...human, entityId: "blair", address: "blair@external" }] }));
+    const response = await target.request("/api/hosts/pair-request", { method: "POST", body: JSON.stringify({ human: "blair@external" }) });
+    expect(response.status).toBe(200);
+    expect(repo.list({ limit: 100 })[0]?.destinationSession).toBe("blair@external");
+  });
+
   it("issuance mints the ONE human approval moment: a human-routed qitem with code + summary + evidence_ref", async () => {
     const { code, approvalQitemId } = await issue();
     const item = repo.getById(approvalQitemId)!;
-    expect(item.destinationSession).toBe("human-operator@kernel");
+    expect(item.destinationSession).toBe("alex@external");
     expect(item.tier).toBe("human-gate");
     expect(item.summary).toContain(code);
     expect(item.evidenceRef).toContain("pair-request:");
@@ -239,7 +255,7 @@ describe("pair-request — the target-side issuance handshake (FR-6)", () => {
     const pending = await app.request(`/api/hosts/pair-request/${pairId}`);
     expect(((await pending.json()) as { status: string }).status).toBe("pending");
 
-    await repo.update({ qitemId: approvalQitemId, actorSession: "human-operator@kernel", state: "done", closureReason: "no-follow-on" });
+    await repo.update({ qitemId: approvalQitemId, actorSession: "alex@external", state: "done", closureReason: "no-follow-on" });
 
     const approved = await app.request(`/api/hosts/pair-request/${pairId}`);
     const body = await approved.json() as { status: string; token: string };
@@ -252,7 +268,7 @@ describe("pair-request — the target-side issuance handshake (FR-6)", () => {
 
   it("deny → status denied, and the pairing dies (nothing to hand over)", async () => {
     const { pairId, approvalQitemId } = await issue();
-    await repo.update({ qitemId: approvalQitemId, actorSession: "human-operator@kernel", state: "denied" });
+    await repo.update({ qitemId: approvalQitemId, actorSession: "alex@external", state: "denied" });
     const res = await app.request(`/api/hosts/pair-request/${pairId}`);
     expect(((await res.json()) as { status: string }).status).toBe("denied");
     const second = await app.request(`/api/hosts/pair-request/${pairId}`);

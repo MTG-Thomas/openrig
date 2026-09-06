@@ -4,3 +4,4 @@
 // daemon is its canonical home; the CLI `rig gateway human add` verb lazy-imports THIS
 // surface (dep rail 2) instead of carrying a second copy — ONE source, no twin-parity pin.
 export * from "./domain/gateway/human-registry.js";
+export { runChannelOperation, channelStateDigest } from "./domain/gateway/channel-operations.js";

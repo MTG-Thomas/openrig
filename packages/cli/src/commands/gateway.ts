@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { resolveSenderSession, SENDER_FALLBACK } from "../sender-identity.js";
 // The human registry is home-state owned by the daemon; the verb LAZY-imports the narrow
 // @openrig/daemon/gateway-human-registry surface at invocation (the C3/crash-cart dep rail —
 // one source, no twin). Type-only import keeps the surface off the eager cli graph.
@@ -118,7 +119,9 @@ export function gatewayCommand(deps: GatewayCommandDeps = {}): Command {
     .requiredOption("--delivery-class <A|B|C|D>", "Notification loudness class (the notifications register selection)")
     .option("--away", "Set the AWAY preset")
     .option("--replace", "Explicitly replace an existing human (no silent overwrite)")
-    .action(async (entityId: string, opts: { displayName: string; binding: string[]; deliveryClass: string; away?: boolean; replace?: boolean }) => {
+    .option("--reason <reason>", "Reason recorded with connector binding changes", "register human delivery")
+    .option("--actor <actor>", "Named operator when outside a managed seat")
+    .action(async (entityId: string, opts: { displayName: string; binding: string[]; deliveryClass: string; away?: boolean; replace?: boolean; reason: string; actor?: string }) => {
       // LAZY import the narrow daemon surface at invocation (dep rail 2).
       const registry = await import("@openrig/daemon/gateway-human-registry");
       const { addHumanFragment, parseBindingSpec } = registry as unknown as {
@@ -158,9 +161,21 @@ export function gatewayCommand(deps: GatewayCommandDeps = {}): Command {
         connectorBindings: bindings,
         prefs: { deliveryClass: opts.deliveryClass, ...(opts.away ? { away: true } : {}) },
       };
-      const res = addHumanFragment(fragment, undefined, { replace: !!opts.replace });
-      if (!res.ok) { console.error(`refused: ${res.error}`); process.exitCode = 1; return; }
-      console.log(JSON.stringify({ ok: true, entityId: res.fragment.entityId, path: res.path }));
+      const before = registry.showHuman(entityId);
+      try {
+        const result = await registry.runChannelOperation({
+          actor: resolveSenderSession() ?? opts.actor ?? SENDER_FALLBACK, provenance: "claimed:v1", reason: opts.reason,
+          action: "binding", subject: `${entityId}@external`,
+          before: { digest: registry.channelStateDigest(before.ok ? before.record.connectorBindings.map(({ inboundResolvable: _derived, ...binding }) => binding) : null) },
+          run: async () => {
+            const res = addHumanFragment(fragment, undefined, { replace: !!opts.replace });
+            if (!res.ok) throw new Error(res.error);
+            const digest = registry.channelStateDigest(res.fragment.connectorBindings);
+            return { value: res, after: { digest }, effect: before.ok && registry.channelStateDigest(before.record.connectorBindings.map(({ inboundResolvable: _derived, ...binding }) => binding)) === digest ? "no-op" : "applied" };
+          },
+        });
+        console.log(JSON.stringify({ ok: true, entityId, path: result.value.path, receipt: result.receipt }));
+      } catch (error) { console.error(`refused: ${(error as Error).message}`); process.exitCode = 1; }
     });
 
   // ── S12 (OPR.0.5.5.12): the fragment lifecycle beyond add. Every verb operates through
@@ -209,9 +224,30 @@ export function gatewayCommand(deps: GatewayCommandDeps = {}): Command {
   human
     .command("set <entityId> <field> <value>")
     .description("Edit one field through the verb (same validation as add; re-projection immediate). Fields: display-name, delivery-class, away, binding.<n>")
-    .action(async (entityId: string, field: string, value: string) => {
-      const { setHumanField } = await import("@openrig/daemon/gateway-human-registry");
-      const res = setHumanField(entityId, field, value);
+    .option("--reason <reason>", "Reason recorded with connector binding changes", "update human binding")
+    .option("--actor <actor>", "Named operator when outside a managed seat")
+    .action(async (entityId: string, field: string, value: string, opts: { reason: string; actor?: string }) => {
+      const registry = await import("@openrig/daemon/gateway-human-registry");
+      if (field.startsWith("binding.")) {
+        const before = registry.showHuman(entityId);
+        if (!before.ok) { console.error(`refused: ${before.error}`); process.exitCode = 1; return; }
+        try {
+          const prior = registry.channelStateDigest(before.record.connectorBindings.map(({ inboundResolvable: _derived, ...binding }) => binding));
+          const result = await registry.runChannelOperation({
+            actor: resolveSenderSession() ?? opts.actor ?? SENDER_FALLBACK, provenance: "claimed:v1", reason: opts.reason,
+            action: "binding", subject: `${entityId}@external`, before: { digest: prior },
+            run: async () => {
+              const res = registry.setHumanField(entityId, field, value);
+              if (!res.ok) throw new Error(res.error);
+              const digest = registry.channelStateDigest(res.fragment.connectorBindings);
+              return { value: res, after: { digest }, effect: digest === prior ? "no-op" : "applied" };
+            },
+          });
+          console.log(JSON.stringify({ ok: true, entityId, field, path: result.value.path, receipt: result.receipt }));
+        } catch (error) { console.error(`refused: ${(error as Error).message}`); process.exitCode = 1; }
+        return;
+      }
+      const res = registry.setHumanField(entityId, field, value);
       if (!res.ok) { console.error(`refused: ${res.error}`); process.exitCode = 1; return; }
       console.log(JSON.stringify({ ok: true, entityId: res.fragment.entityId, field, path: res.path }));
     });

@@ -46,13 +46,11 @@ import { defaultHostRegistryPath, loadHostRegistry, validateHostRegistry, type H
 import type { SettingsStore } from "../domain/user-settings/settings-store.js";
 import type { QueueRepository } from "../domain/queue-repository.js";
 import { existsSync } from "node:fs";
+import { loadHumanRegistry, type LoadResult } from "../domain/gateway/human-registry.js";
 
 const PAIR_TTL_MS = 10 * 60 * 1000;
 const PAIR_HTTP_TIMEOUT_MS = 10_000;
 
-// The human seat that receives pairing approvals (the shipped human-seat
-// session grammar; renders in the target's attention/For-You surface).
-const PAIR_APPROVAL_SEAT = "human-operator@kernel";
 const PAIR_SOURCE_SESSION = "host-pair@kernel";
 
 interface IssuedPair {
@@ -79,7 +77,7 @@ function deriveHostId(url: URL): string {
   return raw.replace(/^-+|-+$/g, "") || "paired-host";
 }
 
-export function hostsRoutes(opts?: { bearerToken?: string | null }): Hono {
+export function hostsRoutes(opts?: { bearerToken?: string | null; humanRegistry?: () => LoadResult }): Hono {
   const router = new Hono();
   const bearerToken = opts?.bearerToken ?? null;
   const issued = new Map<string, IssuedPair>();
@@ -160,7 +158,14 @@ export function hostsRoutes(opts?: { bearerToken?: string | null }): Hono {
         message: "this daemon runs without OPENRIG_AUTH_BEARER_TOKEN; pairing has no credential to issue. Set OPENRIG_AUTH_BEARER_TOKEN on the target daemon and retry.",
       }, 409);
     }
-    const body = (await c.req.json<{ requester?: string }>().catch(() => ({}))) as { requester?: string };
+    const body = (await c.req.json<{ requester?: string; human?: string }>().catch(() => ({}))) as { requester?: string; human?: string };
+    const registry = (opts?.humanRegistry ?? loadHumanRegistry)();
+    if (!registry.ok) return c.json({ error: "pair_human_registry_unavailable", message: registry.error }, 409);
+    const humans = body.human ? registry.entities.filter((human) => human.address === body.human) : registry.entities;
+    if (humans.length !== 1) return c.json({
+      error: "pair_human_required", addresses: registry.entities.map((human) => human.address),
+      message: "Pair approval needs one registered human. Inspect rig gateway human list --json; select --human <entityId>@external when several exist. No approval row was created.",
+    }, 409);
     const requester = (body.requester ?? "").trim() || "unknown requester";
     const pairId = randomUUID();
     const code = String(randomInt(100000, 1000000));
@@ -169,7 +174,7 @@ export function hostsRoutes(opts?: { bearerToken?: string | null }): Hono {
     try {
       const item = await getRepo(c).create({
         sourceSession: PAIR_SOURCE_SESSION,
-        destinationSession: PAIR_APPROVAL_SEAT,
+        destinationSession: humans[0]!.address,
         tier: "human-gate",
         summary: `Host pairing request ${code} from ${requester}`,
         evidenceRef: `pair-request:${pairId}`,
@@ -239,7 +244,7 @@ export function hostsRoutes(opts?: { bearerToken?: string | null }): Hono {
   });
 
   router.post("/pair", async (c) => {
-    const body = (await c.req.json<{ url?: string; id?: string; requester?: string }>().catch(() => ({}))) as { url?: string; id?: string; requester?: string };
+    const body = (await c.req.json<{ url?: string; id?: string; requester?: string; human?: string }>().catch(() => ({}))) as { url?: string; id?: string; requester?: string; human?: string };
     const rawUrl = (body.url ?? "").trim();
     if (!rawUrl) return c.json({ error: "pair_url_required", message: "body.url is required (the target daemon's address)" }, 400);
     let target: URL;
@@ -289,7 +294,7 @@ export function hostsRoutes(opts?: { bearerToken?: string | null }): Hono {
       const res = await fetch(`${targetBase}/api/hosts/pair-request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requester: body.requester ?? `dashboard@${getOpenRigHome()}` }),
+        body: JSON.stringify({ requester: body.requester ?? `dashboard@${getOpenRigHome()}`, ...(body.human ? { human: body.human } : {}) }),
         signal: AbortSignal.timeout(PAIR_HTTP_TIMEOUT_MS),
       });
       status = res.status;

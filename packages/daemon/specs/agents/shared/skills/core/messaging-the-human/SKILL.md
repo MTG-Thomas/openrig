@@ -1,98 +1,85 @@
 ---
 name: messaging-the-human
-description: "Use when a human decision, access grant, external action, or escalation must survive the operator's absence, or when an orchestrator or PM has a judgment-worthy update for the operator."
+description: "Use when project policy calls for a human decision or update, a human delivery is pending or failed, or a reply must resume the right work."
 metadata:
   cli_surfaces_referenced:
-    - gateway human add
     - gateway human list
-    - queue block
-    - queue handoff
+    - gateway human show
+    - queue create
     - queue transitions
+    - queue block
     - send
   openrig:
     stage: provisional
     audience: all agents
     sibling_skills:
       - queue-handoff
-      - human-in-the-loop
       - openrig-user
 ---
 
 # Messaging the Human
 
-The human is an addressable participant, but their attention is scarce and they
-may not be at a terminal. Anything that must survive their absence needs a
-durable queue row; the gateway turns the human blocker on that row into the
-external notification.
+Project World supplies **when and why** to contact a human. This skill supplies
+transport-neutral mechanics; installing it does not create an approval gate or
+choose a connector. If policy leaves a material decision ambiguous, identify the
+missing authority. Do not convert a solvable technical failure into a human gate.
 
-Any seat may contact the human directly for a real escalation. Orchestrators
-and product managers may also send updates they judge the human would want to
-know. Do not add a routing intermediary merely because of your role.
+## Discover, check, send, inspect
 
-## The supported route
-
-First discover the registered human identity. Never invent or remember an
-address:
+Discover the registered participants and inspect the chosen human:
 
 ```bash
 rig gateway human list --json
+rig gateway human show <entityId> --json
 ```
 
-Use `humans[].entityId` to derive the durable blocker as `<entityId>@host`.
-The entity id must use the human-seat prefix (`human` or `human-...`); if it
-does not, stop and repair the registration rather than guessing. The returned
-`humans[].address` is the gateway delivery address, not the `--on` value. If no
-unambiguous registered human is returned, stop: registration is lifecycle work
-(`rig gateway human add --help`), not an address to guess.
+Use the returned `address` (`<entityId>@external`), not a username, remembered
+seat, connector handle, or guessed kernel address. Where several humans exist,
+use the decision ownership in Project World. An absent or ambiguous registration
+needs a named registration correction, not a fallback address.
 
-Keep the work row owned by the agent who must resume it, then park that row on
-the registered human:
+Check readiness: configured, enabled, active, ready, reason, and next action.
+`indeterminate` is not ready. Follow the reported next inspection; do not enable
+or reconfigure a connector merely to make the check pass.
+
+Write the decision, evidence, and continuation in a body file. The sole outbound
+human-message primitive is:
 
 ```bash
-rig queue block <qitem-id> --on <entityId>@host \
-  --summary "<decision owed>" \
-  --evidence-ref "<durable artifact the human should judge>" \
-  --continuation "<what resumes after the answer>"
+rig queue create --destination <entityId>@external \
+  --summary "<decision or update>" --body-file <packet-file> \
+  --evidence-ref <durable-evidence> --verify --json
 ```
 
-The gateway resolves the registered human to the configured connector, sends
-the Slack notification, and records its receipt on the same row. Confirm the
-effect from the append-only history:
+If an existing agent-owned row must wait, block it on the **new live qitem ID**
+(`rig queue block <work-id> --on <human-qitem-id> ...`), not on the human address.
+Completion of the human qitem resumes its dependants. Blocking on the human as
+well would issue another notification for the same decision.
+
+The row persists before bounded delivery verification. Read its qitem ID and
+verification result; `posted` proves connector posting, **not human readership**.
+`transport-failed`, `never-posted`, or a pending/indeterminate result leaves the
+row intact. Inspect that same row and its next action; never create a second row
+or blindly resend because verification timed out.
 
 ```bash
 rig queue transitions <qitem-id>
 ```
 
-The row is the obligation and the audit trail. Slack is the attention leg. A
-reply resolves the durable blocker and wakes the row owner; it does not create
-a second private work stream.
+A correlated reply binds to that exact human and qitem and records the resolution
+that resumes the owner. Check the recorded result before claiming the decision
+arrived; a delivery receipt alone is not acceptance.
 
-## When to use it
+## Existing blockers and other channels
 
-Escalate directly when only the human can supply the missing capability:
+An existing agent-owned row may be blocked on `<entityId>@host`. That is an
+internal custody label resolved through the human registry to the same external
+participant; it is not a second delivery address. Keep the owner and continuation
+on that row. Inspect its existing delivery receipt before considering another
+request, so a legacy blocker does not produce a duplicate message. Never derive
+`@host` from the current rig name.
 
-- a decision or irreversible judgment only they own;
-- access, credentials, authority, or capacity only they can grant;
-- an external action only they can perform;
-- a security-class or provider/model-fallback event they need to know about.
-
-Orchestrators and product managers may additionally send meaningful milestone,
-environment, or completion updates. Prefer signal over routine narration.
-
-## Boundaries
-
-- `rig send` sends text to an agent's terminal. It is not the Slack route and
-  does not create a durable human obligation.
-- An unregistered or ambiguous human identity must fail loudly. Register or
-  repair the identity; never downgrade it to an agent seat or a guessed
-  `@external` address.
-- Agent-to-agent work that needs closure uses `rig queue handoff`, not this
-  human-blocker path.
-- Deferred work that is not imminent belongs in the mission workspace, not on
-  the queue.
-
-## Writing the escalation
-
-Lead with what is blocked and the exact decision or action needed. Point at the
-durable evidence instead of pasting a second copy, and name the continuation so
-the system can resume the right work when the answer arrives.
+`rig send` reaches an agent's terminal only. It is not a human transport or a
+durable human obligation. Agent-to-agent work uses the queue handoff path.
+Connector-specific configuration and handles belong to registry/readiness tools,
+not to project-independent message instructions.

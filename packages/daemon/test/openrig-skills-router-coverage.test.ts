@@ -158,20 +158,21 @@ describe("S22 OpenRig skill router coverage", () => {
     expect(servedBytes).toBe(pluginBytes);
   });
 
-  it("fresh Codex teaching routes a durable registered-human park to one Slack receipt", async () => {
+  it("ships transport-neutral human teaching and preserves one legacy blocker receipt", async () => {
     expect(pluginSkills()).toContain("messaging-the-human");
     const library = builtinLibrary();
     const teaching = library.getByRef("skills/core/messaging-the-human");
     expect(teaching).not.toBeNull();
     const taught = readFileSync(join(teaching!.sourcePath, "SKILL.md"), "utf8");
     expect(taught).toContain("rig gateway human list --json");
-    expect(taught).toContain("Use `humans[].entityId` to derive the durable blocker as `<entityId>@host`");
-    expect(taught).toContain("The entity id must use the human-seat prefix (`human` or `human-...`)");
-    expect(taught).toMatch(/The returned\s+`humans\[\]\.address` is the gateway delivery address, not the `--on` value/);
-    expect(taught).toContain("rig queue block <qitem-id> --on <entityId>@host");
-    expect(taught).toMatch(/gateway.*Slack.*same row/is);
-    expect(taught).toMatch(/any seat.*escalat/is);
-    expect(taught).toMatch(/rig send.*agent.*terminal.*not.*Slack/is);
+    expect(taught).toContain("rig gateway human show <entityId> --json");
+    expect(taught).toContain("rig queue create --destination <entityId>@external");
+    expect(taught).toContain("--verify --json");
+    expect(taught).toContain("not human readership");
+    expect(taught).toContain("Project World supplies **when and why**");
+    expect(taught).toContain("`rig send` reaches an agent's terminal only");
+    expect(taught).not.toContain("sends the Slack notification");
+    expect(taught).not.toContain("Use `humans[].entityId` to derive the durable blocker");
 
     const db: Database.Database = createDb();
     migrate(db, ALL_MIGRATIONS);

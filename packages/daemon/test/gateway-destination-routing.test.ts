@@ -33,6 +33,7 @@ import { OutboxHandler } from "../src/domain/outbox-handler.js";
 import { QueueRepository } from "../src/domain/queue-repository.js";
 import { subsystemSlackDeliver } from "../src/domain/gateway/slack/slack-delivery.js";
 import type { HumanFragment } from "../src/domain/gateway/human-registry.js";
+import { makeQueuePorts } from "../src/domain/gateway/slack/queue-access.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -50,7 +51,7 @@ const FOUNDER_FRAGMENT = {
 
 const EVIDENCE = "shared-docs/rigs/v-openrig-build/state/evidence-s14.md";
 
-function makeHarness(opts?: { registryReadable?: () => boolean }) {
+function makeHarness(opts?: { registryReadable?: () => boolean; entities?: () => HumanFragment[] }) {
   const db = createDb();
   migrate(db, [
     coreSchema, bindingsSessionsSchema, externalCliAttachmentSchema, eventsSchema, queueItemsSchema,
@@ -71,7 +72,7 @@ function makeHarness(opts?: { registryReadable?: () => boolean }) {
     },
     loadHumanRegistry: () => opts?.registryReadable?.() === false
       ? { ok: false as const, error: "fixture registry unreadable" }
-      : { ok: true as const, entities: [FOUNDER_FRAGMENT] },
+      : { ok: true as const, entities: opts?.entities?.() ?? [FOUNDER_FRAGMENT] },
   });
   repo.attachOutbox(new OutboxHandler(db));
   // Topology fixture: exactly one known pane-bound seat, dev-a@rig1.
@@ -85,6 +86,31 @@ function makeHarness(opts?: { registryReadable?: () => boolean }) {
 describe("OPR.0.5.6.14 — one destination resolver, no fall-through", () => {
   let h: ReturnType<typeof makeHarness>;
   beforeEach(() => { h = makeHarness(); });
+
+  it.each(["human-operator@kernel", "operator-human@kernel", "operator-admin@kernel"])("upgrade keeps pending %s visible: exact conflict or registry resolution, never implied delivery", async (alias) => {
+    const local = alias.split("@")[0]!;
+    const entities: HumanFragment[] = [FOUNDER_FRAGMENT];
+    const fixture = makeHarness({ entities: () => entities });
+    const item = await fixture.repo.create({ sourceSession: "dev-a@rig1", destinationSession: alias,
+      tier: "human-gate", summary: "Legacy decision", evidenceRef: EVIDENCE, body: "preserve these bytes" });
+    expect(fixture.repo.getById(item.qitemId)).toMatchObject({ state: "pending", body: "preserve these bytes", lastNudgeResult: expect.stringMatching(/unroutable/) });
+    expect(fixture.sends).toHaveLength(0);
+    const ports = makeQueuePorts(fixture.repo, { loadHumanRegistry: () => ({ ok: true, entities }) });
+    expect(await ports.listHumanAlerts({})).toHaveLength(0);
+    entities.push({ ...FOUNDER_FRAGMENT, entityId: local, address: `${local}@external` });
+    // Registration does not replay an older unclassified obligation. Its explicit
+    // failed-routing record remains for an operator to reconcile deliberately.
+    expect(await ports.listHumanAlerts({})).toHaveLength(0);
+    const registered = await fixture.repo.create({ sourceSession: "dev-a@rig1", destinationSession: alias,
+      summary: "Registered legacy spelling", evidenceRef: EVIDENCE, body: "new explicit request" });
+    const alerts = await ports.listHumanAlerts({});
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ qitemId: registered.qitemId, destinationSession: `${local}@external` });
+    expect(fixture.repo.getById(item.qitemId)).toMatchObject({ state: "pending", destinationSession: alias, body: "preserve these bytes" });
+    expect(fixture.repo.listTransitions(item.qitemId).filter((row) => row.transitionNote?.includes("slack-owner-notification-posted"))).toHaveLength(0);
+    expect(fixture.sends).toHaveLength(0);
+    fixture.db.close();
+  });
 
   it("THE 4-ROW CLASS DIES: a registry-resolved human ALIAS (kernel virtual seat) never touches tmux and records gateway-owned", async () => {
     const item = await h.repo.create({

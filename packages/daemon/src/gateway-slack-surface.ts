@@ -13,6 +13,7 @@ export {
   type ReadinessItem,
 } from "./domain/gateway/slack/config.js";
 export { resolveSecret, checkEnvFilePermissions } from "./domain/gateway/slack/secrets.js";
+export { runChannelOperation, channelStateDigest, type ChannelActor } from "./domain/gateway/channel-operations.js";
 export {
   verifyScopes,
   verifyChannelMembership,

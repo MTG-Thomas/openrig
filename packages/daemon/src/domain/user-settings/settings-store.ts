@@ -123,14 +123,7 @@ export const SETTINGS_VALID_KEYS = [
   // endpoints / event types.
   "agents.advisor_session",
   "agents.operator_session",
-  // V0.3.1 slice 05 kernel-rig-as-default — operator seat name read by
-  // mission-control read layer + 2 UI sites. Default derived as
-  // `operator-${USER}@kernel` (os.userInfo().username) at daemon
-  // resolution time; operator override via `rig config set
-  // workspace.operator_seat_name <session>` writes to
-  // ~/.openrig/config.json same as other workspace.* settings.
-  // OPENRIG_WORKSPACE_OPERATOR_SEAT_NAME only — no RIGGED_* legacy
-  // alias (new key per banked feedback_no_rigged_legacy_for_new_keys).
+  // Explicit operator override; unset means discover the registered human.
   "workspace.operator_seat_name",
   // V1 attempt-3 Phase 5 P5-3 — For You feed subscription toggles per
   // for-you-feed.md L144–L151. SC-29 EXCEPTION declared in Phase 5
@@ -556,10 +549,7 @@ function getDefaultValue(key: SettingsValidKey, workspaceRoot: string): string |
     // V1 pre-release CLI/daemon Item 1 — capture-pane rotation defaults.
     case "transcripts.lines": return 1000;
     case "transcripts.poll_interval_seconds": return 2;
-    // V0.3.1 slice 05 — `operator-${USER}@kernel` derives from the OS
-    // username at resolution time; operator override via `rig config
-    // set` persists to ~/.openrig/config.json.
-    case "workspace.operator_seat_name": return `operator-${os.userInfo().username}@kernel`;
+    case "workspace.operator_seat_name": return ""; // unset: discover a registered human, never invent a kernel seat
     // OPR.0.4.6.MH1 FR-1 — "local" ≡ no remote selection (LOCAL_HOST_ID);
     // the FR-2 zero-regression posture by construction.
     case "host.selected": return "local";
@@ -832,10 +822,7 @@ export interface ResolvedConfig {
   workspaceSpecsRoot: string;
   workspaceProjectsRoot: string;
   workspaceCatalogPath: string;
-  // V0.3.1 slice 05 — operator seat name read by mission-control read
-  // layer (replacing the legacy hardcoded `DEFAULT_OPERATOR_SESSION`
-  // constant) and 2 UI cosmetic sites. Default
-  // `operator-${USER}@kernel` derived from os.userInfo().username.
+  // Explicit operator selection; empty leaves identity discovery to the consumer.
   workspaceOperatorSeatName: string;
   filesAllowlistRaw: string;
   progressScanRootsRaw: string;

@@ -396,11 +396,11 @@ describe("ConfigStore — extended namespaces (User Settings v0)", () => {
     expect(() => store.set("snapshots.periodic.retention_keep", "0")).toThrow(/must be >= 1/);
   });
 
-  it("workspace.operator_seat_name roundtrip — default derives operator-${USER}@kernel; set → resolve reflects override", () => {
+  it("workspace.operator_seat_name roundtrip — default is unset for registry discovery; set → resolve reflects override", () => {
     const store = new ConfigStore(configPath);
     const before = store.resolve();
     // Default cascade derives from OS username at resolve() time.
-    expect(before.workspace.operatorSeatName).toMatch(/^operator-.+@kernel$/);
+    expect(before.workspace.operatorSeatName).toBe("");
 
     store.set("workspace.operator_seat_name", "operator-test@kernel");
     const after = store.resolve();
@@ -408,7 +408,7 @@ describe("ConfigStore — extended namespaces (User Settings v0)", () => {
 
     store.reset("workspace.operator_seat_name");
     const reset = store.resolve();
-    expect(reset.workspace.operatorSeatName).toMatch(/^operator-.+@kernel$/);
+    expect(reset.workspace.operatorSeatName).toBe("");
   });
 
   it("workspace.operator_seat_name env override beats file-stored value", () => {

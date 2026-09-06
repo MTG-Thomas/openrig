@@ -88,9 +88,9 @@ unseen — which makes messages the one delivery channel that never gets skipped
   material without dumping it**: absorption between pieces is the whole mechanism, and sending
   faster than the receiver thinks merges everything into one turn and destroys it. It is also how
   you were onboarded, and how you would onboard someone else.
-- **`rig slack`** — how something reaches a person who is not at a terminal, and how their reply
-  gets back in as work. **`slack status` says it is configured; `slack verify` says it will
-  actually work.**
+- **`rig slack`** — inspect and manage one connector implementation. Use registered-human
+  readiness for the delivery decision and `queue create --verify` for its receipt; connector
+  setup or verification is not an outbound human message.
 
 ## Making work outlive you
 
@@ -379,8 +379,19 @@ reaching them is ordinary work rather than an escalation.
   than guessing a hostname, because entries do not all use the same transport.
 - **`rig file copy`** — move a file between hosts without hand-rolling `scp` and guessing the
   address.
-- **`rig gateway human add`** — make a *person* addressable, so an escalation reaches a named human
-  over a real connector instead of dying in a log.
+- **`rig gateway human list` / `show`** — discover registered humans and inspect configured,
+  enabled, active, ready, reason, and next action. Use the returned `<entityId>@external`
+  address; a username or kernel seat is not a human delivery address.
+- **`rig queue create --destination <entityId>@external --verify`** — persist one human
+  request, then boundedly inspect its transport receipt. Posted means posted, not read;
+  pending, failed, or indeterminate delivery leaves the row intact. Inspect the same row's
+  transitions before retrying. `rig send` remains agent-terminal delivery only.
+- **When project policy calls for human judgment or an update, load `messaging-the-human`.**
+  System World teaches these mechanics; Project World decides when and why they apply.
+  Existing `<entityId>@host` blockers are internal custody labels mapped through the registry
+  to the external participant, not a separate outbound route.
+- **`rig gateway human add`** — register a person and their connector binding. Registration or
+  connector changes do not themselves authorize a message.
 - **Across a host boundary, "it didn't work" has four distinct shapes** — unreachable machine,
   permission gate, remote runtime down, or the remote command itself failed. Collapsing them throws
   away a diagnosis you already had. **And a transport that succeeded says nothing about whether the
@@ -402,10 +413,10 @@ your circumstances is configuration, and the ones that are not, another agent ca
   loudly to report, whether to batch permission questions or block on them. **This declares a
   posture; it does not grant or deny permissions** — the harness's own settings are the control
   surface for that.
-- **The owner boundary is exactly: pushes and PRs.** Nothing else needs the owner's word — local
-  commits and ordinary apply work never do. When a script guard mentions being gated, it is
-  demanding an explicit path (e.g. `OPENRIG_SKILL_CANON_ROOT`), not permission; read it as a
-  missing input, never as an authorization wall.
+- **Project World declares the human authority boundary.** Read the current project and mission
+  policy for actions requiring approval; the system mechanics do not impose a universal list.
+  A script's explicit-path authoring guard (for example `OPENRIG_SKILL_CANON_ROOT`) asks for a
+  missing source path and does not itself create a permission gate.
 - **`rig auth list` / `validate` / `seats`** — is this seat's runtime actually logged in, which
   accounts exist, and which account each seat is *supposed* to be on.
 - **`rig provider accounts` / `bindings` / `signals` / `switch`** — which seats are bound to which

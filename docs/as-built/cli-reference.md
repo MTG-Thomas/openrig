@@ -23,6 +23,41 @@ Verified against the shipped CLI on 2026-06-15 (v0.3.4) using:
 
 This document reflects the current `rig` surface as shipped. Where live help text is narrower than the implementation, notes call that out explicitly.
 
+## Human delivery
+
+`rig gateway human list --json` discovers registered `<entityId>@external`
+addresses. `rig gateway human show <entityId> --json` includes primary-connector
+readiness, reason and next inspection. Project policy decides when to contact a
+human; `messaging-the-human` supplies the transport mechanics.
+
+Create a human request with `rig queue create --destination <address> --summary
+"<decision>" --body-file <file> --evidence-ref <ref> --verify --json`. It persists
+one row before checking the delivery receipt. `posted` proves connector
+acceptance, never readership; `transport-failed`, `never-posted`, `still-pending`
+and `indeterminate` preserve the request and name the next inspection. Do not
+blindly repeat the create. `rig send` is for agent seats.
+
+`rig slack enable [--reason <reason>]` seeds existing backlog only on a disabled
+to enabled transition. Repeating enable does not reseed or restart. `rig slack
+disable --reason <reason>` requires a shutdown reason. Both return attributed
+lifecycle receipts; direct requests can name `actor` when no managed-session
+header exists. Header-derived and claimed identities remain distinct.
+Configuration, verification and human-binding edits also record actor, reason,
+prior/result state and effect in
+`$OPENRIG_HOME/state/human-channel-operations.jsonl`. Each operation has a start
+and a completion receipt with one ID; a missing completion is indeterminate.
+Snapshots retain state/digests rather than credentials or message bodies. Local
+CLI configuration/verification/binding receipts are explicitly `claimed:v1`.
+
+`rig host pair <url> [--human <address>]` selects the sole registered target
+human, or requires an explicit selection when several exist. A missing registry
+or ambiguous recipient refuses before creating an approval. An unset
+`workspace.operator_seat_name` no longer invents a username-derived kernel
+seat: Mission Control discovers a single registered human or shows identity
+uncertainty. Explicit existing seat selections remain supported. Legacy aliases
+resolve only when their entity is registered; old failed rows are preserved,
+not implicitly delivered or replayed by registration.
+
 ## Overview
 
 System Health diagnosis, policy, checkpoints, and dispositions are documented in
