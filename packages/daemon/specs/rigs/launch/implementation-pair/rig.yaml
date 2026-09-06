@@ -1,9 +1,9 @@
 version: "0.2"
 name: implementation-pair
 summary: >
-  Fastest first success: a focused dev pair where one implementer writes
-  code following TDD and one QA partner gates every edit. Use this when
-  you want the quickest path to a trustworthy OpenRig workflow.
+  A focused development pair providing implementation and QA capabilities.
+  Project/mission/slice components choose the work and any independent checks;
+  no composition means light Part A, not a per-edit approval loop.
 
 pods:
   - id: dev

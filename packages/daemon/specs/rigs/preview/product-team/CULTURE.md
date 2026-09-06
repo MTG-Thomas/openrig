@@ -2,75 +2,27 @@
 
 This is the human-operated product-development starter. It uses a full product-team topology: two orchestrators, a development pod with implementation, QA, and design, plus two reviewers.
 
-## Team shape
+## Work selection
 
-**Orchestration pod** (`orch1`):
-- `orch1.lead` — primary orchestrator, dispatches work, makes architectural calls
-- `orch1.peer` — secondary orchestrator, monitors QA and review coverage, handles overflow
+Derive identity with `rig whoami --json`, then follow
+`project.yaml -> mission.yaml -> active slice.yaml -> selected component or wave
+map -> addressed context`. Use
+`docs/reference/product-journey-sdlc.md#resolve-the-selected-path` (installed:
+`$OPENRIG_HOME/reference/product-journey-sdlc.md#resolve-the-selected-path`).
+No selection means light Part A. Only the selected work's required capabilities
+need to be ready; do not wait for the whole topology or invent work for idle roles.
 
-**Development pod** (`dev1`):
-- `dev1.impl` — implementer, writes code through the gated QA workflow
-- `dev1.qa` — QA, gates every edit with adversarial review
-- `dev1.design` — product designer, translates intent into concrete UX
+Orchestration routes outcomes and resolves exceptions. Implementation completes
+coherent changes and verifies by effect. QA compares the actual outcome with the
+contract; it may be builder-held for a tiny change. Independent reviewers enter
+only on an explicit assignment or the authored review boundary. For a wave, local
+checks remain per slice and independent review fires once over the accumulated
+wave. A named rigorous slice retains its selected checks. A topology does not
+select a pre-edit, QA, guard, review or lock gate.
 
-**Review pod** (`rev1`):
-- `rev1.r1` — independent reviewer, proactive analysis
-- `rev1.r2` — independent reviewer, different perspective
-
-## Orchestrator division of labor
-
-`orch1.lead` owns the main work stream:
-- Receives tasks from the human
-- Dispatches implementation to `dev1.impl`
-- Dispatches design questions to `dev1.design`
-- Calls reviews from `rev1.r1` at milestones
-
-`orch1.peer` owns QA and review coverage:
-- Monitors `dev1.qa` for stuck reviews
-- Dispatches `rev1.r2` when the review load justifies it
-- Escalates to `orch1.lead` when QA and implementation are misaligned
-
-Neither orchestrator implements code directly.
-
-Before either orchestrator dispatches real work, the team topology must settle.
-For the current full product-team shape that means confirming all seven nodes are present:
-- `orch1.lead`
-- `orch1.peer`
-- `dev1.design`
-- `dev1.impl`
-- `dev1.qa`
-- `rev1.r1`
-- `rev1.r2`
-
-If any are still pending, say exactly which nodes are still coming up instead of improvising a smaller team. Do not substitute `orch1` for QA or reviewer roles when the settled inventory contains the real QA/review nodes.
-
-## Implementation workflow
-
-`dev1.impl` follows a strict gated loop:
-1. Pre-edit proposal → send to `dev1.qa`
-2. Wait for QA approval
-3. Implement with TDD (red → green → refactor)
-4. Post-edit review → send to `dev1.qa`
-5. Wait for QA approval
-6. If commit authority is enabled, commit
-7. If commit authority is not enabled, stop at a QA-approved working tree and report that honestly
-
-`dev1.qa` should not rubber-stamp. If the diff doesn't match the approved scope, reject it.
-
-## Review workflow
-
-Reviewers do not wait to be asked. When meaningful work exists:
-- `rev1.r1` proactively inspects the current range or working tree state
-- `rev1.r2` provides a second independent perspective when dispatched by `orch1.peer`
-- Both write structured findings with severity, file:line references, and evidence
-- Reviewers disagree with each other when the evidence supports it
-
-If no work is pending for review, reviewers should:
-- Check `rig ps --nodes` for work they haven't seen
-- Run `rig capture dev1-impl@<rig>` to see what implementation is doing
-- Ask the orchestrator for review assignments via `rig send`
-
-Do not idle. If the team is obviously producing work, review it.
+Load only addressed context and skills relevant to the assignment, expanding the
+investigation when evidence requires it. Do not preload unrelated doctrine or
+turn an idle review seat into a milestone scanner.
 
 ## Design workflow
 
@@ -136,6 +88,9 @@ Follow patterns agents already know: docker, git, kubectl, npm.
 
 This is the advanced product-team lane. Use it when the work needs richer coordination than the conveyor starter. The human sets direction; the team plans, implements, reviews, and surfaces gaps honestly.
 
-## Mission/slice tracking (the SDLC)
+## Mission/slice tracking
 
-Work is tracked as missions and slices — on-disk markdown the Living Notes UI projects. Load the packaged `mission-slice-sop` skill before authoring or building a slice; the conventions (section names, proof contract, the two locks, C1 proof headers) live in `docs/reference/sdlc-conventions.md` (installed: `$OPENRIG_HOME/reference/sdlc-conventions.md`; shipped with the CLI package). The short form: record intent → author mini-requirements + a proof contract (→ mockups for UI slices) → plan-lock (`rig scope slice approve --scope spec`) → build the locked set → QA visually compares planned vs delivered → `rig proof add … --evidences --media` drops (the C1 drop verb — never hand-place evidence) → proof-lock (`--scope delivery`). `rig scope audit` is the advisory backstop — fix the flag, don't suppress it.
+Use `mission-slice-sop` for the active work's artifact and handoff conventions.
+The selected components or wave determine checks and independence; locks and
+Part B proof ceremony apply only when explicitly assigned. The scope audit is
+advisory, not a permission gate.

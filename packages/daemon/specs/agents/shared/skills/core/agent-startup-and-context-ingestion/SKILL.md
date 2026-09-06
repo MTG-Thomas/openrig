@@ -58,13 +58,28 @@ is scattered or stale, agents execute the wrong thing very efficiently.
 3. **A startup file becomes a dumping ground and loses the map-to-canonical-sources role.** Startup should point AT canonical sources; it shouldn't TRY to be one.
 4. **The orchestrator transmits implementation instructions without preserving product intent.** Instructions decay; intent travels.
 
+## Task-scoped startup
+
+Run `rig whoami --json`, then resolve `project.yaml -> mission.yaml -> active
+slice.yaml -> selected component or wave map -> addressed context`. The complete
+lookup and precedence rule is `docs/reference/product-journey-sdlc.md#resolve-the-selected-path`
+(installed: `$OPENRIG_HOME/reference/product-journey-sdlc.md#resolve-the-selected-path`).
+Read the selected addresses and source needed for this task; skills available in
+your profile are capabilities, not a mandatory reading list. No composition means
+light Part A. Role names and idle seats add no gates. Explicit rigor and authored
+wave boundaries retain their named checks.
+
+Startup files are address maps, not universal reading mandates. Do not preload
+unrelated planning/review doctrine or require per-file ACKs and quizzes. Skill
+availability is distinct from loading its full body. An old packet does not choose
+the current work. Missing selected context is a named gap to resolve.
+
 ## Proof standard
 
-Startup proof should:
-
-1. **Launch or refresh** a seat
-2. **Inspect** what it actually read
-3. **Verify** it can state the current role, mode, active constraints, and next handoff convention **in its own words**
+In a disposable fresh session, observe the actual reads and resulting next action.
+Test no-selection, explicit rigor, and wave-boundary cases. An edit is not evidence
+that an already-running seat adopted it; adoption needs an authorized refresh or
+next-launch observation. Do not clear or re-prime a live seat merely to test prose.
 
 ## Cross-runtime startup paths (5; do not collapse)
 
@@ -102,7 +117,7 @@ culture / pod / member / operator) handles the layering.
 
 ## See also
 
-- `mission-slice-sop` skill — the universal operating procedure for working a mission/slice (the canonical SPEC.md, NOTES.md, PROGRESS.md, PROOF.md, and proof/ surfaces); every agent should reach for it at startup, so this general reading contract points at it here (do NOT duplicate the SOP into seat-specific startup files).
+- `mission-slice-sop` — load when starting assigned mission/slice work; the light artifact and handoff procedure for SPEC.md, NOTES.md, PROGRESS.md and proof. It does not choose the SDLC for the task.
 - `writing-skills-for-openrig` skill — authoring discipline for skill content (what doesn't belong in startup)
 - `forming-an-openrig-mental-model` skill — orientation for new agents
 - `session-compaction-and-restore` skill — restore-time startup ingestion

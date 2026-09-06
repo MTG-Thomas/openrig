@@ -17,11 +17,25 @@ Use this skill to actually **do** mission/slice work: track on the canonical fil
 
 **Full convention SSOT:** repo `docs/reference/sdlc-conventions.md`; installed `$OPENRIG_HOME/reference/sdlc-conventions.md`. This skill is the concise Part-A teaching surface and does not replace the full convention.
 
-## THIS IS THE LIGHT DEFAULT — read this before anything else
+## Resolve the work first
 
-**The default for any slice is the inner loop:** ground yourself → build → **test with your own eyes** → iterate → **ONE** full-breadth review at the end. That is the whole process. It is not a reduced form of a better process; it IS the process.
+Run `rig whoami --json`, then resolve `project.yaml -> mission.yaml -> active
+slice.yaml -> selected component or wave map -> addressed context`. The complete
+lookup and precedence rule is `docs/reference/product-journey-sdlc.md#resolve-the-selected-path`
+(installed: `$OPENRIG_HOME/reference/product-journey-sdlc.md#resolve-the-selected-path`).
+Read the selected addresses and source needed for this task; skills available in
+your profile are capabilities, not a mandatory reading list. No composition means
+light Part A. Role names and idle seats add no gates. Explicit rigor and authored
+wave boundaries retain their named checks.
 
-**Part B is defined in the SSOT above and applies only when the human operator — or an orchestrator explicitly relaying that decision — assigns it to a named piece of work.** You may not select it yourself. If you believe something earns it, say so in one sentence and **continue on Part A** until told otherwise.
+The light inner loop is ground yourself → build → test with your own eyes →
+iterate → record and return the whole outcome. The builder may hold this check
+on a tiny change. Independent review runs only when selected, and once at an
+authored wave boundary rather than once per slice.
+
+Part B is defined in the conventions SSOT and runs only when explicitly assigned
+to named work. If you believe it is needed, state the reason to the owner and
+continue on the selected path until that choice changes.
 
 ## Proportionality — this SOP serves shipping; it is not the work itself
 

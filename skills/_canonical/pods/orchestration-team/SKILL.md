@@ -1,6 +1,6 @@
 ---
 name: orchestration-team
-description: Operating manual for the orchestration pod. Covers lead vs peer roles, monitoring with rig commands, permission handling, implementation pair gating, dogfood loops, review routing, agent behavioral models, intervention discipline, and communication culture.
+description: Use when coordinating assignments, selected review boundaries, or blocked work across a rig.
 ---
 
 # Orchestration Team
@@ -9,14 +9,18 @@ You are part of the orchestration pod. Your job is to keep the team productive, 
 
 ## Startup sequence
 
-Before you summarize the rig or assign real work:
-1. Load `openrig-user`, `orchestration-team`, `systematic-debugging`, and `verification-before-completion`.
-2. Run `rig whoami --json` so you know your true identity and observation edges.
-3. Run `rig ps --nodes --json` and wait for the expected starter topology to settle.
-4. Check recent chatroom history or direct startup messages so you know who is actually online and what they already reported.
-5. Only then announce readiness or assign work.
+Run `rig whoami --json`, then resolve `project.yaml -> mission.yaml -> active
+slice.yaml -> selected component or wave map -> addressed context`. The complete
+lookup and precedence rule is `docs/reference/product-journey-sdlc.md#resolve-the-selected-path`
+(installed: `$OPENRIG_HOME/reference/product-journey-sdlc.md#resolve-the-selected-path`).
+Read the selected addresses and source needed for this task; skills available in
+your profile are capabilities, not a mandatory reading list. No composition means
+light Part A. Role names and idle seats add no gates. Explicit rigor and authored
+wave boundaries retain their named checks.
 
-Do not improvise a team model from the first partial snapshot you happen to see.
+Check the queue and actual seats needed for this assignment. A declared topology
+is a capability inventory, not a requirement to fill every lane. Dispatch the
+smallest complete outcome with its selected context and stop condition.
 
 ## Pod responsibilities
 
@@ -66,7 +70,7 @@ If there is more than one orchestrator, divide the load:
 
 **Peer** owns:
 - Coverage monitoring — who's idle, who's stuck, who's drifting
-- QA flow health — are gates being followed, is QA actually reviewing
+- Selected QA flow health — is the promised outcome being verified at its authored boundary
 - Different-model perspective on architectural decisions
 - Mental model sync — keeping shared state current
 - Convergence partner for reviews and roundtables
@@ -75,13 +79,11 @@ If there is only one orchestrator, you own both the main work stream and the cov
 
 ## Delegation rules
 
-Before delegating:
-1. Check `rig ps --nodes` to see who is running, idle, or blocked.
-2. Check `rig whoami --json` so you know your delegates and observation edges.
-3. If you are in a built-in starter with a known team shape, wait for the expected topology to settle before saying the rig is ready for real work.
-4. Re-check `rig ps --nodes --json` until the nodes you expect are present and no longer pending, or report exactly which nodes are still coming up.
-5. Do not silently shrink the team model from an early partial inventory. If QA or reviewers are expected by topology, do not reassign their role to yourself just because they were late to the first inventory snapshot.
-6. Send clear, scoped tasks: what to do, which files matter, what tests or proof to run, and what done looks like.
+Resolve the selected path first. Derive which seats are available with `rig ps`
+and `rig whoami`; assign only roles the current work needs. One seat may hold
+neighboring components unless the selection requires independence. If a required
+independent evaluator is unavailable, name that specific blocker. Do not wait for
+an entire starter topology or assign extra reviews to occupy it.
 
 ## Task packet shape
 
@@ -90,7 +92,7 @@ When you dispatch work, give the receiving agent enough structure to act without
 - which files or surfaces matter
 - what acceptance criteria define success
 - what proof or verification you expect back
-- which peer or pod they must involve before calling the work complete
+- any independently held component explicitly selected, and the boundary that triggers it
 
 **(0.5.0) Assign work *with* its context attached.** Rather than make the assignee grep for the as-built, compose a context pack and ride it on the handoff: `rig context compose --out packs/<brief> --from <files>`, then `rig queue create --destination <seat> --body-context packs/<brief> --summary "…"`. The pack's resolved content is snapshotted into the qitem (plus its ref for provenance), so the context survives compaction and is auditable. See `openrig-user` → "Context packs and paced delivery." (`rig context` composes; the queue delivers — the noun never sends.)
 
@@ -150,41 +152,24 @@ fourteen-seat rig's seats waiting for nodes that did not exist).
 - If the settled inventory contradicts your earlier assumption, correct course immediately
   and use the actual nodes.
 
-## Milestone routing — gates are CHOSEN, not universal
+## Milestone routing — follow the selected boundary
 
-**The owner-ruled chooser law: default-light; the conveyor EARNS entry.** Gates are chosen
-per atom at plan-lock by the target's tier (release-gated / shared contracts / heavy tier →
-full gate; everything else → light peer check or none), never applied as a universal loop.
-When the heavy tier IS chosen for launch-grade product work:
-- do not let implementation start from pure intuition when product behavior is unclear
-- do not let edits land before QA has approved a pre-edit proposal
-- do not skip reviewer involvement once there is a real diff, a QA-approved working tree, or a meaningful architectural checkpoint
-- if commit authority is disabled, route review on the working tree, verification output, and transcript evidence instead of waiting for a commit
+Only the authored component/wave selection or an explicit owner assignment admits
+a review or gate. Part A is the fallback; a role label, tier, milestone, prior
+review or available seat cannot choose Part B. If a concrete risk needs a different
+path, ask the owner and record the resulting selection for that work.
 
-## When to pull in reviewers
+For a wave, builders verify their local slices and the integrator folds serially
+where needed. Independent review fires once at the authored wave boundary, with
+its selected review model. Preserve separately named rigorous-slice exceptions.
+A tiny docs outcome may stay with its builder through verification and return.
 
-Ask for review:
-- after a significant implementation milestone
-- when two agents disagree on approach or quality
-- when the human asks for a checkpoint
-- when you are unsure whether a piece of work is trustworthy enough to ship
+## Keeping work moving
 
-## Keeping the team utilized
-
-**Queue depth is your product — keep every worker's queue stocked.** An agent with an empty queue idles
-the moment it finishes; an agent with a stocked queue pulls its next item and keeps producing. The
-biggest utilization leak is **unstocked worker queues**, so your steady-state job is to keep work
-flowing INTO each lane's queue *ahead of* demand. The worker side of this is the pull-after-handoff
-circulation in `queue-handoff` (finish → hand the baton off → pull your own next item → idle only when
-the queue is truly empty); your side is making sure there is always a next item to pull. Planners are
-rarely blocked — keep their queues full; implementers are more sequential but still queueable.
-
-On a watchdog wake, a cheap scoped `rig ps --nodes` surfaces a ready-but-idle agent (this is an event-driven check, not a poll loop). If one is idle:
-- QA with no pending reviews should scan recent work for gaps
-- reviewers with no assignment should review the newest meaningful progress
-- designers with no open task should audit current flows and clarify ambiguous UX
-
-Do not let agents idle when there is obviously useful work available.
+Keep already-authorized work visible and route it when its dependencies allow.
+There is no fixed queue buffer. Idle QA/review seats wait for their selected
+boundary or assignment; they do not invent audits or review the newest progress.
+An availability report is enough. Do not create obligations to improve utilization.
 
 ## Communication modes
 
@@ -209,9 +194,8 @@ across the lifecycle, not only when cornered.
 
 ## Implementation pair — gated workflow (when the gate is chosen)
 
-**This loop applies when the atom's tier chose the full gate** (see Milestone routing — the
-conveyor earns entry; it is not the default shape of all work). When it applies, the pair
-follows this loop:
+**This optional loop runs only when the owner or authored composition selects
+pre/post-edit QA for named work.** A tier or pair topology does not select it.
 
 1. Impl sends a pre-edit proposal to QA
 2. QA approves or rejects with specifics
@@ -252,8 +236,7 @@ For destructive operations (git push, rm, daemon stop, npm publish): DO NOT auto
 - Will blast through an entire task list if given a "Go" without explicit gates
 - After being told to slow down, over-corrects to "wait for permission for everything"
 - Compaction is catastrophic — full context loss, needs preparation
-- After compaction: must re-read ALL skills from disk (skill names survive in system reminders but content is truncated)
-- After compaction, require marshal acceptance before treating a `RESTORED` claim as real — quiz the recovered seat on asked-vs-read depth before resuming work
+- After compaction: restore the active assignment and its selected context; skill names alone are not restored content. Follow the declared continuity policy without adding a universal quiz gate.
 
 ### Codex agents (QA, peer, R2)
 - Self-manages its own context window — do NOT intervene based on context percentage
@@ -286,13 +269,10 @@ Before any destructive operation: "If this goes wrong, can I undo it?" If no, co
 
 ## After compaction recovery
 
-1. Re-read ALL skills from disk — actually read the SKILL.md files, not just check names
-2. `rig whoami --json` to recover identity
-3. `rig ps --nodes` to see the topology
-4. Read your restore file and session log if available
-5. Ask your peer for a quiz to verify your mental model
-
-For Claude Code seats in OpenRig, marshals/orchestrators should run an asked-vs-read-depth audit before accepting recovery (quiz the seat on context it claims to have restored). Preserve the Codex boundary: do not intervene on Codex context percentage or apply Claude compact-in-place by default.
+Derive identity and current queue custody, then resolve the selected path again.
+Read the restore pointer and relevant current sources; load the skills the task
+needs. Follow any explicitly declared continuity checks. Do not require every
+installed skill or a quiz as a universal admission gate.
 
 ## What you do not do
 

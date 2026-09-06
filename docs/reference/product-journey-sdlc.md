@@ -52,9 +52,10 @@ mission YAML to change.
   implementation momentum.
 - **Skip when:** the current agent can independently state the user outcome,
   starting candidate, and boundaries from primary sources.
-- **Input:** world install, mission/slice YAML, and the addresses it names.
-- **Action:** start or clear a session, load only the selected context, and
-  derive current identity and source state.
+- **Input:** identity, project/mission/slice YAML, and the selected addresses.
+- **Action:** load the selected context into a fresh session, or reorient the
+  current session from live sources. Clearing a seat requires its separate
+  continuity decision; selecting this component does not authorize it.
 - **Output:** a one-paragraph readiness statement naming role, user outcome,
   starting candidate, and boundaries.
 - **Stop:** do not reconstruct old queue lore merely because it exists.
@@ -213,7 +214,8 @@ possible explanation.
 
 ## Composition rules
 
-1. `mission.yaml` may declare the catalog and mission defaults.
+1. `project.yaml` may declare project defaults; `mission.yaml` may select the
+   catalog and override those defaults for the mission.
 2. `slice.yaml` selects or overrides the components for that slice.
 3. Edges are explicit data. Array order is presentation, not dependency.
 4. Select the fewest components that honestly fit the work.
@@ -290,16 +292,52 @@ build.minimal-gap → qa.public-journey → qa.installed-smoke?`
 The recurrence admits one causal descent. It does not authorize a general
 platform rewrite.
 
+## Resolve the selected path
+
+On a fresh start, restore, or new assignment:
+
+1. Derive identity with `rig whoami --json`. Resolve the project's work root from
+   the assignment/workspace binding; `rig config get workspace.root` locates the
+   configured work tree, which may differ from the seat's code checkout.
+2. Read `project.yaml` and its project-authority context. Follow its mission root
+   to the assigned `mission.yaml`, then its composition ref to the active
+   `slice.yaml`. Read the current intent and acceptance files those records name.
+   Do not choose a mission from an old onboarding packet or a folder's recency.
+3. Resolve SDLC selection in order: project defaults, mission defaults, then the
+   active slice's explicit selection/override. A narrower explicit selection
+   replaces the broader component list; it does not append every ancestor's
+   gates. Follow an addressed wave map for its membership, review model and
+   boundary; an explicit named-slice exception applies only to that slice.
+4. Read only the selected components and additional addressed context. Repository
+   references resolve from the code repository root; installed references from
+   `$OPENRIG_HOME/reference`; context-pack refs use `rig context get`. For a
+   Markdown `#section` address, use `loading-addressable-markdown` rather than
+   loading an entire unrelated manual. Expand the investigation when the task's
+   evidence requires it: the address map is a starting point, not a search limit.
+5. State briefly the user outcome, current role, candidate, selected path and
+   next completion boundary. No composition means the light Part A flow in
+   `sdlc-conventions.md#a1-the-flow-in-one-pass`. Do not author a
+   composition merely to have one, or mint QA, guard, review, lock or proof gates
+   because those roles exist. On a tiny change the builder can verify the whole
+   outcome; independent review happens only when selected.
+
+A missing referenced file is a named gap, not evidence of no selection. Inspect
+or ask the owner to resolve a consequential ambiguity; do not silently fall back
+from an explicitly selected rigorous path. An owner can explicitly amend the
+selection for named work; record that decision at the work's authority. Current
+command/source reality outranks stale YAML as a factual claim: record the
+mismatch, re-derive, and preserve the distinction between scope and observed state.
+
+Startup overlays, role guidance, available seats, old mode names and historical
+packets cannot add steps to this selection. They supply capabilities. Skills load
+when the selected work calls for them; there is no quiz, per-file ACK gate or
+universal preloading requirement.
+
 ## Blank-agent start
 
-An agent with only the base world install should:
-
-1. Read `mission.yaml`, then the active `slice.yaml`.
-2. Resolve the catalog address and only the additional addresses those files
-   name.
-3. State: **my role; the user outcome; the starting candidate; the
-   boundaries**.
-4. Follow the selected component edges and their stop conditions.
-5. If no composition exists, use Part A in `mission-slice-sop`.
-6. If current reality contradicts the YAML, stop treating the YAML as fact,
-   record the discrepancy, and re-derive from the public journey and source.
+Follow **Resolve the selected path** above before choosing work. For an authored
+wave, build and verify each slice with its local discipline and integrate serially
+where required; request independent review once when the authored wave boundary
+arrives. Do not start per-slice reviews while waiting. A separately selected
+rigorous slice retains its named checks. Review findings justify bounded repairs,
+not an automatic increase in process for the next round.

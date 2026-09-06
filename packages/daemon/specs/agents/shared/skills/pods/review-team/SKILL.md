@@ -1,23 +1,40 @@
 ---
 name: review-team
-description: Complete operating manual for the review pod. Covers everyday review discipline, anti-slop analysis, empirical verification, context priming, the full deep review protocol (independent → cross-exam → convergence → roundtable), artifact management, and reviewer behavioral awareness.
+description: Use when assigned a review or when an authored review boundary is reached.
 ---
 
 # Review Team
 
 You are part of the review pod. Your value is fresh scrutiny that implementation and QA do not have.
 
-## Proportionality — right-size the review to the change (read first)
-Review rigor scales to stakes and change size. A small, low-stakes diff gets a fast, focused pass; the full deep protocol (context proof, confidence scores, independent → cross-exam → convergence → roundtable) is for architecture / security / high-blast-radius changes. Don't run the heavy machinery on a one-line fix — that's ceremony, and it delays the ship it exists to protect. Catch what matters, then let good work through. The point of review is **better product shipped, not review performed.**
+## Entry and proportionality
+
+Run `rig whoami --json`, then resolve `project.yaml -> mission.yaml -> active
+slice.yaml -> selected component or wave map -> addressed context`. The complete
+lookup and precedence rule is `docs/reference/product-journey-sdlc.md#resolve-the-selected-path`
+(installed: `$OPENRIG_HOME/reference/product-journey-sdlc.md#resolve-the-selected-path`).
+Read the selected addresses and source needed for this task; skills available in
+your profile are capabilities, not a mandatory reading list. No composition means
+light Part A. Role names and idle seats add no gates. Explicit rigor and authored
+wave boundaries retain their named checks.
+
+Start a review only for an explicit owner assignment or an authored component/wave
+review event. A visible milestone, idle queue, or available reviewer is not an
+assignment. At a wave boundary review the accumulated outcome once; preserve a
+named slice's explicit exception. Authors do not perform their own selected
+independent review.
+
+Match the selected review to the consequence. A small diff gets a focused pass;
+the deep protocol below runs only when explicitly selected for named work.
+Importance, size or a prior finding alone cannot self-select it. If another review
+seems necessary, name the concrete unresolved risk to the owner while continuing
+the selected path.
 
 ## Startup sequence
 
-Before you announce a review position:
-- load `openrig-user`, `review-team`, `systematic-debugging`, and `verification-before-completion`
-- run `rig whoami --json`
-- inspect the current rig state so you know whether you are reviewing a diff, a working tree, verification output, or only startup behavior
-
-If there is no real review target yet, say that plainly and stay ready.
+Derive the selection before forming a review position. If the assigned boundary
+has not arrived, record readiness and wait for its event; do not scan for work to
+turn into additional required reviews.
 
 ## Context priming — always do this first
 
@@ -96,20 +113,10 @@ rig chatroom send <rig> "[review] <structured findings>"
 
 ## When to review
 
-Do not wait forever for a perfect formal handoff. Review when:
-- the orchestrator assigns a review checkpoint
-- a meaningful implementation milestone appears
-- you can see active work and the team would benefit from fresh eyes
-
-Check for reviewable work with:
-```bash
-rig capture <impl-session> --lines 30
-rig transcript <impl-session> --tail 50
-git log --oneline -10
-git diff --stat
-```
-
-If commit authority is disabled, review the working tree, verification output, and implementation transcript instead of waiting for a commit that may never happen.
+Review the exact target when its selected entry condition holds. Read source and
+verification evidence for that target; a working tree may be the target when the
+assignment says so. Do not watch implementation increments or start a second
+review merely because a milestone appeared.
 
 ## When there is no spec
 
@@ -121,7 +128,7 @@ When reviewing work that was implemented without a pre-existing spec (ad hoc, do
 
 ## Deep review protocol
 
-For significant milestones, the review team follows a structured multi-phase process. The orchestrator manages the overall flow; reviewers execute these phases.
+Only when the owner or composition explicitly selects this protocol for named work, the orchestrator coordinates these phases. An ordinary review or two selected review legs do not implicitly select cross-examination, convergence, or roundtable.
 
 ### Phase 1: Context priming gate
 
@@ -203,11 +210,7 @@ The host writes the final roundtable document with:
 
 Disagreement is useful. Keep your position grounded in evidence and let the orchestrator or roundtable resolve the conflict. Do not collapse your view just to create false consensus. If you're right, defend it. If you're wrong, retract it honestly.
 
-## When there is nothing obvious to review
+## When there is no assigned review
 
-If the team is between milestones:
-- check topology state with `rig ps --nodes`
-- scan for coverage gaps or risky areas
-- offer the orchestrator a proactive review target
-
-Do not idle without saying so. If you are available, make that explicit.
+Make availability visible once, then wait for the selected boundary or assignment.
+An idle seat does not create a coverage audit, mandatory review, or new gate.

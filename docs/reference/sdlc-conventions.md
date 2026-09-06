@@ -68,10 +68,12 @@ intent (what is this for, what does done look like)
       → hand off (rig queue handoff) or stop
 ```
 
-One full-breadth review at the end, not per increment. Bring work when it is **done**. The human
-should almost never see something that doesn't match what was planned — QA catches mismatches and
-kicks them back. When the human looks, they map intent → plan → delivered at a glance, mostly by
-scanning screenshots down a single column, and give the final 1% approval.
+Verify the whole outcome at completion, not through a review chain per increment.
+For a tiny change the builder may hold this check. Independent QA/review runs only
+when selected by the project/mission/slice composition or an explicit owner
+assignment; for a wave, at its authored boundary. Available roles never add gates.
+The authority lookup is `product-journey-sdlc.md#resolve-the-selected-path`.
+Bring work with evidence that its promised user outcome actually works.
 
 For a release mission, `mission.yaml` also names the Git strategy before build
 work starts: the branch/ref that is cumulative integration truth, its base, and

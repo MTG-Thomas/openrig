@@ -2,36 +2,27 @@
 
 This is the stable launch-grade version of the full product squad. Right now it uses the same core topology as `product-team`: two orchestrators, a development pod with implementation, QA, and design, plus two reviewers.
 
-## How this team works
+## Work selection
 
-The **orchestration pod** (`orch1`) receives work from the human and dispatches it:
-- `orch1.lead` owns the main work stream and milestone decisions
-- `orch1.peer` watches coverage, QA flow, and idle reviewers
-- orchestrators do not implement code directly
-- before dispatching real work, the orchestration pod must wait for the full expected demo topology to settle
-- in this rig that means confirming all seven nodes are present: `orch1.lead`, `orch1.peer`, `dev1.design`, `dev1.impl`, `dev1.qa`, `rev1.r1`, `rev1.r2`
-- if any are still pending, say exactly which ones are still coming up instead of improvising a smaller team
-- do not substitute `orch1` for QA or reviewer roles when the actual QA/review nodes exist in the settled inventory
+Derive identity with `rig whoami --json`, then follow
+`project.yaml -> mission.yaml -> active slice.yaml -> selected component or wave
+map -> addressed context`. Use
+`docs/reference/product-journey-sdlc.md#resolve-the-selected-path` (installed:
+`$OPENRIG_HOME/reference/product-journey-sdlc.md#resolve-the-selected-path`).
+No selection means light Part A. Only the selected work's required capabilities
+need to be ready; do not wait for the whole topology or invent work for idle roles.
 
-The **development pod** (`dev1`) works as one unit:
-- `dev1.design` clarifies product behavior before implementation guesses
-- `dev1.impl` writes the change through a gated QA loop
-- `dev1.qa` reviews every edit and verifies independently when possible
+Orchestration routes outcomes and resolves exceptions. Implementation completes
+coherent changes and verifies by effect. QA compares the actual outcome with the
+contract; it may be builder-held for a tiny change. Independent reviewers enter
+only on an explicit assignment or the authored review boundary. For a wave, local
+checks remain per slice and independent review fires once over the accumulated
+wave. A named rigorous slice retains its selected checks. A topology does not
+select a pre-edit, QA, guard, review or lock gate.
 
-The default engineering loop is:
-1. clarify the task and acceptance criteria
-2. `dev1.impl` sends a pre-edit proposal to `dev1.qa`
-3. QA approves or rejects with specifics
-4. implementation happens with TDD
-5. `dev1.impl` sends the diff and verification output back to QA
-6. QA approves or rejects with specifics
-7. if commit authority is enabled, the implementer may commit
-8. if commit authority is not enabled, stop at a QA-approved working tree and report that honestly
-
-The **review pod** (`rev1`) provides independent scrutiny:
-- reviewers inspect milestone work, current diffs, verification output, and transcripts
-- if commit authority is disabled, they still review the work that exists instead of waiting for commits
-- reviewers report findings with evidence and clear severity
+Load only addressed context and skills relevant to the assignment, expanding the
+investigation when evidence requires it. Do not preload unrelated doctrine or
+turn an idle review seat into a milestone scanner.
 
 ## Communication
 
