@@ -347,60 +347,39 @@ describe("TmuxAdapter", () => {
   });
 
   describe("sendText", () => {
-    it("calls exec with exact command using -l flag (target quoted)", async () => {
+    it.each([
+      "hello world",
+      "echo \"hello\" && $HOME's dir; `literal` $(literal)",
+      "---\ntitle: pack\n---",
+      "é🙂\n".repeat(752) + "end",
+      "x".repeat(8191),
+      "x".repeat(8192),
+      "x".repeat(8193),
+    ])("pastes text without embedding it in shell argv or submitting it (%#)", async (text) => {
       const exec = vi.fn<ExecFn>().mockResolvedValue("");
-      const adapter = new TmuxAdapter(exec);
-
-      await adapter.sendText("r01-dev1-impl", "hello world");
-
-      expect(exec).toHaveBeenCalledOnce();
-      // OPR.0.3.3.17: the inline path now carries the `--` end-of-options
-      // sentinel; inert for non-dash content (only delta vs pre-fix is `-- `).
-      expect(exec.mock.calls[0]![0]).toBe(
-        "tmux send-keys -t 'r01-dev1-impl' -l -- 'hello world'"
-      );
-    });
-
-    it("with shell-sensitive content is properly quoted", async () => {
-      const exec = vi.fn<ExecFn>().mockResolvedValue("");
-      const adapter = new TmuxAdapter(exec);
-
-      await adapter.sendText("r01-dev1-impl", "echo \"hello\" && $HOME's dir");
-
-      expect(exec).toHaveBeenCalledOnce();
-      // OPR.0.3.3.17: `-- ` inserted before the quoted text; quoting unchanged.
-      expect(exec.mock.calls[0]![0]).toBe(
-        "tmux send-keys -t 'r01-dev1-impl' -l -- 'echo \"hello\" && $HOME'\"'\"'s dir'"
-      );
-    });
-
-    // OPR.0.3.3.17 AC-1/AC-4 DISCRIMINATOR (flip-proven): dash-prefixed inline
-    // content (--- YAML frontmatter, the norm for per-seat packs) must carry the
-    // -- end-of-options sentinel before the text, else tmux send-keys parses the
-    // content as flags and the delivery fails (seat boots blind). This assertion
-    // FAILS against the pre-fix `-l '<text>'` construction and PASSES after the
-    // fix `-l -- '<text>'`. A test that passes against both forms is false coverage.
-    it("inserts the -- end-of-options sentinel before dash-prefixed (--- frontmatter) content", async () => {
-      const exec = vi.fn<ExecFn>().mockResolvedValue("");
-      const adapter = new TmuxAdapter(exec);
-
-      await adapter.sendText("r01-dev1-impl", "---\ntitle: pack\n---");
-
-      expect(exec).toHaveBeenCalledOnce();
-      expect(exec.mock.calls[0]![0]).toBe(
-        "tmux send-keys -t 'r01-dev1-impl' -l -- '---\ntitle: pack\n---'"
-      );
+      const writeFile = vi.fn(async () => {});
+      const unlink = vi.fn(async () => {});
+      const adapter = new TmuxAdapter(exec, {
+        writeFile, unlink, tmpName: () => "/tmp/text.txt", bufferName: () => "fixture",
+      });
+      expect(await adapter.sendText("dev'qa@rig", text)).toEqual({ ok: true });
+      expect(writeFile).toHaveBeenCalledWith("/tmp/text.txt", text);
+      expect(exec.mock.calls.map(([cmd]) => cmd)).toEqual([
+        "tmux load-buffer -b 'fixture' '/tmp/text.txt'",
+        "tmux paste-buffer -t 'dev'\"'\"'qa@rig' -b 'fixture' -d -r -p",
+      ]);
+      expect(unlink).toHaveBeenCalledWith("/tmp/text.txt");
     });
 
     it("returns { ok: true } on success", async () => {
-      const adapter = new TmuxAdapter(mockExec({ "send-keys": { stdout: "" } }));
+      const adapter = new TmuxAdapter(mockExec({ "paste-buffer": { stdout: "" } }));
       const result: TmuxResult = await adapter.sendText("r01-dev1-impl", "test");
       expect(result).toEqual({ ok: true });
     });
 
     it("returns { ok: false, code: 'session_not_found' } on missing target", async () => {
       const err = new Error("can't find session: r01-dev1-impl");
-      const adapter = new TmuxAdapter(mockExec({ "send-keys": { error: err } }));
+      const adapter = new TmuxAdapter(mockExec({ "paste-buffer": { error: err } }));
       const result = await adapter.sendText("r01-dev1-impl", "test");
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -630,9 +609,8 @@ describe("TmuxAdapter", () => {
 
       // sendText targeting canonical name
       await adapter.sendText("dev-impl@auth-feats", "hello");
-      // OPR.0.3.3.17: inline path now carries the `--` end-of-options sentinel.
-      expect(exec.mock.calls[2]![0]).toBe(
-        "tmux send-keys -t 'dev-impl@auth-feats' -l -- 'hello'"
+      expect(exec.mock.calls[3]![0]).toMatch(
+        /^tmux paste-buffer -t 'dev-impl@auth-feats' -b '[^']+' -d -r -p$/
       );
     });
   });
@@ -822,7 +800,7 @@ describe("TmuxAdapter", () => {
   // OPR.0.3.3.16 - large-payload transport. A >100KB startup pack embedded in
   // one tmux/shell argv exceeds the OS per-arg limit and the launch silently
   // fails, so sendText routes large text through a temp file + tmux buffer.
-  // The correctness pivot is `paste-buffer -d -r`: `-r` preserves raw LF (tmux's
+  // `paste-buffer -d -r -p`: `-r` preserves raw LF (tmux's
   // default paste replaces LF->CR = Enter = catastrophic per-line submit in the
   // Claude/Codex TUIs); `-d` drops the buffer after a successful paste.
   describe("sendText large-payload buffer path", () => {
@@ -844,7 +822,7 @@ describe("TmuxAdapter", () => {
       };
     }
 
-    it("writes a temp file via fs and delivers via load-buffer + paste-buffer -d -r; payload never in any exec command", async () => {
+    it("writes a temp file via fs and pastes it; payload never in any exec command", async () => {
       const exec = vi.fn<ExecFn>().mockResolvedValue("");
       const { ops, writeFile, unlink } = fixedFileOps();
       const adapter = new TmuxAdapter(exec, ops);
@@ -857,7 +835,7 @@ describe("TmuxAdapter", () => {
       const cmds = exec.mock.calls.map((c) => c[0] as string);
       expect(cmds).toEqual([
         "tmux load-buffer -b 'openrig_FIXED' '/tmp/openrig-tmux-send-FIXED.txt'",
-        "tmux paste-buffer -t 'dev@rig' -b 'openrig_FIXED' -d -r",
+        "tmux paste-buffer -t 'dev@rig' -b 'openrig_FIXED' -d -r -p",
       ]);
       // The argv-size regression: the payload must never reach an exec command.
       for (const cmd of cmds) expect(cmd).not.toContain(BIG);
@@ -880,20 +858,6 @@ describe("TmuxAdapter", () => {
       expect(result).toEqual({ ok: true });
       expect(writeFile).toHaveBeenCalledWith("/tmp/openrig-tmux-send-FIXED.txt", MID);
       for (const cmd of exec.mock.calls.map((c) => c[0] as string)) expect(cmd).not.toContain(MID);
-    });
-
-    it("keeps the exact inline send-keys -l command for a small payload (no buffer path, no temp file)", async () => {
-      const exec = vi.fn<ExecFn>().mockResolvedValue("");
-      const { ops, writeFile } = fixedFileOps();
-      const adapter = new TmuxAdapter(exec, ops);
-
-      await adapter.sendText("dev@rig", "hello world");
-
-      expect(exec).toHaveBeenCalledOnce();
-      // OPR.0.3.3.17: inline path now carries the `--` end-of-options sentinel;
-      // still the inline path (no buffer, no temp file) for a small payload.
-      expect(exec.mock.calls[0]![0]).toBe("tmux send-keys -t 'dev@rig' -l -- 'hello world'");
-      expect(writeFile).not.toHaveBeenCalled();
     });
 
     it("missing target on the large path returns session_not_found and leaks no temp file or buffer", async () => {

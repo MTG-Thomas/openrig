@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 export type ExecFn = (cmd: string) => Promise<string>;
 
 /**
- * Injectable file/buffer operations for the large-payload `sendText` path.
+ * Injectable file/buffer operations for `sendText`.
  * Split out so tests can observe temp-file writes and unique-name generation
  * without touching the real filesystem; production wires node fs + os.tmpdir.
  */
@@ -27,19 +27,6 @@ function defaultTmuxFileOps(): TmuxFileOps {
     bufferName: () => `openrig_${process.pid}_${randomUUID().replace(/-/g, "")}`,
   };
 }
-
-/**
- * Payloads at or below this byte size go through the inline `send-keys -l`
- * path. Larger payloads are written to a temp file and delivered via a tmux
- * paste-buffer. TWO ceilings bound the inline path, and the binding one is
- * tmux's own: tmux rejects long command lines with "command too long" at a
- * measured ceiling of ~9.4KB — far below the OS per-arg limit (Linux
- * MAX_ARG_STRLEN ~128KB) the prior 100KB threshold was sized against. A
- * 19.8KB world-install piece failed live on exactly that gap (Test-A
- * preflight repair, 2026-08-24). 8KB keeps normal command/control text
- * inline and routes everything above through the proven buffer path.
- */
-const LARGE_PAYLOAD_THRESHOLD_BYTES = 8 * 1024;
 
 export type TmuxResult =
   | { ok: true }
@@ -336,38 +323,22 @@ export class TmuxAdapter {
     }
   }
 
-  async sendText(target: string, text: string): Promise<TmuxResult> {
-    if (Buffer.byteLength(text, "utf8") > LARGE_PAYLOAD_THRESHOLD_BYTES) {
-      return this.sendTextViaBuffer(target, text);
-    }
-    // `--` (end-of-options) is required so text beginning with `-` (e.g. `---`
-    // YAML frontmatter) is taken literally, not parsed as flags. OPR.0.3.3.17.
-    const cmd = `tmux send-keys -t ${shellQuote(target)} -l -- ${shellQuote(text)}`;
-    try {
-      await this.exec(cmd);
-      return { ok: true };
-    } catch (err) {
-      return classifyWriteError(err);
-    }
-  }
-
   /**
-   * Large-payload delivery path (the point of this transport change): a
-   * >100KB startup pack must NOT be embedded in a tmux/shell argv. The text is
-   * written to a unique temp file via Node fs (never shell-embedded), loaded
-   * into a unique tmux buffer, and pasted with `-d -r`:
+   * Paste text at every size. Unbracketed input can be consumed as individual
+   * keystrokes by agent TUIs, losing text even below the old 8 KiB cutoff.
+   * A file keeps payload bytes out of shell/tmux argv and its size limits.
+   *   `-p`  bracket the paste when the receiving application enables that mode.
    *   `-r`  preserve raw LF. tmux's default paste-buffer replaces every LF with
    *         CR, and CR (= `C-m` = Enter) is SUBMIT in the Claude/Codex TUIs - a
    *         default paste of a multi-line pack would submit on every newline.
    *   `-d`  drop the buffer after a successful paste.
-   * The single trailing submit stays the caller's separate `sendKeys(["C-m"])`,
-   * exactly as the inline `send-keys -l` path relies on (behavior-preserving).
+   * The single trailing submit stays the caller's separate `sendKeys(["C-m"])`.
    * Cleanup unlinks the temp file in `finally`; if the buffer was loaded but the
    * paste failed (e.g. missing target), an explicit `delete-buffer` runs so no
    * buffer leaks. Unique temp + buffer names per call keep parallel `rig up`
    * seats from colliding.
    */
-  private async sendTextViaBuffer(target: string, text: string): Promise<TmuxResult> {
+  async sendText(target: string, text: string): Promise<TmuxResult> {
     const path = this.fileOps.tmpName();
     const buffer = this.fileOps.bufferName();
     let bufferLoaded = false;
@@ -375,7 +346,7 @@ export class TmuxAdapter {
       await this.fileOps.writeFile(path, text);
       await this.exec(`tmux load-buffer -b ${shellQuote(buffer)} ${shellQuote(path)}`);
       bufferLoaded = true;
-      await this.exec(`tmux paste-buffer -t ${shellQuote(target)} -b ${shellQuote(buffer)} -d -r`);
+      await this.exec(`tmux paste-buffer -t ${shellQuote(target)} -b ${shellQuote(buffer)} -d -r -p`);
       return { ok: true };
     } catch (err) {
       if (bufferLoaded) {

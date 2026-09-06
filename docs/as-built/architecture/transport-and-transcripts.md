@@ -97,7 +97,7 @@ present @HEAD.
 2. Check mid-work state (unless `--force`) — re-confirmed
    `session-transport.ts:136-141` (`findPatternEvidence(recentLines,
    MID_WORK_PATTERNS)`); legacy mid-work check at `:666`.
-3. Two-step tmux send: `send-keys -l` → ~200ms delay → `C-m`
+3. Two-step tmux send: a unique file/buffer pasted with `paste-buffer -d -r -p` at every payload size → ~200ms delay → separate `C-m`. Bracketed paste preserves multiline input in supporting TUIs; the payload never enters a shell argument. A successful paste proves transport execution, not runtime consumption.
    (`session-transport.ts:717` submits `C-m`).
 4. Optional `--verify`: capture post-send pane, check message visibility
    (`session-transport.ts:305` `verify?`; `:694` `if (opts?.verify)`).
