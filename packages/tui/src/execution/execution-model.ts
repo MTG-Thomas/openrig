@@ -603,6 +603,16 @@ function lifecycleLines(execution: ExecutionViewSnap, width: number): ContentLin
     const instance = record(raw);
     const instanceId = str(instance["instance_id"], INDETERMINATE);
     lines.push({ text: `  ${instanceId} · ${str(instance["status"], INDETERMINATE)} · key ${str(instance["operation_key"], INDETERMINATE)}` });
+    const source = record(instance["graph_source"]);
+    if (source["mode"]) lines.push({ text: `    boundary: ${str(source["mode"])} · ${str(source["profileSource"] ?? source["missionSource"])}` });
+    if (source["profileSource"] && source["missionSource"]) lines.push({ text: `    mission override: ${str(source["missionSource"])}` });
+    const obligations = Array.isArray(instance["boundary_obligations"]) ? instance["boundary_obligations"] as unknown[] : [];
+    for (const rawObligation of obligations) {
+      const obligation = record(rawObligation);
+      lines.push({ text: `    ${str(obligation["stepId"])} · ${obligation["required"] ? "required" : "extension"} · ${str(obligation["state"], INDETERMINATE)} · receipt ${str(obligation["receiptState"], INDETERMINATE)}` });
+      const receipt = record(obligation["receipt"]);
+      if (receipt["evidenceRef"]) lines.push({ text: `      ${str(receipt["evidenceRef"])} · recorded by ${str(receipt["actorSession"])}` });
+    }
     const packets = Array.isArray(instance["frontier_packets"]) ? instance["frontier_packets"] as unknown[] : [];
     for (const rawPacket of packets) {
       const packet = record(rawPacket);

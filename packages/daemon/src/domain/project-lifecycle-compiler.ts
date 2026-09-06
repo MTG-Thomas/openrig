@@ -17,6 +17,13 @@ export interface LifecycleSourceDigest {
   sha256: string;
 }
 
+export interface LifecycleGraphSource {
+  mode: "project-profile" | "mission-extend" | "mission-override" | "legacy-mission" | "legacy-slices";
+  profileSource: string | null;
+  missionSource: string | null;
+  requiredSteps: string[];
+}
+
 export interface LifecycleCompilation {
   version: 1;
   eligible: boolean;
@@ -29,6 +36,7 @@ export interface LifecycleCompilation {
   compiledInputDigest: string;
   sources: LifecycleSourceDigest[];
   dependencies: Array<{ stepId: string; dependsOn: string[] }>;
+  graphSource: LifecycleGraphSource;
   workflowSpec: WorkflowSpec | null;
   advisories: string[];
   unknowns: string[];
@@ -53,7 +61,9 @@ export function compileProjectLifecycle(input: {
   const mission = readManifest(missionPath, "mission");
   const projectId = requiredString(asMapping(project.metadata, `${projectPath}: metadata`).id, `${projectPath}: metadata.id`);
   const missionName = requiredString(asMapping(mission.metadata, `${missionPath}: metadata`).name, `${missionPath}: metadata.name`);
-  const lifecycleProfile = optionalString(asMapping(project.lifecycle, `${projectPath}: lifecycle`, true)?.profile, `${projectPath}: lifecycle.profile`);
+  const lifecycle = asMapping(project.lifecycle, `${projectPath}: lifecycle`, true);
+  if (lifecycle) knownKeys(lifecycle, ["profile", "profiles", "public_owner", "retention"], `${projectPath}: lifecycle`);
+  const lifecycleProfile = optionalString(lifecycle?.profile, `${projectPath}: lifecycle.profile`);
   let members: LifecycleMissionMember[];
   try {
     members = validateMissionComposition(mission, missionPath);
@@ -68,29 +78,75 @@ export function compileProjectLifecycle(input: {
   const unknowns: string[] = [];
   const advisories: string[] = [];
   const boundary = asMapping(mission.lifecycle, `${missionPath}: lifecycle`, true);
-  let authoredBoundary: WorkflowSpec | null = null;
   if (boundary) {
-    for (const key of Object.keys(boundary)) {
-      if (!["profile", "workflow"].includes(key)) throw manifestError("lifecycle_boundary_unknown_key", `Unknown mission lifecycle key: ${key}`);
-    }
+    knownKeys(boundary, ["profile", "mode", "workflow"], `${missionPath}: lifecycle`);
     if (requiredString(boundary.profile, `${missionPath}: lifecycle.profile`) !== lifecycleProfile) {
       throw manifestError("lifecycle_profile_mismatch", "Mission lifecycle.profile must match the profile selected by project.yaml");
     }
-    const workflow = asMapping(boundary.workflow, `${missionPath}: lifecycle.workflow`);
-    const projectRefs = stringList(asMapping(project.install, `${projectPath}: install`, true)?.context, `${projectPath}: install.context`, true);
-    const missionRefs = stringList(workflow.context_refs, `${missionPath}: lifecycle.workflow.context_refs`, true);
-    const address = (root: string, ref: string) => /^(?:[a-z]+:|\$|\/)/i.test(ref) ? ref : resolve(root, ref);
-    authoredBoundary = parseWorkflowSpec(stringify({ workflow: {
-      id: `lifecycle-${projectId}-${missionName}`, version: "1", ...workflow,
-      steps: Array.isArray(workflow.steps) ? workflow.steps.map((step: Mapping) => {
-        if (!step || !Array.isArray(step.allowed_exits) || !step.allowed_exits.includes("waiting")) return step;
-        const initial = step.re_present_after_seconds ?? 300;
-        return { ...step, re_present_after_seconds: initial,
-          re_present_max_seconds: step.re_present_max_seconds ?? Math.max(3600, typeof initial === "number" ? initial : 300) };
-      }) : workflow.steps,
-      context_refs: [...new Set([projectPath, missionPath, ...projectRefs.map((ref) => address(workspaceRoot, ref)), ...missionRefs.map((ref) => address(missionDir, ref))])],
-    } }), `${missionPath}#lifecycle.workflow`);
   }
+  const projectRefs = stringList(asMapping(project.install, `${projectPath}: install`, true)?.context, `${projectPath}: install.context`, true);
+  const commonRefs = [projectPath, missionPath, ...projectRefs.map((ref) => address(workspaceRoot, ref))];
+  const parseBoundary = (workflow: Mapping, path: string, root: string): WorkflowSpec => parseWorkflowSpec(stringify({ workflow: {
+    id: `lifecycle-${projectId}-${missionName}`, version: "1", ...workflow,
+    steps: Array.isArray(workflow.steps) ? workflow.steps.map((step: Mapping) => {
+      if (!step || !Array.isArray(step.allowed_exits) || !step.allowed_exits.includes("waiting")) return step;
+      const initial = step.re_present_after_seconds ?? 300;
+      return { ...step, re_present_after_seconds: initial,
+        re_present_max_seconds: step.re_present_max_seconds ?? Math.max(3600, typeof initial === "number" ? initial : 300) };
+    }) : workflow.steps,
+    context_refs: [...new Set([...commonRefs, ...stringList(workflow.context_refs, `${path}.context_refs`, true).map((ref) => address(root, ref))])],
+  } }), path);
+
+  const graphSource: LifecycleGraphSource = {
+    mode: "legacy-slices", profileSource: null, missionSource: null, requiredSteps: [],
+  };
+  let authoredBoundary: WorkflowSpec | null = null;
+  if (lifecycle && Object.hasOwn(lifecycle, "profiles")) {
+    const profiles = asMapping(lifecycle.profiles, `${projectPath}: lifecycle.profiles`);
+    if (!lifecycleProfile || !Object.hasOwn(profiles, lifecycleProfile)) {
+      throw manifestError("lifecycle_profile_not_found", "project.lifecycle.profile must select an existing lifecycle.profiles entry");
+    }
+    const source = `${projectPath}#lifecycle.profiles.${lifecycleProfile}`;
+    const profile = asMapping(profiles[lifecycleProfile], source);
+    knownKeys(profile, ["required_steps", "workflow"], source);
+    const required = stringList(profile.required_steps, `${source}.required_steps`);
+    if (required.length === 0) throw manifestError("lifecycle_required_steps_empty", `${source}: required_steps must name the boundary obligations`);
+    const base = parseBoundary(asMapping(profile.workflow, `${source}.workflow`), `${source}.workflow`, workspaceRoot);
+    validateObligations(base, required);
+    authoredBoundary = base;
+    Object.assign(graphSource, { mode: "project-profile", profileSource: source, requiredSteps: required });
+    if (boundary && (Object.hasOwn(boundary, "workflow") || Object.hasOwn(boundary, "mode"))) {
+      if (boundary.mode !== "extend" && boundary.mode !== "override") {
+        throw manifestError("lifecycle_override_ambiguous", "Mission lifecycle.workflow over a project profile requires mode: extend or override");
+      }
+      const addition = asMapping(boundary.workflow, `${missionPath}: lifecycle.workflow`);
+      const missionSource = `${missionPath}#lifecycle.workflow`;
+      if (boundary.mode === "extend") {
+        knownKeys(addition, ["steps", "roles", "context_refs"], missionSource);
+        if (!Array.isArray(addition.steps)) throw manifestError("lifecycle_extension_invalid", "An extension must declare a steps list");
+        const ids = new Set(base.steps.map((step) => step.id));
+        if (addition.steps.some((step) => ids.has(asMapping(step, missionSource).id as string))) {
+          throw manifestError("lifecycle_extension_collision", "An extension cannot replace an inherited step; use explicit mode: override");
+        }
+        authoredBoundary = parseBoundary({ ...base, ...addition,
+          roles: { ...base.roles, ...asMapping(addition.roles, `${missionSource}.roles`, true) },
+          steps: [...base.steps, ...addition.steps],
+          context_refs: [...new Set([...(base.context_refs ?? []), ...stringList(addition.context_refs, `${missionSource}.context_refs`, true).map((ref) => address(missionDir, ref))])],
+        }, missionSource, missionDir);
+      } else {
+        authoredBoundary = parseBoundary({ ...addition,
+          context_refs: [...new Set([...(base.context_refs ?? []), ...stringList(addition.context_refs, `${missionSource}.context_refs`, true).map((ref) => address(missionDir, ref))])],
+        }, missionSource, missionDir);
+      }
+      validateObligations(authoredBoundary, required, base);
+      Object.assign(graphSource, { mode: `mission-${boundary.mode}`, missionSource });
+    }
+  } else if (boundary) {
+    if (Object.hasOwn(boundary, "mode")) throw manifestError("lifecycle_override_without_profile", "Mission mode requires a project-owned profile graph");
+    authoredBoundary = parseBoundary(asMapping(boundary.workflow, `${missionPath}: lifecycle.workflow`), `${missionPath}#lifecycle.workflow`, missionDir);
+    Object.assign(graphSource, { mode: "legacy-mission", missionSource: `${missionPath}#lifecycle.workflow` });
+  }
+  if (!graphSource.profileSource) advisories.push("Legacy lifecycle: no project-owned profile graph is selected; only the authored mission or slice graph applies.");
 
   members.forEach((member) => {
     const { ref, normalizedRef, path: slicePath } = member;
@@ -107,7 +163,7 @@ export function compileProjectLifecycle(input: {
     }
 
     // A mission boundary is explicitly authored; slice SDLC never manufactures its steps.
-    if (boundary || !member.active) return;
+    if (authoredBoundary || !member.active) return;
     const execution = asMapping(slice.execution, `${slicePath}: execution`, true);
     if (!execution) {
       unknowns.push(`${normalizedRef}: execution contract missing`);
@@ -175,6 +231,7 @@ export function compileProjectLifecycle(input: {
     operationKeyInput: input.operationKey ?? null,
     compiledInputDigest,
     sources,
+    graphSource,
     dependencies: steps.map((step) => ({ stepId: step.id, dependsOn: step.depends_on ?? [] })),
     workflowSpec,
     advisories,
@@ -182,9 +239,47 @@ export function compileProjectLifecycle(input: {
   };
 }
 
+function address(root: string, ref: string): string {
+  return /^(?:[a-z]+:|\$|\/)/i.test(ref) ? ref : resolve(root, ref);
+}
+
+function knownKeys(mapping: Mapping, allowed: string[], source: string): void {
+  for (const key of Object.keys(mapping)) {
+    if (!allowed.includes(key)) throw manifestError("lifecycle_boundary_unknown_key", `${source}: unknown key ${key}`);
+  }
+}
+
+/** Required IDs and their ordering are authored policy, not daemon receipt interpretation. */
+function validateObligations(spec: WorkflowSpec, required: string[], base?: WorkflowSpec): void {
+  const byId = new Map(spec.steps.map((step) => [step.id, step]));
+  const missing = required.filter((id) => !byId.has(id));
+  if (missing.length) throw manifestError("lifecycle_required_step_missing", `Missing required boundary steps: ${missing.join(", ")}`, { missing });
+  // A dependency graph cannot take a conditional jump around its required obligations.
+  for (const step of spec.steps) {
+    if (step.depends_on === undefined || step.next_hop?.on) {
+      throw manifestError("lifecycle_boundary_graph_invalid", `Boundary step ${step.id} must use depends_on, without conditional next_hop.on edges`);
+    }
+  }
+  const ancestors = (steps: WorkflowStepSpec[], id: string, seen = new Set<string>()): Set<string> => {
+    for (const parent of steps.find((step) => step.id === id)?.depends_on ?? []) {
+      if (!seen.has(parent)) { seen.add(parent); ancestors(steps, parent, seen); }
+    }
+    return seen;
+  };
+  if (base) for (const id of required) {
+    const before = ancestors(base.steps, id);
+    const after = ancestors(spec.steps, id);
+    const lost = required.filter((parent) => before.has(parent) && !after.has(parent));
+    if (lost.length) throw manifestError("lifecycle_required_order_changed", `Required step ${id} lost prerequisites: ${lost.join(", ")}`, { stepId: id, missing: lost });
+  }
+}
+
 function resolveManifest(input: string, file: string): string {
   const candidate = resolve(input);
-  return existsSync(candidate) && lstatSync(candidate).isDirectory() ? join(candidate, file) : candidate;
+  const path = existsSync(candidate) && lstatSync(candidate).isDirectory() ? join(candidate, file) : candidate;
+  // Canonicalize parent aliases (e.g. macOS /var -> /private/var) without
+  // erasing the existing refusal for a manifest that is itself a symlink.
+  return existsSync(path) && !lstatSync(path).isSymbolicLink() ? realpathSync(path) : path;
 }
 
 function readManifest(path: string, kind: string): Mapping {

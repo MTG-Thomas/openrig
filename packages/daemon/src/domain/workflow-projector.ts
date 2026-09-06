@@ -49,6 +49,7 @@ import {
   disarmWorkflowKeepalive,
   ensureWorkflowKeepaliveArmed,
 } from "./workflow-keepalive-arming.js";
+import { requiredLifecycleSteps } from "./lifecycle-obligations.js";
 import { shellQuote } from "../adapters/shell-quote.js";
 
 const WORKFLOW_CONTEXT_SHORTCUT =
@@ -103,6 +104,7 @@ export function workflowWaitWakeMessage(input: {
   return [
     `Workflow wait re-presentation (blocker progress or reminder): ${input.spec.id}@${input.spec.version} instance ${input.instance.instanceId} step ${input.step.id}.`,
     `You still own the same frontier packet ${input.packetId}. Read it and inspect current evidence before choosing an authored exit.`,
+    ...(input.step.objective ? [`Objective: ${input.step.objective}`] : []),
     ...(input.spec.context_refs ?? []).map((ref) => `Context reference: ${ref}`),
     `Continuation: ${renderWorkflowProjectCommand({ ...input, instanceId: input.instance.instanceId })}`,
     WORKFLOW_CONTEXT_SHORTCUT,
@@ -291,6 +293,18 @@ export class WorkflowProjector {
           allowedExits: currentStep.allowed_exits,
         },
       );
+    }
+
+    // Project profile receipts are agent-authored references. Presence is mechanical;
+    // the daemon neither reads the referenced prose nor decides its substance.
+    if (requiredLifecycleSteps(instance.lifecycleBinding).includes(currentStep.id) &&
+        (input.exit === "done" || input.exit === "handoff")) {
+      const receipt = input.closureEvidence?.evidence_ref;
+      if (typeof receipt !== "string" || receipt.trim() === "") {
+        throw new WorkflowProjectorError("lifecycle_receipt_required",
+          `Boundary step "${currentStep.id}" needs an agent-judged receipt. Supply --evidence-ref; a terminal queue row is not acceptance.`,
+          { stepId: currentStep.id, instanceId: instance.instanceId });
+      }
     }
 
     validateAcceptance(currentStep, input, instance);

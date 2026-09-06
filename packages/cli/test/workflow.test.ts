@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorkflowDeps } from "../src/commands/workflow.js";
 import { createProgram } from "../src/index.js";
@@ -137,6 +138,20 @@ describe("rig workflow CLI (PL-004 Phase D)", () => {
       entryOwnerSession: "builder@rig",
       targetRig: "rig",
     });
+  });
+
+  it.each(["compile", "instantiate-lifecycle"])("%s resolves paths in the caller before transport", async (verb) => {
+    const { deps, calls } = makeDeps();
+    for (const path of ["missions/release", resolve("missions/release")]) {
+      const program = createProgram({ workflowDeps: deps });
+      program.exitOverride();
+      await program.parseAsync(["node", "rig", "workflow", verb, path, "--operation-key", "release-op", "--json",
+        ...(verb === "instantiate-lifecycle" ? ["--root-objective", "ship", "--created-by", "orch@rig"] : [])]);
+    }
+    const requests = calls.filter((call) => call.path === `/api/workflow/${verb}`);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.body).toEqual(requests[1]?.body);
+    expect(requests[0]?.body).toMatchObject({ missionPath: resolve("missions/release") });
   });
 
   it("instantiate POSTs /api/workflow/instantiate with required fields", async () => {

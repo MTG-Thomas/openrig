@@ -157,6 +157,20 @@ describe("workflow-render (WF3 FR-2)", () => {
     expect(trace).toContain("failure Q-FAILED");
   });
 
+  it("shows required boundary obligations and missing receipts separately from queue state", () => {
+    const body = renderInstanceShow({ ...INSTANCE,
+      lifecycleBinding: { graphSource: { mode: "project-profile", profileSource: "/project.yaml#lifecycle.profiles.release" } },
+      boundaryObligations: [
+        { stepId: "exact-cut-substance", required: true, state: "pending", receiptState: "missing", receipt: null },
+        { stepId: "record-shipped", required: true, state: "closed", receiptState: "recorded", receipt: { evidenceRef: "proof/ship.md", actorSession: "orch@rig", closedAt: NOW } },
+      ],
+    }, NOW).join("\n");
+    expect(body).toContain("boundary: project-profile");
+    expect(body).toContain("exact-cut-substance · required · pending · receipt missing");
+    expect(body).toContain("record-shipped · required · closed · receipt recorded");
+    expect(body).toContain("proof/ship.md · recorded by orch@rig");
+  });
+
   it("renders the typed acceptance command shape on an acceptance frontier", () => {
     const acceptance = {
       ...INSTANCE,

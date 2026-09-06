@@ -1,6 +1,6 @@
 export {
   compileProjectLifecycle,
-  type LifecycleCompilation,
+  type LifecycleCompilation, type LifecycleGraphSource,
   type LifecycleSourceDigest,
 } from "./domain/project-lifecycle-compiler.js";
 export {

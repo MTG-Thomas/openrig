@@ -1272,9 +1272,67 @@ Phase D extends the policy enum with `workflow-keepalive` (the policy deferred f
 
 The owner-as-author + workflow-as-transactional-scribe contract is enforced by the daemon. The owner of a packet decides when it closes; the workflow runtime atomically records the closure AND creates/projects the next qitem per the workflow spec, in a single daemon transaction.
 
-### Authored mission boundary
+### Project-owned release profiles
 
-When a mission declares `lifecycle.workflow`, `compile` uses that explicit
+`project.lifecycle.profile` selects a key in `project.lifecycle.profiles`. Each
+selected entry contains `required_steps` (a nonempty list of stable obligation
+IDs) and `workflow` (the ordinary workflow language). The reusable example at
+[`project-release-profile.yaml`](../reference/project-release-profile.yaml)
+names nine release-ceremony stages followed by one `release-boundary` judgment.
+That final judgment covers the seven areas of the canonical
+[`release-boundary.md`](../reference/release-boundary.md) checklist in one
+agent-authored record. It does not create seven automatic gates.
+
+Put the profile in `project.yaml` once; release missions need only their ordinary
+composition. Customize the example's project ID, roles, and policy for the
+project. Every profile step declares `depends_on` (including `[]` on roots);
+conditional `next_hop.on` jumps are refused so required stages cannot be bypassed.
+Missing required IDs refuse with `lifecycle_required_step_missing`.
+
+Precedence is explicit:
+
+- With a selected project graph and no mission workflow, the mission inherits it.
+- `mission.lifecycle: {profile: <same-profile>, mode: extend, workflow: ...}` adds
+  new steps, merges roles by name, and appends context references. An extension
+  cannot replace a step ID; its workflow accepts only `steps`, `roles`, and
+  `context_refs`.
+- `mode: override` supplies a replacement workflow. All required project step IDs
+  and the prerequisite relationships between them must remain. Additional
+  intermediate stages are allowed. An omitted or unknown mode with competing
+  workflows refuses with `lifecycle_override_ambiguous`.
+- Without `project.lifecycle.profiles`, the existing mission-authored workflow
+  takes precedence over slice execution declarations. This legacy path remains
+  supported and reports an advisory that no project graph is selected. Adding a
+  project graph to an existing copied mission workflow requires explicit mode
+  selection or removal of the copy. Project lifecycle fields such as an inert
+  `workflow` or `workflow_ref` are refused rather than silently ignored.
+
+An authored, ready successor may be a mission extension step depending on
+`release-boundary`. Without that extension, `release-boundary` exits `done` and
+finishes the current lifecycle. The runtime creates the continuation packet;
+the agent judges readiness and performs any authorized activation. It does not
+infer readiness from a folder or activate future scope automatically.
+
+Compilation exposes `graphSource` (selection mode, project/mission addresses,
+required IDs), the complete `workflowSpec`, dependencies, and source digests.
+These are bound into the compiled input digest and persisted at instantiation.
+Changing source bytes under an existing operation key refuses. Relative paths
+passed to both CLI `compile` and `instantiate-lifecycle` are resolved against the
+**caller cwd before HTTP**, so daemon cwd cannot change their meaning.
+
+`workflow show`/JSON and the TUI execution view show every named obligation with
+its state and receipt state. Required steps need `project --evidence-ref <ref>`
+on a successful `done`/`handoff` exit; missing references refuse before mutation
+with `lifecycle_receipt_required`. Waiting and failed exits remain available.
+The projection records who supplied the reference and when. `recorded` means an
+attributed workflow receipt exists, not that the daemon verified its substance.
+An ordinary terminal queue row never supplies that receipt. Agents inspect the
+actual evidence, including reasoned not-applicable or deferred boundary areas.
+Existing typed `acceptance` contracts remain separate and retain their checks.
+
+### Authored mission boundary (legacy)
+
+Without a project-owned graph, when a mission declares `lifecycle.workflow`, `compile` uses that explicit
 workflow instead of deriving steps from active slices. Slice membership and
 backlinks are still validated and included in provenance; slice SDLC selections
 do not add workflow steps or gates. `lifecycle.profile` must match the profile
@@ -1310,7 +1368,8 @@ under that key refuses. Authoring alone never starts an instance.
 `context_refs` carries addresses in entry, successor, route/resume, and reminder
 packets. The lifecycle compiler also includes the project/mission manifests and
 `project.install.context`. Relative project references resolve from the project
-root; relative workflow references resolve from the mission directory. References
+root; profile workflow references resolve from the project root and mission workflow
+references from the mission directory. References
 are not evidence verdicts: the receiving agent opens current context, may inspect
 beyond it, and chooses the exit. The daemon neither interprets receipts nor
 activates a mission. `rigx project` remains a separate manual shadow.

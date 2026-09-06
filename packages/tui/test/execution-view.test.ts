@@ -232,6 +232,22 @@ describe("mission execution story — readable rows over the shipped projections
     expect(body).toContain("? frontier packet Q-GHOST has no queue row");
   });
 
+  it("shows the named project boundary and missing receipts before their frontier arrives", () => {
+    const fixture = executionFixture();
+    fixture.lifecycle_instances = [{ instance_id: "WF-PROFILE", status: "active", operation_key: "release",
+      graph_source: { mode: "project-profile", profileSource: "/project.yaml#lifecycle.profiles.release" },
+      boundary_obligations: [
+        { stepId: "exact-cut-substance", required: true, state: "pending", receiptState: "missing", receipt: null },
+        { stepId: "record-shipped", required: true, state: "closed", receiptState: "recorded", receipt: { evidenceRef: "proof/ship.md", actorSession: "orch@rig" } },
+      ],
+    }];
+    const body = text(executionContentLines(fixture, executionScopes(), [], null, 120));
+    expect(body).toContain("boundary: project-profile");
+    expect(body).toContain("exact-cut-substance · required · pending · receipt missing");
+    expect(body).toContain("record-shipped · required · closed · receipt recorded");
+    expect(body).toContain("proof/ship.md · recorded by orch@rig");
+  });
+
   it("keeps a typed acceptance action usable at every production terminal width", () => {
     const fixture = executionFixture();
     const candidate = "0123456789abcdef0123456789abcdef01234567";

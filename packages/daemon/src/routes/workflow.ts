@@ -72,7 +72,7 @@ export function workflowRoutes(): Hono {
         : err.code === "failure_occurrence_required" || err.code === "failure_occurrence_not_unresolved" || err.code === "failure_occurrence_replay_indeterminate" || err.code === "failure_occurrence_replay_conflict" ? 409
         : err.code === "instance_not_abortable" || err.code === "instance_not_resumable" ? 409
         : err.code === "lifecycle_operation_conflict" || err.code === "lifecycle_replay_indeterminate" ? 409
-        : err.code === "lifecycle_identity_invalid" || err.code === "lifecycle_not_eligible" ? 400
+        : err.code === "lifecycle_identity_invalid" || err.code === "lifecycle_not_eligible" || err.code === "lifecycle_receipt_required" ? 400
         : err.code.startsWith("acceptance_") || err.code === "abort_reason_required" ? 400
         : err.code === "spec_not_cached" || err.code === "current_step_unknown" ? 409
         : err.code === "no_next_step" || err.code === "next_owner_unresolved" ? 400
@@ -386,6 +386,7 @@ export function workflowRoutes(): Hono {
       frontierPackets: inspected.frontier,
       failureOccurrences: inspected.failures,
       unknowns: inspected.unknowns,
+      boundaryObligations: inspected.boundaryObligations,
     });
   });
 

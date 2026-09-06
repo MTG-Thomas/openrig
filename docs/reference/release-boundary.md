@@ -52,6 +52,11 @@ playbook.
 
 ## 4. Substrate — teardown as its own atom
 
+- Retain the current release and the immediately previous release. At a boundary
+  for release N, worktrees and other release-scoped substrate from N-2 and older
+  are eligible for cleanup. Eligibility is not permission to discard unique dirty
+  bytes: archive or otherwise disposition those first. Identify live `main` and
+  runtime state by their actual refs and identity, never by a stale directory name.
 - Prune worktrees; remove session-scoped scratch trees; verify merged branches
   deleted (merge receipts authorize).
 - Scratch homes and scenario roots in temp directories: swept.

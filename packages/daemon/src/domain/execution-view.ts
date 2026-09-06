@@ -1,3 +1,4 @@
+import { lifecycleObligations, requiredLifecycleSteps } from "./lifecycle-obligations.js";
 // S27 (OPR.0.5.6.27) — the execution view: one JSON document answering the six
 // execution questions (who-where, sequencing, care-dial, done-ness-by-rung, park
 // honesty, parallelism health), EVERY field derived at read time.
@@ -280,8 +281,9 @@ function lifecycleProjectAction(input: {
   packetId: string;
   owner: string;
   acceptance: Record<string, unknown> | null;
+  receiptRequired?: boolean;
 }): string {
-  const base = `rig workflow project --instance ${input.instanceId} --current-packet ${input.packetId} --exit <handoff|waiting|done|failed> --actor-session ${input.owner}`;
+  const base = `rig workflow project --instance ${input.instanceId} --current-packet ${input.packetId} --exit <handoff|waiting|done|failed> --actor-session ${input.owner}${input.receiptRequired ? " --evidence-ref <agent-judged-receipt>" : ""}`;
   if (!input.acceptance) return base;
   const verdicts = Array.isArray(input.acceptance["verdicts"])
     ? input.acceptance["verdicts"].filter((value): value is string => typeof value === "string")
@@ -342,7 +344,7 @@ function readLifecycleExecutions(db: Database.Database, mission: string): Array<
         gate: step && isRecord(step["gate"]) ? step["gate"] : null,
         acceptance,
         targeted_action: matches.length === 1 && packet
-          ? lifecycleProjectAction({ instanceId, packetId, owner: packet.destination_session!, acceptance })
+          ? lifecycleProjectAction({ instanceId, packetId, owner: packet.destination_session!, acceptance, receiptRequired: stepId !== null && requiredLifecycleSteps(binding).includes(stepId) })
           : INDETERMINATE,
       };
     });
@@ -374,6 +376,9 @@ function readLifecycleExecutions(db: Database.Database, mission: string): Array<
       identity,
       sources: Array.isArray(binding["sources"]) ? binding["sources"] : [],
       dependencies: Array.isArray(binding["dependencies"]) ? binding["dependencies"] : [],
+      graph_source: binding["graphSource"] ?? null,
+      boundary_obligations: lifecycleObligations(db, instanceId, binding,
+        steps.filter((step) => typeof step["id"] === "string").map((step) => ({ id: String(step["id"]) })), frontier),
       frontier_packets: packets,
       failure_occurrences: failures,
       unknowns,

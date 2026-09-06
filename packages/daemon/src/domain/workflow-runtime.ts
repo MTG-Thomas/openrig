@@ -1,3 +1,4 @@
+import { lifecycleObligations, requiredLifecycleSteps, type LifecycleObligation } from "./lifecycle-obligations.js";
 // PL-004 Phase D: workflow runtime facade.
 //
 // Coordinates spec cache + validator + instance store + projector +
@@ -209,6 +210,7 @@ export class WorkflowRuntime {
           identity: compilation.identity,
           sources: compilation.sources,
           dependencies: compilation.dependencies,
+          graphSource: compilation.graphSource,
         },
       },
     });
@@ -804,10 +806,12 @@ export class WorkflowRuntime {
       dependsOn: string[];
       gate: WorkflowStepSpec["gate"] | null;
       acceptance: WorkflowStepSpec["acceptance"] | null;
+      receiptRequired: boolean;
       deadline: WorkflowDeadlineVerdict;
     }>;
     failures: Array<WorkflowFailureOccurrence & { targetedAction: "resume" | "none" }>;
     unknowns: string[];
+    boundaryObligations: LifecycleObligation[];
   } {
     const instance = this.instanceStore.getByIdOrThrow(instanceId);
     const unknowns: string[] = [];
@@ -829,6 +833,7 @@ export class WorkflowRuntime {
         dependsOn: step?.depends_on ?? [],
         gate: step?.gate ?? null,
         acceptance: step?.acceptance ?? null,
+        receiptRequired: stepId !== null && requiredLifecycleSteps(instance.lifecycleBinding).includes(stepId),
         deadline: evaluateStepDeadline(
           { ...instance, currentFrontier: [packetId], currentStepId: stepId },
           packet ? [packet] : [],
@@ -843,7 +848,7 @@ export class WorkflowRuntime {
         ? "resume" as const
         : "none" as const,
     }));
-    return { instance, frontier, failures, unknowns };
+    return { instance, frontier, failures, unknowns, boundaryObligations: lifecycleObligations(this.db, instanceId, instance.lifecycleBinding, spec?.steps ?? [], instance.currentFrontier) };
   }
 
   async abort(input: { instanceId: string; reason: string; actorSession: string }): Promise<{
@@ -1594,6 +1599,7 @@ export class WorkflowRuntime {
     frontier: ReturnType<WorkflowRuntime["inspect"]>["frontier"];
     failures: ReturnType<WorkflowRuntime["inspect"]>["failures"];
     unknowns: string[];
+    boundaryObligations: LifecycleObligation[];
   } {
     const instance = this.instanceStore.getByIdOrThrow(instanceId);
     const trail = this.trailLog.listForInstance(instanceId);
@@ -1604,6 +1610,7 @@ export class WorkflowRuntime {
       frontier: inspected.frontier,
       failures: inspected.failures,
       unknowns: inspected.unknowns,
+      boundaryObligations: inspected.boundaryObligations,
     };
   }
 
@@ -1648,6 +1655,7 @@ export class WorkflowRuntime {
         frontierPackets: inspected.frontier,
         failureOccurrences: inspected.failures,
         unknowns: inspected.unknowns,
+        boundaryObligations: inspected.boundaryObligations,
       };
     });
   }
@@ -1661,6 +1669,7 @@ export type WorkflowInstanceWithDeadline = WorkflowInstance & {
 export type WorkflowInstanceWithInspection = WorkflowInstanceWithDeadline & {
   frontierPackets: ReturnType<WorkflowRuntime["inspect"]>["frontier"];
   failureOccurrences: ReturnType<WorkflowRuntime["inspect"]>["failures"];
+  boundaryObligations: LifecycleObligation[];
   unknowns: string[];
 };
 

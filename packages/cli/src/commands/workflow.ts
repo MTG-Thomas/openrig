@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { Command } from "commander";
 import { DaemonClient } from "../client.js";
 import { getDaemonStatus, getDaemonUrl, printDaemonNotRunning } from "../daemon-lifecycle.js";
@@ -154,7 +155,7 @@ Examples:
       const deps = getDeps();
       await withClient(deps, async (client) => {
         const res = await client.post<unknown>("/api/workflow/compile", {
-          missionPath,
+          missionPath: resolve(missionPath),
           operationKey: opts.operationKey,
         });
         printResult(opts.json ?? false, res.data, res.status);
@@ -187,7 +188,7 @@ Examples:
           compilation?: { compiledInputDigest?: string };
           advisories?: string[];
         }>("/api/workflow/instantiate-lifecycle", {
-          missionPath,
+          missionPath: resolve(missionPath),
           operationKey: opts.operationKey,
           rootObjective: opts.rootObjective,
           createdBySession: opts.createdBy,
@@ -480,7 +481,7 @@ Examples:
     .action(async (instanceId: string, opts: { json?: boolean }) => {
       const deps = getDeps();
       await withClient(deps, async (client) => {
-        const res = await client.get<{ instance?: unknown; trail?: unknown[]; frontier?: unknown[]; failures?: unknown[]; unknowns?: string[] }>(
+        const res = await client.get<{ instance?: unknown; trail?: unknown[]; frontier?: unknown[]; failures?: unknown[]; boundaryObligations?: unknown[]; unknowns?: string[] }>(
           `/api/workflow/${encodeURIComponent(instanceId)}/trace`,
         );
         // WF3 FR-2: human mode renders the per-step tree (mini-req 2's
@@ -492,6 +493,7 @@ Examples:
         const instance = {
           ...(res.data.instance as Parameters<typeof renderTraceTree>[0]),
           frontierPackets: res.data.frontier,
+          boundaryObligations: res.data.boundaryObligations,
           failureOccurrences: res.data.failures,
           unknowns: res.data.unknowns,
         } as Parameters<typeof renderTraceTree>[0];

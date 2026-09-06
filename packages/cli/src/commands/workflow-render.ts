@@ -51,6 +51,10 @@ export interface RenderInstance {
   failureOccurrences?: RenderFailureOccurrence[];
   /** Named broken joins; never collapse these to an apparently actionable row. */
   unknowns?: string[];
+  lifecycleBinding?: { graphSource?: { mode?: string; profileSource?: string | null; missionSource?: string | null } } | null;
+  boundaryObligations?: Array<{ stepId: string; required: boolean; state: string; receiptState: string;
+    receipt: { evidenceRef: string; actorSession: string; closedAt: string } | null }>;
+
 }
 
 export interface RenderFrontierPacket {
@@ -61,6 +65,7 @@ export interface RenderFrontierPacket {
   blockedOn: string | null;
   targetedAction: "project" | "route" | "indeterminate";
   dependsOn?: string[];
+  receiptRequired?: boolean;
   acceptance?: {
     candidate: string;
     verdicts: string[];
@@ -90,7 +95,7 @@ export interface RenderTrailRow {
 
 /** One command-shaped owner action, including the typed acceptance contract when present. */
 export function renderProjectAction(instanceId: string, packet: RenderFrontierPacket): string {
-  const base = `rig workflow project --instance ${instanceId} --current-packet ${packet.packetId} --exit <handoff|waiting|done|failed> --actor-session ${packet.ownerSession ?? "<owner>"}`;
+  const base = `rig workflow project --instance ${instanceId} --current-packet ${packet.packetId} --exit <handoff|waiting|done|failed> --actor-session ${packet.ownerSession ?? "<owner>"}${packet.receiptRequired ? " --evidence-ref <agent-judged-receipt>" : ""}`;
   if (!packet.acceptance) return base;
   const verdict = packet.acceptance.verdicts.length === 1
     ? packet.acceptance.verdicts[0]!
@@ -372,6 +377,15 @@ export function renderInstanceShow(
     }
   } else if (instance.currentStepId) {
     lines.push(`  at step:  ${instance.currentStepId}  frontier=[${(instance.currentFrontier ?? []).join(", ")}]`);
+  }
+  if (instance.lifecycleBinding?.graphSource) {
+    const source = instance.lifecycleBinding.graphSource;
+    lines.push(`  boundary: ${source.mode} · ${source.profileSource ?? source.missionSource ?? "legacy"}`);
+    if (source.profileSource && source.missionSource) lines.push(`  mission override: ${source.missionSource}`);
+  }
+  for (const step of instance.boundaryObligations ?? []) {
+    lines.push(`    ${step.stepId} · ${step.required ? "required" : "extension"} · ${step.state} · receipt ${step.receiptState}`);
+    if (step.receipt) lines.push(`      ${step.receipt.evidenceRef} · recorded by ${step.receipt.actorSession} at ${step.receipt.closedAt}`);
   }
   const unresolved = (instance.failureOccurrences ?? []).filter((failure) => failure.status === "unresolved");
   if (unresolved.length > 0) {
