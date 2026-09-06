@@ -81,6 +81,20 @@ export class ThreadSeatMap {
     return row ? project(row) : null;
   }
 
+  /** Outbound reply correlation is qitem-scoped. Reuse a thread only for another
+   * notification episode of the SAME durable conversation; a different human
+   * gate gets a fresh root so its reply cannot resolve an older/newer qitem. */
+  resolveOpenForConversation(human: string, seat: string, conversationId: string): ThreadMapping | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM thread_seat_map
+          WHERE human = ? AND seat = ? AND conversation_id = ? AND state = 'open'
+          ORDER BY opened_at DESC LIMIT 1`,
+      )
+      .get(human, seat, conversationId) as Record<string, unknown> | undefined;
+    return row ? project(row) : null;
+  }
+
   close(threadTs: string): void {
     this.db
       .prepare(`UPDATE thread_seat_map SET state = 'closed', closed_at = ? WHERE thread_ts = ?`)

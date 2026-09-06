@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { PassThrough } from "node:stream";
 import type { QueueDeps } from "../src/commands/queue.js";
-import { resolveQueueBody, previewBody } from "../src/commands/queue.js";
+import { resolveQueueBody, previewBody, waitForDeliveryOutcome } from "../src/commands/queue.js";
 import { createProgram } from "../src/index.js";
 
 /**
@@ -31,7 +31,7 @@ interface StubResponse {
 }
 
 function makeDeps(opts?: {
-  routes?: Record<string, StubResponse>;
+  routes?: Record<string, StubResponse | StubResponse[]>;
 }): { deps: QueueDeps; calls: Array<{ method: string; path: string; body?: unknown }> } {
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
   const routes = opts?.routes ?? {};
@@ -42,7 +42,8 @@ function makeDeps(opts?: {
       clientFactory: () => ({
         get: vi.fn(async (path: string) => {
           calls.push({ method: "GET", path });
-          return routes[`GET ${path}`] ?? { status: 200, data: {} };
+          const route = routes[`GET ${path}`];
+          return (Array.isArray(route) ? route.shift() : route) ?? { status: 200, data: {} };
         }),
         getText: vi.fn(async (path: string) => {
           calls.push({ method: "GET", path });
@@ -50,7 +51,8 @@ function makeDeps(opts?: {
         }),
         post: vi.fn(async (path: string, body: unknown) => {
           calls.push({ method: "POST", path, body });
-          return routes[`POST ${path}`] ?? { status: 201, data: { qitemId: "qitem-test-1" } };
+          const route = routes[`POST ${path}`];
+          return (Array.isArray(route) ? route.shift() : route) ?? { status: 201, data: { qitemId: "qitem-test-1" } };
         }),
         delete: vi.fn(async (path: string) => {
           calls.push({ method: "DELETE", path });
@@ -210,6 +212,109 @@ describe("rig queue CLI", () => {
     ]);
     const create = calls.find((c) => c.path === "/api/queue/create");
     expect((create!.body as { nudge: boolean }).nudge).toBe(false);
+  });
+
+  it("create --verify waits for the existing gateway receipt and keeps persistence, connector acceptance, and readership distinct", async () => {
+    const id = "qitem-human-verify";
+    const { deps, calls } = makeDeps({
+      routes: {
+        "POST /api/queue/create": { status: 201, data: { qitemId: id, state: "pending", destinationSession: "founder@external" } },
+        [`GET /api/queue/${id}`]: [
+          { status: 200, data: { qitemId: id, deliveryOutcome: null } },
+          { status: 200, data: { qitemId: id, deliveryOutcome: "posted" } },
+        ],
+      },
+    });
+    deps.deliveryVerify = { timeoutMs: 50, intervalMs: 0, sleep: async () => {} };
+    const program = createProgram({ queueDeps: deps });
+    program.exitOverride();
+    await program.parseAsync([
+      "node", "rig", "queue", "create",
+      "--destination", "founder@external",
+      "--body", "Please decide",
+      "--summary", "Founder decision",
+      "--evidence-ref", "proof/decision.md",
+      "--verify",
+      "--json",
+    ]);
+    const out = JSON.parse(logs.at(-1)!) as Record<string, unknown>;
+    expect(out).toMatchObject({
+      qitemId: id,
+      persisted: true,
+      delivery: {
+        outcome: "posted",
+        connectorAccepted: true,
+        humanReadership: "unknown",
+      },
+    });
+    expect(calls.filter((call) => call.method === "POST" && call.path === "/api/queue/create")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "GET" && call.path === `/api/queue/${id}`)).toHaveLength(2);
+  });
+
+  it("create --verify times out indeterminate without retrying or weakening the durable create", async () => {
+    const id = "qitem-human-pending";
+    const { deps, calls } = makeDeps({
+      routes: {
+        "POST /api/queue/create": { status: 201, data: { qitemId: id, state: "pending" } },
+        [`GET /api/queue/${id}`]: { status: 200, data: { qitemId: id, deliveryOutcome: null } },
+      },
+    });
+    let now = 0;
+    deps.deliveryVerify = { timeoutMs: 2, intervalMs: 0, sleep: async () => { now += 2; }, now: () => now };
+    const program = createProgram({ queueDeps: deps });
+    program.exitOverride();
+    await program.parseAsync([
+      "node", "rig", "queue", "create",
+      "--destination", "founder@external", "--body", "Please decide", "--summary", "Founder decision", "--evidence-ref", "proof/decision.md", "--verify", "--json",
+    ]);
+    const out = JSON.parse(logs.at(-1)!) as Record<string, unknown>;
+    expect(out).toMatchObject({
+      qitemId: id,
+      persisted: true,
+      delivery: {
+        outcome: "still-pending",
+        connectorAccepted: null,
+        humanReadership: "unknown",
+        nextAction: `rig queue show ${id} --json`,
+      },
+    });
+    expect(calls.filter((call) => call.method === "POST" && call.path === "/api/queue/create")).toHaveLength(1);
+  });
+
+  it.each(["transport-failed", "never-posted"] as const)(
+    "create --verify returns the terminal %s receipt without retrying",
+    async (outcome) => {
+      const id = `qitem-human-${outcome}`;
+      const { deps, calls } = makeDeps({
+        routes: {
+          "POST /api/queue/create": { status: 201, data: { qitemId: id, state: "pending" } },
+          [`GET /api/queue/${id}`]: { status: 200, data: { qitemId: id, deliveryOutcome: outcome, deliveryFailureDetail: `${outcome} detail` } },
+        },
+      });
+      const program = createProgram({ queueDeps: deps });
+      program.exitOverride();
+      await program.parseAsync([
+        "node", "rig", "queue", "create",
+        "--destination", "founder@external", "--body", "Please decide", "--summary", "Founder decision", "--evidence-ref", "proof/decision.md", "--verify", "--json",
+      ]);
+      expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+        persisted: true,
+        delivery: { outcome, connectorAccepted: false, humanReadership: "unknown", detail: `${outcome} detail` },
+      });
+      expect(calls.filter((call) => call.method === "POST" && call.path === "/api/queue/create")).toHaveLength(1);
+    },
+  );
+
+  it("delivery verification reports an unreadable receipt as indeterminate, not rejected", async () => {
+    const result = await waitForDeliveryOutcome(
+      { get: async () => { throw new Error("daemon read timed out"); } } as never,
+      "qitem-human-indeterminate",
+    );
+    expect(result).toMatchObject({
+      outcome: "indeterminate",
+      connectorAccepted: null,
+      humanReadership: "unknown",
+    });
   });
 
   // OPR.0.3.2.21.FR-4(a) — body input resolution kills the

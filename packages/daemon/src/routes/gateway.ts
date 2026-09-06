@@ -14,20 +14,45 @@ import { loadConfig, saveConfig } from "../domain/gateway/slack/config.js";
 import { SeenStore } from "../domain/gateway/slack/state-store.js";
 import { makeQueuePorts, seedBacklogAsHistory } from "../domain/gateway/slack/queue-access.js";
 import { OPENRIG_HOME } from "../openrig-compat.js";
+import { loadHumanRegistry } from "../domain/gateway/human-registry.js";
+import { resolveSecret } from "../domain/gateway/slack/secrets.js";
+import { resolveHumanDeliveryReadiness, type HumanDeliveryReadiness } from "../domain/gateway/human-readiness.js";
 
 interface SubsystemHandle {
   restart: () => void;
   status: () => Record<string, unknown>;
 }
 
-export function gatewayRoutes(): Hono {
+export function gatewayRoutes(opts: {
+  home?: string;
+  readiness?: (entityId: string, gatewayState: string) => Promise<HumanDeliveryReadiness | null>;
+} = {}): Hono {
   const app = new Hono();
+
+  app.get("/human/:entityId/readiness", async (c) => {
+    const entityId = c.req.param("entityId");
+    const subsystem = c.get("gatewaySubsystem" as never) as SubsystemHandle | undefined;
+    const gatewayState = String(subsystem?.status().state ?? "unavailable");
+    if (opts.readiness) {
+      const readiness = await opts.readiness(entityId, gatewayState);
+      return readiness ? c.json({ ok: true, readiness }) : c.json({ error: "human_not_found", entityId }, 404);
+    }
+    const home = opts.home ?? OPENRIG_HOME;
+    const registry = loadHumanRegistry(home);
+    if (!registry.ok) return c.json({ error: "human_registry_unavailable", message: registry.error }, 503);
+    const human = registry.entities.find((candidate) => candidate.entityId === entityId);
+    if (!human) return c.json({ error: "human_not_found", entityId }, 404);
+    const cfg = loadConfig(home);
+    const botToken = resolveSecret("SLACK_BOT_TOKEN", { envFile: cfg.secretsEnvFile ?? undefined });
+    const readiness = await resolveHumanDeliveryReadiness({ human, config: cfg, gatewayState, botToken });
+    return c.json({ ok: true, readiness });
+  });
 
   app.post("/slack/enable", async (c) => {
     const queueRepo = c.get("queueRepo" as never) as QueueRepository | undefined;
     const subsystem = c.get("gatewaySubsystem" as never) as SubsystemHandle | undefined;
     if (!queueRepo || !subsystem) return c.json({ error: "gateway_admin_unavailable" }, 503);
-    const home = OPENRIG_HOME;
+    const home = opts.home ?? OPENRIG_HOME;
     const cfg = loadConfig(home);
     // Item 9 — seed the pre-existing backlog as history BEFORE the wire goes live.
     const seen = new SeenStore(path.join(home, "state", "slack-outbound-seen.jsonl"));
@@ -44,7 +69,7 @@ export function gatewayRoutes(): Hono {
   app.post("/slack/disable", (c) => {
     const subsystem = c.get("gatewaySubsystem" as never) as SubsystemHandle | undefined;
     if (!subsystem) return c.json({ error: "gateway_admin_unavailable" }, 503);
-    const home = OPENRIG_HOME;
+    const home = opts.home ?? OPENRIG_HOME;
     saveConfig({ ...loadConfig(home), enabled: false }, home);
     subsystem.restart();
     return c.json({ ok: true, subsystem: subsystem.status() });

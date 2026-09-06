@@ -62,6 +62,15 @@ describe("threadâ†”seat map â€” exact-lookup semantics", () => {
     expect(map.resolveOpenForPair("h2", "s2")).toBeNull(); // wrong human never matches
   });
 
+  it("resolveOpenForConversation never aliases two human gates sharing one human+seat pair", () => {
+    const map = new ThreadSeatMap(mapDb(), clock);
+    map.open({ threadTs: "T1", channel: "C1", human: "h1", seat: "s1", conversationId: "q1" });
+    map.open({ threadTs: "T2", channel: "C1", human: "h1", seat: "s1", conversationId: "q2" });
+    expect(map.resolveOpenForConversation("h1", "s1", "q1")?.threadTs).toBe("T1");
+    expect(map.resolveOpenForConversation("h1", "s1", "q2")?.threadTs).toBe("T2");
+    expect(map.resolveOpenForConversation("h1", "s1", "q3")).toBeNull();
+  });
+
   it("REBUILD from queue-row stamps: lost table re-derives; malformed stamps skipped loudly-countable; live rows never overwritten", () => {
     const db = mapDb();
     const map = new ThreadSeatMap(db, clock);
@@ -104,6 +113,7 @@ describe("inbound routing â€” the four classes, wrong-seat ABSENCE pinned", () =
     expect(creates).toHaveLength(1);
     expect(creates[0]!.destination).toBe("dev-driver@v-openrig-build");
     expect(creates[0]!.tags).toContain("thread");
+    expect(creates[0]!.tags).toContain("reply-to:q-open");
     expect(creates[0]!.tags).not.toContain("unrouted-signal");
   });
 
@@ -133,7 +143,7 @@ describe("inbound routing â€” the four classes, wrong-seat ABSENCE pinned", () =
   });
 });
 
-describe("outbound threading through the REAL delivery path (new conversation â†’ reuse)", () => {
+describe("outbound threading through the REAL delivery path (one reply root per durable conversation)", () => {
   let home: string;
   beforeEach(() => { home = mkdtempSync(join(tmpdir(), "s10-thr-")); });
   afterEach(() => { rmSync(home, { recursive: true, force: true }); });
@@ -149,7 +159,7 @@ describe("outbound threading through the REAL delivery path (new conversation â†
     };
   }
 
-  it("first post opens a NEW root (no thread_ts) + maps it; the second post to the same pair THREADS onto it (parent ts, never a reply ts)", async () => {
+  it("two qitems to the same pair get distinct roots; another episode of one qitem reuses only its own root", async () => {
     const map = new ThreadSeatMap(mapDb(), clock);
     const fsx = memFs();
     const { fetchImpl, bodies } = capturing("1724");
@@ -162,7 +172,7 @@ describe("outbound threading through the REAL delivery path (new conversation â†
       delivered: new SeenStore("/del.jsonl", fsx, clock),
       attempted: new SeenStore("/att.jsonl", fsx, clock),
       outboundSeen: new SeenStore("/seen.jsonl", fsx, clock),
-      resolveThreadTs: (p) => map.resolveOpenForPair(p.destinationSession ?? "", p.sourceSession ?? "")?.threadTs,
+      resolveThreadTs: (p) => map.resolveOpenForConversation(p.destinationSession ?? "", p.sourceSession ?? "", p.qitemId)?.threadTs,
       onPostedRoot: (p, ts) => {
         map.open({ threadTs: ts, channel: "C1", human: p.destinationSession ?? "", seat: p.sourceSession ?? "", conversationId: p.qitemId });
         stamps.push(formatPostedStamp({ threadTs: ts, messageTs: ts, channel: "C1", human: p.destinationSession ?? "", seat: p.sourceSession ?? "", conversationId: p.qitemId }));
@@ -176,9 +186,14 @@ describe("outbound threading through the REAL delivery path (new conversation â†
     expect(map.resolveByThread("1724.1")).not.toBeNull(); // mapped from the posted root's ts
     wire.dispatcher.dispatch(OUTBOUND_OP, "mike@external", payload("q2"));
     await flush();
-    expect(bodies[1]!.thread_ts).toBe("1724.1"); // reuse: threads on the PARENT root's ts
-    // and the rebuild stamp for the root exists exactly once
-    expect(stamps).toHaveLength(1);
+    expect(bodies[1]!.thread_ts).toBeUndefined(); // q2 is a distinct reply-correlated gate
+    expect(map.resolveByThread("1724.2")?.conversationId).toBe("q2");
+    wire.dispatcher.dispatch(OUTBOUND_OP, "mike@external", { ...payload("q2"), notificationKey: "q2:episode-2" });
+    await flush();
+    expect(bodies[2]!.thread_ts).toBe("1724.2"); // same qitem, exact parent root
+    // Both durable conversations have independent rebuild stamps.
+    expect(stamps).toHaveLength(2);
     expect(parsePostedStamp(stamps[0]!)).toMatchObject({ threadTs: "1724.1", conversationId: "q1" });
+    expect(parsePostedStamp(stamps[1]!)).toMatchObject({ threadTs: "1724.2", conversationId: "q2" });
   });
 });

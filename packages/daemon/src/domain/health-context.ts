@@ -10,7 +10,7 @@ import type { HealthCheckpointSource } from "./health-checkpoints.js";
 import { loadHumanRegistry } from "./gateway/human-registry.js";
 import { loadConfig } from "./gateway/slack/config.js";
 import { resolveSecret } from "./gateway/slack/secrets.js";
-import { verifyScopes, verifyChannelMembership } from "./gateway/slack/slack-api.js";
+import { resolveHumanDeliveryReadiness } from "./gateway/human-readiness.js";
 
 /** Local evidence files only. Unsupported addresses retain unavailable truth.
  * Reuse the file surface's realpath resolver; callers choose whether to embed bytes. */
@@ -71,14 +71,14 @@ export function healthAuthority(workspace: string, checkpoints: HealthCheckpoint
 export async function healthHumanReadiness(home: string, address: string, gatewayActive: boolean) {
   const registry = loadHumanRegistry(home);
   const human = registry.ok ? registry.entities.find((h) => h.address === address) : undefined;
-  const primary = human?.connectorBindings.find((b) => b.role === "primary");
-  if (!human || primary?.kind !== "slack") return { ready: false, reason: "registered human primary connector unavailable" };
+  if (!human) return { ready: false, reason: "registered human primary connector unavailable" };
   const cfg = loadConfig(home);
-  if (!gatewayActive || !cfg.enabled || !cfg.channel || (cfg.outboundDestinations.length > 0 && !cfg.outboundDestinations.includes(address))) return { ready: false, reason: "gateway disabled, channel missing, or destination excluded" };
   const token = resolveSecret("SLACK_BOT_TOKEN", { envFile: cfg.secretsEnvFile ?? undefined });
-  if (!token) return { ready: false, reason: "connector token unavailable" };
-  const scopes = await verifyScopes(token, [...new Set([...cfg.requiredScopes, "chat:write"])]);
-  if (!scopes.ok) return { ready: false, reason: `connector scope verification failed: ${scopes.error ?? scopes.missing.join(", ")}` };
-  const channel = await verifyChannelMembership(token, cfg.channel);
-  return { ready: channel.ok && channel.isMember, reason: channel.ok && channel.isMember ? "verified scopes and channel membership" : "connector membership could not be verified" };
+  const readiness = await resolveHumanDeliveryReadiness({
+    human,
+    config: cfg,
+    gatewayState: gatewayActive ? "active" : "inactive",
+    botToken: token,
+  });
+  return { ready: readiness.ready, reason: readiness.reason };
 }

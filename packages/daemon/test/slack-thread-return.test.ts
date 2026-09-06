@@ -34,15 +34,15 @@ function mapDb(): Database.Database {
 /** LIVE-MIRROR queue port: accepts only canonical bare member@rig destinations, exactly like
  *  the daemon topology validator (a triple greedy-parses to an unknown rig and is refused). */
 function mirrorQueuePort() {
-  const creates: { destination: string; tags?: string[] }[] = [];
+  const creates: { qitemId?: string; destination: string; tags?: string[] }[] = [];
   return {
     creates,
-    createQitem: async (i: { destination: string; tags?: string[] }) => {
+    createQitem: async (i: { qitemId?: string; destination: string; tags?: string[] }) => {
       if (i.destination.split("@").length !== 2) {
         throw new Error(`destination_session ${i.destination} references an unknown rig`);
       }
-      creates.push({ destination: i.destination, tags: i.tags });
-      return `qitem-landed-${creates.length}`;
+      creates.push({ qitemId: i.qitemId, destination: i.destination, tags: i.tags });
+      return i.qitemId ?? `qitem-landed-${creates.length}`;
     },
   };
 }
@@ -55,6 +55,7 @@ describe("L2 return path — bare map seats route straight to the queue-accepted
     const port = mirrorQueuePort();
     const fs = memFs();
     const dead = new DeadLetterStore<SlackEvent>("/d.jsonl", fs, clock);
+    const resolutions: Array<{ qitemId: string; actorSession: string; decision: string }> = [];
     const router = new InboundRouter({
       queue: port,
       seen: new SeenStore("/s.jsonl", fs, clock),
@@ -62,12 +63,62 @@ describe("L2 return path — bare map seats route straight to the queue-accepted
       destination: "orch-lead@v-openrig-build",
       resolveSender: () => ({ admitted: true, source: "human-founder@external" }),
       resolveRoute: makeThreadRouteResolver({ map, unroutedDestination: "orch-lead@v-openrig-build" }),
+      resolveHumanReply: async (input) => { resolutions.push(input); return "resolved"; },
     });
     const r = await router.route({ type: "message", user: "U-FOUNDER", text: "reply received on mobile", ts: "200.2", thread_ts: "T-ROOT", channel: "C1" });
+    await router.route({ type: "message", user: "U-FOUNDER", text: "reply received on mobile", ts: "200.2", thread_ts: "T-ROOT", channel: "C1" });
     expect(r.landed).toBe(true);
+    expect(r.correlationQitemId).toBe("q-root");
+    expect(r.replyResolution).toBe("resolved");
     expect(port.creates).toHaveLength(1);
+    expect(port.creates[0]!.qitemId).toMatch(/^qitem-slack-inbound-/);
     expect(port.creates[0]!.destination).toBe("orch-lead@v-openrig-build");
     expect(port.creates[0]!.tags).toContain("thread");
+    expect(port.creates[0]!.tags).toContain("reply-to:q-root");
+    expect(resolutions).toEqual([{ qitemId: "q-root", actorSession: "human-founder@external", decision: "reply received on mobile" }]);
     expect(dead.readAll()).toHaveLength(0);
+  });
+
+  it("a continuation failure retries the deterministic inbound row and resolves the original gate exactly once", async () => {
+    const map = new ThreadSeatMap(mapDb(), clock);
+    map.open({ threadTs: "T-ROOT", channel: "C1", human: "human-founder@external", seat: "orch-lead@v-openrig-build", conversationId: "q-root" });
+    const fs = memFs();
+    const dead = new DeadLetterStore<SlackEvent>("/d.jsonl", fs, clock);
+    const seen = new SeenStore("/s.jsonl", fs, clock);
+    const created = new Set<string>();
+    let creates = 0;
+    let resolves = 0;
+    const router = new InboundRouter({
+      queue: {
+        createQitem: async (input) => {
+          creates++;
+          const id = input.qitemId!;
+          created.add(id); // mirrors QueueRepository's idempotent same-id re-delivery
+          return id;
+        },
+      },
+      seen,
+      deadLetter: dead,
+      destination: "orch-lead@v-openrig-build",
+      resolveSender: () => ({ admitted: true, source: "human-founder@external" }),
+      resolveRoute: makeThreadRouteResolver({ map, unroutedDestination: "orch-lead@v-openrig-build" }),
+      resolveHumanReply: async () => {
+        resolves++;
+        if (resolves === 1) throw new Error("temporary continuation failure");
+        return "resolved";
+      },
+    });
+    const event: SlackEvent = { type: "message", user: "U-FOUNDER", text: "approved", ts: "201.2", thread_ts: "T-ROOT", channel: "C1" };
+    const first = await router.route(event);
+    expect(first).toMatchObject({ landed: false, disposition: "dead-lettered", reason: "resolve_failed" });
+    expect(dead.readAll()).toHaveLength(1);
+    expect(seen.load().has("201.2")).toBe(false);
+
+    expect(await router.retryDeadLetters()).toEqual({ retried: 1, landed: 1 });
+    expect(created.size).toBe(1);
+    expect(creates).toBe(2); // retry reaches the idempotent create seam; no duplicate row exists
+    expect(resolves).toBe(2);
+    expect(dead.readAll()).toHaveLength(0);
+    expect(seen.load().has("201.2")).toBe(true);
   });
 });

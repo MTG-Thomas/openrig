@@ -2276,12 +2276,13 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
   // boot proceeds. An unconfigured connector is an INERT wire (honest refusal class, no ops,
   // no drivers) — `rig slack status` names what is missing.
   const { GatewaySubsystem } = await import("./domain/gateway/gateway-subsystem.js");
-  const { buildSlackGatewayWire } = await import("./domain/gateway/slack/slack-subsystem.js");
+  const { buildSlackGatewayWire, makeHumanReplyResolver } = await import("./domain/gateway/slack/slack-subsystem.js");
   const gatewaySubsystem = new GatewaySubsystem({
     home: OPENRIG_HOME,
     wire: () => buildSlackGatewayWire({
       home: OPENRIG_HOME,
       queueRepo: queueRepoInstance,
+      resolveHumanReply: makeHumanReplyResolver(queueRepoInstance, deps.missionControlWriteContract),
       log: (m) => console.log(`[gateway] ${m}`),
     }),
     log: (m) => console.log(`[gateway] ${m}`),

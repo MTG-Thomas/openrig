@@ -16,6 +16,8 @@ import type { ThreadSeatMap } from "./thread-seat-map.js";
 export interface InboundRoute {
   destination: string;
   tags: string[];
+  /** Exact human-gate qitem this thread was opened for. Absent on unmapped traffic. */
+  correlationQitemId?: string;
   /** The routing class that fired — receipts per class ride the row tags + logs. */
   routeClass: "existing-thread" | "closed-thread" | "unmapped-thread" | "human-initiated";
 }
@@ -40,7 +42,12 @@ export function makeThreadRouteResolver(opts: {
         // stamping; historical triple rows are the operator adoption's one-time cleanup.)
         const routeClass = mapping.state === "closed" ? "closed-thread" : "existing-thread";
         log(`inbound routed thread_ts=${threadTs} -> ${mapping.seat} (${routeClass})`);
-        return { destination: mapping.seat, tags: [...BASE_TAGS, "thread"], routeClass };
+        return {
+          destination: mapping.seat,
+          tags: [...BASE_TAGS, "thread", `reply-to:${mapping.conversationId}`],
+          correlationQitemId: mapping.conversationId,
+          routeClass,
+        };
       }
       log(`inbound UNMAPPED thread_ts=${threadTs} -> unrouted-signal to ${opts.unroutedDestination} (never dropped, never guessed)`);
       return { destination: opts.unroutedDestination, tags: [...BASE_TAGS, "unrouted-signal"], routeClass: "unmapped-thread" };

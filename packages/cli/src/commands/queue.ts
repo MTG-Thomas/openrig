@@ -20,7 +20,74 @@ import { resolveContextRef } from "../context-resolve.js";
  * 6 valid closure reasons.
  */
 
-export interface QueueDeps extends StatusDeps {}
+export interface DeliveryVerifyDeps {
+  timeoutMs?: number;
+  intervalMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+export interface QueueDeps extends StatusDeps {
+  deliveryVerify?: DeliveryVerifyDeps;
+}
+
+export interface VerifiedDeliveryResult {
+  outcome: "posted" | "transport-failed" | "never-posted" | "still-pending" | "indeterminate";
+  /** null means no receipt can presently settle connector acceptance. */
+  connectorAccepted: boolean | null;
+  /** A connector receipt can never prove that a person read the message. */
+  humanReadership: "unknown";
+  detail?: string;
+  nextAction: string | null;
+}
+
+export async function waitForDeliveryOutcome(
+  client: Pick<DaemonClient, "get">,
+  qitemId: string,
+  deps: DeliveryVerifyDeps = {},
+): Promise<VerifiedDeliveryResult> {
+  const timeoutMs = deps.timeoutMs ?? 30_000;
+  const intervalMs = deps.intervalMs ?? 500;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = deps.now ?? (() => Date.now());
+  const started = now();
+  for (;;) {
+    try {
+      const response = await client.get<Record<string, unknown>>(`/api/queue/${encodeURIComponent(qitemId)}`);
+      const outcome = response.data.deliveryOutcome;
+      if (outcome === "posted") {
+        return { outcome, connectorAccepted: true, humanReadership: "unknown", nextAction: null };
+      }
+      if (outcome === "transport-failed" || outcome === "never-posted") {
+        return {
+          outcome,
+          connectorAccepted: false,
+          humanReadership: "unknown",
+          detail: typeof response.data.deliveryFailureDetail === "string" ? response.data.deliveryFailureDetail : undefined,
+          nextAction: `rig queue show ${qitemId} --json`,
+        };
+      }
+    } catch (error) {
+      return {
+        outcome: "indeterminate",
+        connectorAccepted: null,
+        humanReadership: "unknown",
+        detail: `delivery receipt could not be read: ${(error as Error).message}`,
+        nextAction: `rig queue show ${qitemId} --json`,
+      };
+    }
+    if (now() - started >= timeoutMs) {
+      return {
+        outcome: "still-pending",
+        connectorAccepted: null,
+        humanReadership: "unknown",
+        detail: `no terminal connector receipt within ${timeoutMs}ms; the durable qitem remains intact`,
+        nextAction: `rig queue show ${qitemId} --json`,
+      };
+    }
+    await sleep(intervalMs);
+  }
+}
 
 async function withClient<T>(
   deps: QueueDeps,
@@ -345,6 +412,7 @@ export function queueCommand(depsOverride?: QueueDeps): Command {
     .option("--evidence-ref <path>", "OPR.0.4.4.19 FR-5: pointer to the durable artifact a human judges (e.g. a PROOF.md path). Required by the daemon when the item is human-routed; optional otherwise.")
     .option("--host <id>", QUEUE_HOST_OPTION_HELP)
     .option("--no-nudge", "Suppress the default destination nudge (cold-queue)")
+    .option("--verify", "Boundedly wait for the existing gateway delivery receipt after persistence; never retries the create and never claims human readership")
     .option("--json", "JSON output for agents")
     .action(async (opts: {
       source?: string;
@@ -365,6 +433,7 @@ export function queueCommand(depsOverride?: QueueDeps): Command {
       evidenceRef?: string;
       host?: string;
       nudge?: boolean;
+      verify?: boolean;
       json?: boolean;
     }) => {
       // OPR.0.4.6.MH3 D-3 (C3): resolve the host qualifier at the CLI edge —
@@ -457,6 +526,21 @@ export function queueCommand(depsOverride?: QueueDeps): Command {
           // plain local writes — the local path stays byte-identical).
           ...(hostResolved.hostId !== undefined ? { hostId: hostResolved.hostId } : {}),
         });
+        if (opts.verify && res.status < 400) {
+          const created = res.data;
+          const qitemId = typeof created.qitemId === "string" ? created.qitemId : null;
+          const delivery = qitemId
+            ? await waitForDeliveryOutcome(client, qitemId, deps.deliveryVerify)
+            : {
+                outcome: "indeterminate" as const,
+                connectorAccepted: null,
+                humanReadership: "unknown" as const,
+                detail: "create response did not include a qitem id; delivery cannot be correlated",
+                nextAction: null,
+              };
+          printResult(opts.json ?? false, { ...created, qitemId, persisted: true, delivery }, res.status);
+          return;
+        }
         printResult(opts.json ?? false, res.data, res.status);
       }, hostResolved.hostId !== undefined, hostResolved.hostId);
     });

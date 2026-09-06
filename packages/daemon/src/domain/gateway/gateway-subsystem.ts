@@ -31,6 +31,7 @@ export interface GatewayWire {
   dispatcher: GatewayDispatcher;
   stop(): void;
   startServices?(): void;
+  status?(): Record<string, unknown>;
 }
 
 export interface InProcessWireOpts {
@@ -95,6 +96,8 @@ export interface GatewaySubsystemStatus {
   activatedAt?: string;
   /** Durable un-delivered decisions awaiting delivery/replay (undefined until first start). */
   pendingDispatches?: number;
+  /** Connector-owned live observations; never inferred when the wire has none. */
+  connector?: Record<string, unknown>;
 }
 
 export interface GatewaySubsystemDeps {
@@ -167,6 +170,8 @@ export class GatewaySubsystem {
       try {
         s.pendingDispatches = new DispatchBuffer(this.deps.home).pending().length;
       } catch { /* buffer unreadable — omit rather than lie */ }
+      const connector = this.wireHandle?.status?.();
+      if (connector) s.connector = connector;
     }
     return s;
   }

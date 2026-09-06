@@ -4,17 +4,17 @@
 import { describe, it, expect } from "vitest";
 import { startSocketInbound, type WsLike, type SocketInboundDeps } from "../src/domain/gateway/slack/socket-inbound.js";
 import { InboundRouter, type SlackEvent } from "../src/domain/gateway/slack/inbound.js";
-import { SeenStore, DeadLetterStore, type StateFsOps } from "../src/domain/gateway/slack/state-store.js";
+import { SeenStore, DeadLetterStore, InboundReceiptStore, type StateFsOps } from "../src/domain/gateway/slack/state-store.js";
 import type { FetchImpl } from "../src/domain/gateway/slack/slack-api.js";
 
-function memFs(): StateFsOps {
+function memFs(onAppend?: (path: string, data: string) => void): StateFsOps {
   const files = new Map<string, string>();
   return {
     readFileSync: (p) => {
       if (!files.has(p)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       return files.get(p)!;
     },
-    appendFileSync: (p, d) => files.set(p, (files.get(p) ?? "") + d),
+    appendFileSync: (p, d) => { onAppend?.(p, d); files.set(p, (files.get(p) ?? "") + d); },
     writeFileSync: (p, d) => files.set(p, d),
     rename: (from, to) => {
       files.set(to, files.get(from) ?? "");
@@ -39,10 +39,39 @@ const openFetch: FetchImpl = async () =>
 const envelope = (event: SlackEvent, id = `e-${event.ts}`) => JSON.stringify({ envelope_id: id, type: "events_api", payload: { event } });
 
 describe("Slice-11 INBOUND transport — real runInboundLoop / open / message / ack / periodic retry (B1 + proof gap)", () => {
-  it("acks every envelope, lands human messages, and retries dead-letters ON CONNECT and PERIODICALLY while connected", async () => {
+  it("reports a failed open as disconnected instead of leaving the connector apparently connecting", async () => {
     const fsx = memFs();
+    const receipts = new InboundReceiptStore("/s/inbound-receipts.jsonl", fsx, clock);
+    const router = new InboundRouter({
+      queue: { createQitem: async () => "unused" },
+      seen: new SeenStore("/s/seen.jsonl", fsx, clock),
+      deadLetter: new DeadLetterStore<SlackEvent>("/s/dead.jsonl", fsx, clock),
+      destination: "operator-agent@kernel",
+      resolveSender: () => ({ admitted: true, source: "human-founder@external" }),
+    });
+    const handle = startSocketInbound("xapp-EXAMPLE-fake", router, {
+      fetchImpl: async () => new Response(JSON.stringify({ ok: false, error: "temporary outage" }), { status: 200 }),
+      inboundMaxConnects: 1,
+      receipts,
+    });
+
+    await handle.done;
+    expect(handle.status()).toMatchObject({ generation: 1, reconnects: 0, state: "disconnected" });
+    expect(handle.status().disconnectedAt).toBeDefined();
+    expect(receipts.readAll()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ generation: 1, status: "connect-attempt" }),
+      expect.objectContaining({ generation: 1, status: "connect-failed", reason: "connection-open-failed" }),
+    ]));
+  });
+
+  it("acks every envelope, lands human messages, and retries dead-letters ON CONNECT and PERIODICALLY while connected", async () => {
+    const order: string[] = [];
+    const fsx = memFs((path, data) => {
+      if (path.endsWith("inbound-receipts.jsonl") && data.includes('"status":"received"')) order.push("received");
+    });
     const seen = new SeenStore("/s/seen.jsonl", fsx, clock);
     const dead = new DeadLetterStore<SlackEvent>("/s/dead.jsonl", fsx, clock);
+    const receipts = new InboundReceiptStore("/s/inbound-receipts.jsonl", fsx, clock);
     const queue = { createQitem: async () => "qitem-xyz" };
     const router = new InboundRouter({ queue, seen, deadLetter: dead, destination: "operator-agent@kernel", resolveSender: (u) => ({ admitted: true, source: `human-${u}@kernel` }), log: () => {} });
 
@@ -50,6 +79,8 @@ describe("Slice-11 INBOUND transport — real runInboundLoop / open / message / 
     dead.append({ type: "message", user: "U0", text: "queued during outage", ts: "D1", channel: "C0" }, 1);
 
     const fake = makeFakeWs();
+    const send = fake.ws.send;
+    fake.ws.send = (data) => { order.push("ack"); send(data); };
     let resolveWsCreated: () => void;
     const wsCreated = new Promise<void>((r) => (resolveWsCreated = r));
     const deps: SocketInboundDeps = {
@@ -60,6 +91,7 @@ describe("Slice-11 INBOUND transport — real runInboundLoop / open / message / 
       },
       inboundMaxConnects: 1, // stop after this connection closes
       retryIntervalMs: 20, // short so the periodic retry fires in-test
+      receipts,
       log: () => {},
     };
 
@@ -76,13 +108,25 @@ describe("Slice-11 INBOUND transport — real runInboundLoop / open / message / 
     fake.ws.onmessage!({ data: envelope({ type: "message", user: "U1", text: "hi team", ts: "M1", channel: "C0" }) });
     await flush();
     expect(fake.sent.some((s) => s.includes('"envelope_id":"e-M1"'))).toBe(true); // fast-ack sent
+    expect(order.indexOf("ack")).toBeLessThan(order.indexOf("received")); // receipt is pre-filter, but ACK stays first
     expect(seen.load().has("M1")).toBe(true); // landed via real ack path
+
+    // The lost-reply diagnostic rail: every parsed inbound event is receipted BEFORE
+    // filtering, then receives one credential-free final disposition. Message text,
+    // sender ids, and tokens never enter the ledger.
+    const inboundReceipts = receipts.readAll();
+    expect(inboundReceipts.filter((r) => r.status === "received" && r.eventTs === "M1")).toHaveLength(1);
+    expect(inboundReceipts.filter((r) => r.status === "accepted" && r.eventTs === "M1")).toHaveLength(1);
+    expect(JSON.stringify(inboundReceipts)).not.toContain("hi team");
+    expect(JSON.stringify(inboundReceipts)).not.toContain("U1");
+    expect(handle.status()).toMatchObject({ generation: 1, reconnects: 0, lastEventTs: "M1", lastDisposition: "accepted" });
 
     // a bot message: still ACKed, NOT ingested (loop-safety)
     fake.ws.onmessage!({ data: envelope({ type: "message", bot_id: "B1", text: "loop", ts: "B1TS" }, "e-bot") });
     await flush();
     expect(fake.sent.some((s) => s.includes('"envelope_id":"e-bot"'))).toBe(true);
     expect(seen.load().has("B1TS")).toBe(false);
+    expect(receipts.readAll().some((r) => r.status === "ignored" && r.eventTs === "B1TS" && r.reason === "bot_id")).toBe(true);
 
     // B1: a NEW dead-letter appears WHILE connected → the PERIODIC timer drains it
     // (no Slack reconnect). This is the exact gap QA flagged.

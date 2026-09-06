@@ -18,7 +18,7 @@ import { buildInProcessWire, type GatewayWire, type SubsystemDeliverFn } from ".
 import { downloadPrivateFile } from "./slack-api.js";
 import { loadConfig } from "./config.js";
 import { resolveSecret } from "./secrets.js";
-import { SeenStore, DeadLetterStore } from "./state-store.js";
+import { SeenStore, DeadLetterStore, InboundReceiptStore } from "./state-store.js";
 import { makeQueuePorts } from "./queue-access.js";
 import { SlackOutboundDriver, OUTBOUND_OP, type OutboundPostPayload } from "./outbound-driver.js";
 import { subsystemSlackDeliver } from "./slack-delivery.js";
@@ -60,6 +60,32 @@ export interface SlackWireOpts {
   inboundRetryIntervalMs?: number;
   inboundMaxConnects?: number;
   registry?: RegistrySurface;
+  resolveHumanReply?: (input: { qitemId: string; actorSession: string; decision: string }) => Promise<"resolved" | "already-resolved" | "not-applicable">;
+}
+
+interface HumanReplyActionPort {
+  act(input: { verb: "resolve"; qitemId: string; actorSession: string; decision: string }): Promise<unknown>;
+}
+
+/** Compose an inbound reply with Mission Control's existing human-park resolver.
+ * A replay after the durable resolve but before inbound seen-mark is absorbed by
+ * the typed transition, so the waiting owner is resumed exactly once. */
+export function makeHumanReplyResolver(
+  queueRepo: QueueRepository,
+  contract: HumanReplyActionPort | undefined,
+): NonNullable<SlackWireOpts["resolveHumanReply"]> {
+  return async (input) => {
+    if (!contract) return "not-applicable";
+    try {
+      await contract.act({ verb: "resolve", ...input });
+      return "resolved";
+    } catch (error) {
+      if ((error as { code?: string }).code !== "qitem_not_leg1_parked") throw error;
+      const alreadyResolved = queueRepo.transitionLog.listForQitem(input.qitemId)
+        .some((transition) => transition.ownerNotificationKind === "human-decision-resolved");
+      return alreadyResolved ? "already-resolved" : "not-applicable";
+    }
+  };
 }
 
 /**
@@ -157,12 +183,13 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
   if (!outboundReady && !inboundReady) {
     const missing = !cfg.enabled ? "connector disabled (rig slack enable)" : !bot ? "SLACK_BOT_TOKEN unresolved" : "channel unconfigured";
     log(`slack delivery not configured (${missing}) — wire is inert; dispatches would be refused honestly`);
-    return buildInProcessWire({
+    const inert = buildInProcessWire({
       home: opts.home,
       ops: [],
       deliver: async () => ({ ok: false, class: "slack-not-configured", detail: missing }),
       log,
     });
+    return { ...inert, status: () => ({ platform: "slack", outboundReady: false, inboundReady: false, inbound: { state: "not-configured" } }) };
   }
 
   const registrySurface: RegistrySurface = opts.registry ?? { loadHumanRegistry, resolveSlackHandle };
@@ -213,10 +240,16 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
         attempted,
         outboundSeen,
         release: (q) => releaseRef(q),
-        // Thread reuse: an open (human, seat) conversation threads; otherwise a new root.
-        // For an outbound alert, human = the destination seat-ref, seat = the source seat.
+        // Thread reuse is durable-conversation scoped, not merely human+seat scoped.
+        // Slack replies identify only the root thread. Giving two qitems the same root
+        // would make an inbound reply ambiguous and could resume the wrong human gate.
+        // Re-delivery/new notification episodes for one qitem still reuse its exact root.
         resolveThreadTs: (p) =>
-          threadMap.resolveOpenForPair(p.destinationSession ?? "", p.sourceSession ?? "")?.threadTs,
+          threadMap.resolveOpenForConversation(
+            p.destinationSession ?? "",
+            p.sourceSession ?? "",
+            p.qitemId,
+          )?.threadTs,
         // S14: posting and interruption are separate threshold dials over one vocabulary.
         resolveMentionUserId: (p) => {
           // OPR.0.5.6.1: the engine's decided loudness is the mention rule for
@@ -418,6 +451,7 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
   // hermeticity rule, same as every monitor in the supervision tree.
   const stops: Array<() => void> = [];
   const starts: Array<() => void> = [];
+  let inboundHandle: SocketInboundHandle | undefined;
 
   if (outboundReady) {
     const driver = new SlackOutboundDriver({
@@ -440,6 +474,7 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
   if (inboundReady) {
     const inboundSeen = new SeenStore(path.join(stateDir(opts.home), "slack-inbound-seen.jsonl"));
     const dead = new DeadLetterStore<SlackEvent>(path.join(stateDir(opts.home), "slack-inbound-deadletter.jsonl"));
+    const receipts = new InboundReceiptStore(path.join(stateDir(opts.home), "slack-inbound-receipts.jsonl"));
     const registry: RegistrySurface = registrySurface;
     const router = new InboundRouter({
       queue: ports,
@@ -450,6 +485,7 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
       // S10 — deterministic thread routing: mapped thread → exactly the mapped seat; unmapped
       // or human-initiated → the configured orchestrator slot as an unrouted-signal row.
       resolveRoute: makeThreadRouteResolver({ map: threadMap, unroutedDestination: cfg.inboundDestination, log }),
+      resolveHumanReply: opts.resolveHumanReply,
       // OPR.0.5.6.2 — inbound file transfer: wired only when the bot token exists
       // (downloads need `files:read`); absent → the router's own named-failure
       // arm keeps failure honest. Media lives beside the gateway's other durable
@@ -464,18 +500,18 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
       } : {}),
       log,
     });
-    let handle: SocketInboundHandle | undefined;
     starts.push(() => {
-      handle = startSocketInbound(app!, router, {
+      inboundHandle = startSocketInbound(app!, router, {
         fetchImpl: opts.fetchImpl,
         wsFactory: opts.wsFactory,
         retryIntervalMs: opts.inboundRetryIntervalMs,
         inboundMaxConnects: opts.inboundMaxConnects,
+        receipts,
         log,
       });
       log("slack socket-mode inbound started (subsystem path)");
     });
-    stops.push(() => handle?.stop());
+    stops.push(() => inboundHandle?.stop());
   }
 
   const baseStop = wire.stop;
@@ -493,5 +529,11 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
       for (const s of stops) { try { s(); } catch { /* best-effort */ } }
       baseStop();
     },
+    status: () => ({
+      platform: "slack",
+      outboundReady,
+      inboundReady,
+      inbound: inboundHandle?.status() ?? { state: inboundReady ? "not-started" : "not-configured", generation: 0, reconnects: 0 },
+    }),
   };
 }

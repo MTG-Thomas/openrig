@@ -42,6 +42,7 @@ export function filterHumanAlerts(items: QueueItem[], opts: AlertFilterOpts): Qu
 }
 
 export interface CreateQitemInput {
+  qitemId?: string;
   source: string;
   destination: string;
   summary: string;
@@ -118,6 +119,7 @@ export function makeQueuePorts(
   return {
     async createQitem(input: CreateQitemInput): Promise<string> {
       const created = await queueRepo.create({
+        qitemId: input.qitemId,
         sourceSession: input.source,
         destinationSession: input.destination,
         body: input.body,

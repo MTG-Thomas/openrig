@@ -29,6 +29,41 @@ export type HumanRowsLookup = (address: string) => Promise<
 
 export interface GatewayCommandDeps {
   queueRows?: HumanRowsLookup;
+  humanReadiness?: HumanReadinessLookup;
+}
+
+export interface HumanReadinessView {
+  state: "ready" | "not-ready" | "indeterminate";
+  configured: boolean | null;
+  enabled: boolean | null;
+  active: boolean | null;
+  ready: boolean;
+  connector?: { kind: string; ref: string };
+  reason: string;
+  nextAction: string | null;
+  checkedAt?: string;
+}
+
+export type HumanReadinessLookup = (entityId: string) => Promise<HumanReadinessView>;
+
+export async function daemonHumanReadiness(entityId: string): Promise<HumanReadinessView> {
+  try {
+    const { DaemonClient } = await import("../client.js");
+    const response = await new DaemonClient().get<{ ok: boolean; readiness: HumanReadinessView }>(
+      `/api/gateway/human/${encodeURIComponent(entityId)}/readiness`,
+    );
+    return response.data.readiness;
+  } catch (error) {
+    return {
+      state: "indeterminate",
+      configured: null,
+      enabled: null,
+      active: null,
+      ready: false,
+      reason: `delivery readiness could not be read from the daemon: ${(error as Error).message}`,
+      nextAction: "rig status",
+    };
+  }
 }
 
 /** Default queue-row half of the remove guard: non-terminal rows addressed to the human,
@@ -67,6 +102,7 @@ export async function daemonQueueRows(address: string): ReturnType<HumanRowsLook
 
 export function gatewayCommand(deps: GatewayCommandDeps = {}): Command {
   const queueRows: HumanRowsLookup = deps.queueRows ?? daemonQueueRows;
+  const humanReadiness: HumanReadinessLookup = deps.humanReadiness ?? daemonHumanReadiness;
   const cmd = new Command("gateway").description("Gateway: the human registry + connector surfaces");
   const human = cmd.command("human").description("Manage human specs (file-per-human fragments under gateway/humans/)");
 
@@ -138,11 +174,13 @@ export function gatewayCommand(deps: GatewayCommandDeps = {}): Command {
       const { listHumans } = await import("@openrig/daemon/gateway-human-registry");
       const res = listHumans();
       if (!res.ok) { console.error(`refused: ${res.error}`); process.exitCode = 1; return; }
-      if (opts.json) { console.log(JSON.stringify({ ok: true, humans: res.humans, ...(res.advisory ? { advisory: res.advisory } : {}) })); return; }
+      const humans = await Promise.all(res.humans.map(async (record) => ({ ...record, deliveryReadiness: await humanReadiness(record.entityId) })));
+      if (opts.json) { console.log(JSON.stringify({ ok: true, humans, ...(res.advisory ? { advisory: res.advisory } : {}) })); return; }
       if (res.humans.length === 0) { console.log("no human configured yet — register one: rig gateway human add <entityId> --display-name … --binding … --delivery-class …"); return; }
-      for (const h of res.humans) {
+      for (const h of humans) {
         const inbound = h.bindings.inboundResolvable ? "" : "  [outbound-only]";
-        console.log(`${h.entityId}  "${h.displayName}"  class=${h.deliveryClass}  ${h.away ? "away" : "available"}  bindings=${h.bindings.count} (primary ${h.bindings.primary.kind}:${h.bindings.primary.connectorRef})${inbound}`);
+        console.log(`${h.entityId}  "${h.displayName}"  class=${h.deliveryClass}  ${h.away ? "away" : "available"}  bindings=${h.bindings.count} (primary ${h.bindings.primary.kind}:${h.bindings.primary.connectorRef})  delivery=${h.deliveryReadiness.state}${inbound}`);
+        if (!h.deliveryReadiness.ready) console.log(`  delivery: ${h.deliveryReadiness.reason}${h.deliveryReadiness.nextAction ? `; next: ${h.deliveryReadiness.nextAction}` : ""}`);
       }
       if (res.advisory) console.log(`advisory: ${res.advisory}`);
     });
@@ -155,8 +193,8 @@ export function gatewayCommand(deps: GatewayCommandDeps = {}): Command {
       const { showHuman } = await import("@openrig/daemon/gateway-human-registry");
       const res = showHuman(entityId);
       if (!res.ok) { console.error(`refused: ${res.error}`); process.exitCode = 1; return; }
-      if (opts.json) { console.log(JSON.stringify({ ok: true, record: res.record })); return; }
-      const r = res.record;
+      const r = { ...res.record, deliveryReadiness: await humanReadiness(entityId) };
+      if (opts.json) { console.log(JSON.stringify({ ok: true, record: r })); return; }
       console.log(`${r.entityId} (${r.address}) — "${r.displayName}"`);
       console.log(`  fragment: ${r.fragmentPath}`);
       console.log(`  delivery-class: ${r.prefs.deliveryClass.value} (${r.prefs.deliveryClass.source})`);
@@ -164,6 +202,8 @@ export function gatewayCommand(deps: GatewayCommandDeps = {}): Command {
       r.connectorBindings.forEach((b, i) => {
         console.log(`  binding.${i}: ${b.kind}:${b.connectorRef} role=${b.role}${b.handle ? ` handle=${b.handle}` : " [outbound-only]"}`);
       });
+      console.log(`  delivery-readiness: ${r.deliveryReadiness.state} (${r.deliveryReadiness.reason})`);
+      if (r.deliveryReadiness.nextAction) console.log(`  next: ${r.deliveryReadiness.nextAction}`);
     });
 
   human

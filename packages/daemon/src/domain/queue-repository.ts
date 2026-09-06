@@ -2792,7 +2792,11 @@ export class QueueRepository {
     // OPR.0.5.6.14 — the row FACE answers "did it reach them" in one read for
     // gateway-routed rows; null for pane-bound (absence-governed, no key lies).
     const ledger = this.deliveryOutcomeFor(item.qitemId);
-    return { ...item, deliveryOutcome: ledger?.outcome ?? null };
+    return {
+      ...item,
+      deliveryOutcome: ledger?.outcome ?? null,
+      ...(ledger && ledger.outcome !== "posted" ? { deliveryFailureDetail: ledger.detail } : {}),
+    };
   }
 
   list(opts?: QueueListOptions): QueueItem[] {
@@ -2851,7 +2855,11 @@ export class QueueRepository {
     const items = rows.map((r) => {
       const item = this.rowToItem(r);
       const ledger = this.deliveryOutcomeFor(item.qitemId);
-      return { ...item, deliveryOutcome: ledger?.outcome ?? null };
+      return {
+        ...item,
+        deliveryOutcome: ledger?.outcome ?? null,
+        ...(ledger && ledger.outcome !== "posted" ? { deliveryFailureDetail: ledger.detail } : {}),
+      };
     });
     return opts?.compact
       ? items.map((item) => ({

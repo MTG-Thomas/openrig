@@ -14,6 +14,7 @@
 // relay runners; the durability semantics around it are unchanged.
 import type { SeenStore, DeadLetterStore, DeadLetterEntry } from "./state-store.js";
 import type { InboundQueuePort } from "./queue-access.js";
+import { createHash } from "node:crypto";
 
 export interface SlackEvent {
   type?: string;
@@ -92,7 +93,9 @@ export interface InboundDeps {
   /** S10 thread routing (deterministic, zero inference): resolve the destination + tags for an
    *  admitted event. Absent → every event lands on the static `destination` (the pre-routing
    *  shape, and the fallback the tests pin). */
-  resolveRoute?: (ev: SlackEvent) => { destination: string; tags?: string[] };
+  resolveRoute?: (ev: SlackEvent) => { destination: string; tags?: string[]; correlationQitemId?: string };
+  /** Continue an exact human gate through the existing Mission Control resolve primitive. */
+  resolveHumanReply?: (input: { qitemId: string; actorSession: string; decision: string }) => Promise<"resolved" | "already-resolved" | "not-applicable">;
   /** OPR.0.5.6.2 — inbound file transfer. Absent with a file-bearing event →
    *  every file is a NAMED failure on the row ("transfer unavailable"), never
    *  a silent drop of message or file. */
@@ -105,7 +108,7 @@ export class InboundRouter {
   private readonly inflight = new Set<string>(); // same-ts double-dispatch guard (item 8)
   constructor(private readonly deps: InboundDeps) {}
 
-  private summaryOf(ev: SlackEvent, transfer?: InboundFileResult | null): { summary: string; body: string } {
+  private summaryOf(ev: SlackEvent, transfer?: InboundFileResult | null, correlationQitemId?: string): { summary: string; body: string } {
     const text = String(ev.text ?? "").slice(0, 1800);
     const meta = `slack channel=${ev.channel} user=${ev.user} ts=${ev.ts}`;
     // OPR.0.5.6.2 — attachments ride the row BODY by LOCAL path (Slack owns
@@ -129,8 +132,13 @@ export class InboundRouter {
     const headline = text.trim() ? text : firstFileName ? `[file] ${firstFileName}` : text;
     return {
       summary: `Founder via Slack: ${headline.slice(0, 90)}`,
-      body: `${sections.filter((s) => s.length > 0).join("\n\n")}\n\n---\nSource: ${meta}\nRouted by openrig slack-inbound. Default destination per config; re-route via queue as needed.`,
+      body: `${sections.filter((s) => s.length > 0).join("\n\n")}\n\n---\nSource: ${meta}${correlationQitemId ? `\nIn reply to: ${correlationQitemId}` : ""}\nRouted by openrig slack-inbound. Default destination per config; re-route via queue as needed.`,
     };
+  }
+
+  private inboundQitemId(ev: SlackEvent): string {
+    const key = `${ev.channel ?? "-"}:${ev.ts ?? "-"}`;
+    return `qitem-slack-inbound-${createHash("sha256").update(key).digest("hex").slice(0, 20)}`;
   }
 
   /**
@@ -139,7 +147,13 @@ export class InboundRouter {
    * failure so callers dead-letter ONLY real failures. On success, marks seen
    * (durable qitem exists → safe).
    */
-  private async attemptLand(ev: SlackEvent): Promise<{ landed: boolean; qitemId?: string; reason?: "dup" | "create_failed" | "unregistered" }> {
+  private async attemptLand(ev: SlackEvent): Promise<{
+    landed: boolean;
+    qitemId?: string;
+    reason?: "dup" | "create_failed" | "resolve_failed" | "unregistered";
+    correlationQitemId?: string;
+    replyResolution?: "resolved" | "already-resolved" | "not-applicable";
+  }> {
     const ts = ev.ts ?? "";
     if (!ts || this.inflight.has(ts) || this.deps.seen.load().has(ts)) return { landed: false, reason: "dup" };
     // A6 v3 registration gate: admit-iff-registered. An unregistered sender is REFUSED here —
@@ -180,12 +194,13 @@ export class InboundRouter {
           }
         }
       }
-      const { summary, body } = this.summaryOf(ev, transfer);
       // S10 — deterministic route (thread map) when wired; static destination otherwise.
       const route = this.deps.resolveRoute?.(ev) ?? { destination: this.deps.destination };
+      const { summary, body } = this.summaryOf(ev, transfer, route.correlationQitemId);
       let qitemId: string;
       try {
         qitemId = await this.deps.queue.createQitem({
+          qitemId: this.inboundQitemId(ev),
           source: who.source, // the REGISTERED human's canonical ref (human-class), never a raw platform id
           destination: route.destination,
           priority: "routine",
@@ -197,9 +212,22 @@ export class InboundRouter {
         this.deps.log?.(`qitem create failed ts=${ts}: ${(e as Error).message}`);
         return { landed: false, reason: "create_failed" };
       }
+      let replyResolution: "resolved" | "already-resolved" | "not-applicable" | undefined;
+      if (route.correlationQitemId && this.deps.resolveHumanReply) {
+        try {
+          replyResolution = await this.deps.resolveHumanReply({
+            qitemId: route.correlationQitemId,
+            actorSession: who.source,
+            decision: String(ev.text ?? "").trim() || "[file reply]",
+          });
+        } catch (e) {
+          this.deps.log?.(`human reply continuation failed qitem=${route.correlationQitemId} ts=${ts}: ${(e as Error).message}`);
+          return { landed: false, qitemId, reason: "resolve_failed", correlationQitemId: route.correlationQitemId };
+        }
+      }
       this.deps.seen.mark(ts, "landed"); // durable qitem exists → safe to mark
       this.deps.log?.(`qitem ${qitemId} -> ${route.destination} (ts=${ts})`);
-      return { landed: true, qitemId };
+      return { landed: true, qitemId, correlationQitemId: route.correlationQitemId, replyResolution };
     } finally {
       this.inflight.delete(ts);
     }
@@ -209,13 +237,21 @@ export class InboundRouter {
    * LIVE path: attempt to land; on a genuine create failure, dead-letter the
    * event (attempt-counted) BEFORE returning — NOT marked seen (item 8).
    */
-  async route(ev: SlackEvent, attempts = 0): Promise<{ landed: boolean; qitemId?: string }> {
+  async route(ev: SlackEvent, attempts = 0): Promise<{
+    landed: boolean;
+    qitemId?: string;
+    disposition: "accepted" | "ignored" | "refused" | "dead-lettered";
+    reason?: string;
+    correlationQitemId?: string;
+    replyResolution?: "resolved" | "already-resolved" | "not-applicable";
+  }> {
     const r = await this.attemptLand(ev);
-    if (!r.landed && r.reason === "create_failed") {
+    if (!r.landed && (r.reason === "create_failed" || r.reason === "resolve_failed")) {
       this.deps.deadLetter.append(ev, attempts + 1);
       this.deps.log?.(`dead-lettered ts=${ev.ts} (attempt ${attempts + 1})`);
     }
-    return { landed: r.landed, qitemId: r.qitemId };
+    const disposition = r.landed ? "accepted" : r.reason === "unregistered" ? "refused" : r.reason === "dup" ? "ignored" : "dead-lettered";
+    return { landed: r.landed, qitemId: r.qitemId, disposition, reason: r.reason, correlationQitemId: r.correlationQitemId, replyResolution: r.replyResolution };
   }
 
   /**
@@ -236,7 +272,7 @@ export class InboundRouter {
       if (e.ev.ts && seen.has(e.ev.ts)) continue; // already landed → recovered, drop from set
       const r = await this.attemptLand(e.ev);
       if (r.landed) landed++;
-      else if (r.reason === "create_failed") stillFailing.push({ ev: e.ev, at: e.at, attempts: e.attempts + 1 });
+      else if (r.reason === "create_failed" || r.reason === "resolve_failed") stillFailing.push({ ev: e.ev, at: e.at, attempts: e.attempts + 1 });
       // reason === "dup" (in-flight) → drop; a concurrent path owns it
     }
     this.deps.deadLetter.replaceAll(stillFailing); // atomic; original intact until here
@@ -257,10 +293,17 @@ export interface SocketEnvelope {
  * and route. Ack happens even if routing later fails — the dead-letter, not
  * transport redelivery, is the zero-drop net.
  */
-export async function handleEnvelope(env: SocketEnvelope, ack: () => void, router: InboundRouter, log?: (m: string) => void): Promise<void> {
+export async function handleEnvelope(
+  env: SocketEnvelope,
+  ack: () => void,
+  router: InboundRouter,
+  log?: (m: string) => void,
+  onReceived?: () => void,
+): Promise<{ status: "accepted" | "ignored" | "refused" | "dead-lettered"; reason?: string }> {
   if (env.envelope_id) ack(); // fast-ack, unconditional, first
-  if (env.type === "disconnect") return;
-  if (env.type !== "events_api") return;
+  onReceived?.(); // diagnostic receipt follows ACK but precedes every handler filter
+  if (env.type === "disconnect") return { status: "ignored", reason: "disconnect" };
+  if (env.type !== "events_api") return { status: "ignored", reason: "envelope-type" };
   const ev = env.payload?.event ?? {};
   const decision = ingestDecision(ev);
   if (!decision.ingest) {
@@ -272,7 +315,8 @@ export async function handleEnvelope(env: SocketEnvelope, ack: () => void, route
           ` channel=${ev.channel ?? "-"} reason=${decision.reason}`,
       );
     }
-    return;
+    return { status: "ignored", reason: decision.reason };
   }
-  await router.route(ev);
+  const routed = await router.route(ev);
+  return { status: routed.disposition, reason: routed.reason };
 }

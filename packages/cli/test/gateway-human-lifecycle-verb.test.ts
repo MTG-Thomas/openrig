@@ -74,6 +74,18 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
     await runAdd("mike");
     logSpy.mockClear();
   });
+
+  const ready = async () => ({
+    state: "ready" as const,
+    configured: true,
+    enabled: true,
+    active: true,
+    ready: true,
+    reason: "connector accepted live readiness probes",
+    nextAction: null,
+  });
+
+  const program = () => createProgram({ gatewayDeps: { humanReadiness: ready } });
   afterEach(() => {
     logSpy.mockRestore();
     errSpy.mockRestore();
@@ -83,7 +95,7 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
   });
 
   it("is wired via createProgram: list, show, set, remove all exist under gateway human", () => {
-    const gw = createProgram().commands.find((c) => c.name() === "gateway")!;
+    const gw = program().commands.find((c) => c.name() === "gateway")!;
     const human = gw.commands.find((c) => c.name() === "human")!;
     for (const verb of ["list", "show", "set", "remove"]) {
       expect(human.commands.find((c) => c.name() === verb), `gateway human ${verb}`).toBeDefined();
@@ -91,7 +103,7 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
   });
 
   it("list --json emits the complete records", async () => {
-    const p = createProgram();
+    const p = program();
     p.exitOverride();
     await p.parseAsync(["node", "rig", "gateway", "human", "list", "--json"]);
     expect(process.exitCode).toBeUndefined();
@@ -100,6 +112,7 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
     expect(out.humans).toHaveLength(1);
     expect(out.humans[0]!.entityId).toBe("mike");
     expect(out.humans[0]!.deliveryClass).toBe("B");
+    expect(out.humans[0]!.deliveryReadiness).toMatchObject({ state: "ready", configured: true, enabled: true, active: true, ready: true });
   });
 
   it("A1 advisory receipt: with several hand-authored fragments list --json renders all + the 0.5.7 advisory", async () => {
@@ -107,7 +120,7 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
     // through the add verb — the verb is the single-human boundary.
     seedSecondHuman("ana");
     logSpy.mockClear();
-    const p = createProgram();
+    const p = program();
     p.exitOverride();
     await p.parseAsync(["node", "rig", "gateway", "human", "list", "--json"]);
     const out = JSON.parse(logSpy.mock.calls.at(-1)![0] as string) as { ok: boolean; humans: unknown[]; advisory?: string };
@@ -117,17 +130,18 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
   });
 
   it("show --json carries authored-vs-default provenance and the fragment path", async () => {
-    const p = createProgram();
+    const p = program();
     p.exitOverride();
     await p.parseAsync(["node", "rig", "gateway", "human", "show", "mike", "--json"]);
-    const out = JSON.parse(logSpy.mock.calls.at(-1)![0] as string) as { ok: boolean; record: { prefs: { away: { source: string } }; fragmentPath: string } };
+    const out = JSON.parse(logSpy.mock.calls.at(-1)![0] as string) as { ok: boolean; record: { prefs: { away: { source: string } }; fragmentPath: string; deliveryReadiness: Record<string, unknown> } };
     expect(out.ok).toBe(true);
     expect(out.record.prefs.away.source).toBe("default");
     expect(out.record.fragmentPath).toContain("mike.yaml");
+    expect(out.record.deliveryReadiness).toMatchObject({ state: "ready", ready: true });
   });
 
   it("set delivery-class lands in the fragment (verified at source, not from the echo)", async () => {
-    const p = createProgram();
+    const p = program();
     p.exitOverride();
     await p.parseAsync(["node", "rig", "gateway", "human", "set", "mike", "delivery-class", "D"]);
     expect(process.exitCode).toBeUndefined();
@@ -137,7 +151,7 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
   });
 
   it("set with a bad enum exits 1 and names the allowed set", async () => {
-    const p = createProgram();
+    const p = program();
     p.exitOverride();
     try { await p.parseAsync(["node", "rig", "gateway", "human", "set", "mike", "delivery-class", "Z"]); } catch { /* exitCode path */ }
     expect(process.exitCode).toBe(1);
@@ -147,7 +161,7 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
 
   it("remove refuses with a teaching refusal enumerating in-flight rows from the injected lookup", async () => {
     const rows: HumanRowsLookup = async () => ({ ok: true, rows: [{ id: "qitem-777", state: "pending", summary: "ping mike" }] });
-    const p = createProgram();
+    const p = program();
     p.exitOverride();
     const gw = gatewayCommand({ queueRows: rows });
     // Drive the injected command directly (same commander surface the program mounts).
@@ -179,7 +193,7 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
   it("F1: a second DISTINCT add REFUSES with teaching (existing human named, hand-authoring + 0.5.7 pointed at) and writes ZERO fragment bytes", async () => {
     const dirBefore = readdirSync(humansDir(home)).sort();
     const mikeBytes = readFileSync(join(humansDir(home), "mike.yaml"), "utf8");
-    const p = createProgram();
+    const p = program();
     p.exitOverride();
     try { await p.parseAsync([
       "node", "rig", "gateway", "human", "add", "ana",

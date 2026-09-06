@@ -412,6 +412,7 @@ describe("OPR.0.5.6.14 — the delivery ledger is universal and consulted", () =
       | { deliveryFailureDetail?: string }
       | undefined;
     expect(failed?.deliveryFailureDetail, "the consumer preserves the gateway's actual error evidence").toContain("episode-b-needle");
+    expect(h.repo.getById(row.qitemId)?.deliveryFailureDetail, "the queue show/--verify row face preserves that same error evidence").toContain("episode-b-needle");
   });
 
   it("REGISTRY UNREADABLE IS INDETERMINATE: it cannot revive episode A posted over episode B failed", async () => {

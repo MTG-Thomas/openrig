@@ -11,6 +11,7 @@
 
 import { openSocketConnection, type FetchImpl } from "./slack-api.js";
 import { handleEnvelope, type InboundRouter, type SocketEnvelope } from "./inbound.js";
+import type { InboundReceiptStore, InboundReceiptStatus } from "./state-store.js";
 
 export interface WsLike {
   send(data: string): void;
@@ -29,6 +30,7 @@ export interface SocketInboundDeps {
   inboundMaxConnects?: number;
   /** Dead-letter retry cadence WHILE the socket stays connected (default 5min). */
   retryIntervalMs?: number;
+  receipts?: InboundReceiptStore;
   log?: (msg: string) => void;
 }
 
@@ -36,6 +38,18 @@ export interface SocketInboundHandle {
   /** Resolves when the loop ends (maxConnects reached or stop() called). */
   done: Promise<void>;
   stop(): void;
+  status(): SocketInboundStatus;
+}
+
+export interface SocketInboundStatus {
+  generation: number;
+  reconnects: number;
+  state: "connecting" | "connected" | "disconnected" | "stopped";
+  connectedAt?: string;
+  disconnectedAt?: string;
+  lastEventAt?: string;
+  lastEventTs?: string;
+  lastDisposition?: InboundReceiptStatus;
 }
 
 /** Start the Socket Mode loop (the shipped runner's exact shape, service-ified with a stop()). */
@@ -48,15 +62,32 @@ export function startSocketInbound(appToken: string, router: InboundRouter, deps
   let stopped = false;
   let liveWs: WsLike | undefined;
   let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+  const status: SocketInboundStatus = { generation: 0, reconnects: 0, state: "disconnected" };
+  const stamp = () => new Date().toISOString();
+  const receipt = (entry: Parameters<InboundReceiptStore["append"]>[0]): void => {
+    try {
+      deps.receipts?.append(entry);
+    } catch (error) {
+      // Observability must never become the reason an already-ACKed human message is lost.
+      log(`inbound receipt write failed (${entry.status}): ${(error as Error).message}`);
+    }
+  };
 
   const done = new Promise<void>((resolve) => {
     const connect = async (): Promise<void> => {
       if (stopped) return resolve();
       connects++;
+      status.generation = connects;
+      status.reconnects = Math.max(0, connects - 1);
+      status.state = "connecting";
+      receipt({ generation: connects, status: "connect-attempt" });
       const open = await openSocketConnection(appToken, deps.fetchImpl);
       if (stopped) return resolve();
       if (!open.ok || !open.url) {
         log(`connect failed: ${open.error}`);
+        status.state = "disconnected";
+        status.disconnectedAt = stamp();
+        receipt({ generation: connects, status: "connect-failed", reason: "connection-open-failed" });
         if (deps.inboundMaxConnects && connects >= deps.inboundMaxConnects) return resolve();
         pendingTimer = setTimeout(connect, backoff);
         backoff = Math.min(backoff * 2, 60000);
@@ -68,6 +99,9 @@ export function startSocketInbound(appToken: string, router: InboundRouter, deps
       ws.onopen = () => {
         backoff = 1000;
         log("socket connected");
+        status.state = "connected";
+        status.connectedAt = stamp();
+        receipt({ generation: connects, status: "connected" });
         void router.retryDeadLetters(); // drain on connect (cold-init)…
         // …AND periodically WHILE connected (B1: recovery after a queue outage
         // must not wait for the next Slack reconnect). Cleared on close.
@@ -83,11 +117,52 @@ export function startSocketInbound(appToken: string, router: InboundRouter, deps
         } catch {
           return;
         }
-        void handleEnvelope(env, () => env.envelope_id && ws.send(JSON.stringify({ envelope_id: env.envelope_id })), router, log);
+        const ev = env.payload?.event;
+        status.lastEventAt = stamp();
+        status.lastEventTs = ev?.ts;
+        void handleEnvelope(
+          env,
+          () => env.envelope_id && ws.send(JSON.stringify({ envelope_id: env.envelope_id })),
+          router,
+          log,
+          () => receipt({
+            generation: connects,
+            status: "received",
+            envelopeId: env.envelope_id,
+            eventTs: ev?.ts,
+            channel: ev?.channel,
+          }),
+        )
+          .then((disposition) => {
+            status.lastDisposition = disposition.status;
+            receipt({
+              generation: connects,
+              status: disposition.status,
+              envelopeId: env.envelope_id,
+              eventTs: ev?.ts,
+              channel: ev?.channel,
+              reason: disposition.reason,
+            });
+          })
+          .catch((error) => {
+            status.lastDisposition = "handler-failed";
+            receipt({
+              generation: connects,
+              status: "handler-failed",
+              envelopeId: env.envelope_id,
+              eventTs: ev?.ts,
+              channel: ev?.channel,
+              reason: "handler-threw",
+            });
+            log(`inbound handler failed ts=${ev?.ts ?? "-"}: ${(error as Error).message}`);
+          });
       };
       ws.onclose = () => {
         if (retryTimer) clearInterval(retryTimer);
         liveWs = undefined;
+        status.state = stopped ? "stopped" : "disconnected";
+        status.disconnectedAt = stamp();
+        receipt({ generation: connects, status: "disconnected" });
         if (stopped) return resolve();
         log(`socket closed; reconnect in ${backoff}ms`);
         if (deps.inboundMaxConnects && connects >= deps.inboundMaxConnects) return resolve();
@@ -109,8 +184,10 @@ export function startSocketInbound(appToken: string, router: InboundRouter, deps
     done,
     stop: () => {
       stopped = true;
+      status.state = "stopped";
       if (pendingTimer) clearTimeout(pendingTimer);
       try { liveWs?.close(); } catch { /* best-effort */ }
     },
+    status: () => ({ ...status }),
   };
 }

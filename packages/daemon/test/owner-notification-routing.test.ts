@@ -14,13 +14,14 @@ import { MissionControlWriteContract } from "../src/domain/mission-control/missi
 import { filterHumanAlerts, makeQueuePorts, type QueueItem } from "../src/domain/gateway/slack/queue-access.js";
 import { SlackOutboundDriver } from "../src/domain/gateway/slack/outbound-driver.js";
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from "../src/domain/gateway/slack/config.js";
-import { SeenStore } from "../src/domain/gateway/slack/state-store.js";
-import { buildSlackGatewayWire } from "../src/domain/gateway/slack/slack-subsystem.js";
+import { SeenStore, DeadLetterStore } from "../src/domain/gateway/slack/state-store.js";
+import { buildSlackGatewayWire, makeHumanReplyResolver } from "../src/domain/gateway/slack/slack-subsystem.js";
 import { DispatchBuffer } from "../src/domain/gateway/dispatch-buffer.js";
 import { OUTBOUND_OP } from "../src/domain/gateway/slack/outbound-driver.js";
 import { resolveSlackHandle } from "../src/domain/gateway/human-registry.js";
 import { ThreadSeatMap } from "../src/domain/gateway/slack/thread-seat-map.js";
 import { makeThreadRouteResolver } from "../src/domain/gateway/slack/thread-routing.js";
+import { InboundRouter, type SlackEvent } from "../src/domain/gateway/slack/inbound.js";
 
 const registry = {
   ok: true as const,
@@ -480,17 +481,48 @@ describe("S14 owner notifications — system notices, not remembered tags", () =
         map: new ThreadSeatMap(db),
         unroutedDestination: "operator-agent@kernel",
       });
-      expect(resolveRoute({
+      const reply: SlackEvent = {
         type: "message",
         user: "UFOUNDER",
         text: "Choose A",
         ts: "1724.9101",
         thread_ts: "1724.9100",
         channel: "C-OWNER",
-      })).toMatchObject({
+      };
+      expect(resolveRoute(reply)).toMatchObject({
         destination: "orch-lead@v-openrig-build",
         routeClass: "existing-thread",
+        correlationQitemId: row.qitemId,
       });
+
+      const contract = new MissionControlWriteContract({
+        db,
+        eventBus: bus,
+        queueRepo: repo,
+        actionLog: new MissionControlActionLog(db),
+      });
+      const router = new InboundRouter({
+        queue: ports,
+        seen: new SeenStore(join(home, "inbound-seen.jsonl")),
+        deadLetter: new DeadLetterStore<SlackEvent>(join(home, "inbound-dead.jsonl")),
+        destination: "operator-agent@kernel",
+        resolveSender: () => ({ admitted: true, source: "human-founder@external" }),
+        resolveRoute,
+        resolveHumanReply: makeHumanReplyResolver(repo, contract),
+      });
+      expect(await router.route(reply)).toMatchObject({
+        landed: true,
+        correlationQitemId: row.qitemId,
+        replyResolution: "resolved",
+      });
+      expect(repo.getById(row.qitemId)).toMatchObject({ state: "in-progress", blockedOn: null });
+      expect(repo.listTransitions(row.qitemId).filter((transition) =>
+        transition.ownerNotificationKind === "human-decision-resolved",
+      )).toHaveLength(1);
+      expect(await router.route(reply)).toMatchObject({ landed: false, disposition: "ignored", reason: "dup" });
+      expect(repo.listTransitions(row.qitemId).filter((transition) =>
+        transition.ownerNotificationKind === "human-decision-resolved",
+      )).toHaveLength(1);
     } finally {
       replayWire.stop();
     }

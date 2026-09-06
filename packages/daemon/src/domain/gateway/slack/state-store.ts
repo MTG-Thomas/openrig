@@ -1,6 +1,6 @@
 // Slice-11 slack-connector — durable, restart-surviving state.
 //
-// Two append-only JSONL stores, both written to disk so they survive BOTH a
+// Three append-only JSONL stores, written to disk so they survive BOTH a
 // connector restart AND a queue-daemon restart (locked item 2 + item 8):
 //   - SeenStore     : delivery-dedup by id; a line is appended ONLY AFTER the
 //                     side effect succeeds (outbound: after a 200 from Slack;
@@ -12,6 +12,8 @@
 //                     failure path returns; drain() truncates and hands the
 //                     lines back so the caller re-appends any that fail again
 //                     ("zero-drop means zero, not zero-until-the-second-failure").
+//   - InboundReceiptStore : credential-free ingress/lifecycle observations,
+//                     with received recorded before filtering and a final disposition.
 //
 // FS + clock are injected so the whole thing is unit-testable with no real disk.
 import fs from "node:fs";
@@ -150,5 +152,51 @@ export class DeadLetterStore<T = unknown> {
     const tmp = `${this.file}.tmp`;
     this.fsops.writeFileSync(tmp, body);
     this.fsops.rename(tmp, this.file); // atomic: original intact until this instant
+  }
+}
+
+export type InboundReceiptStatus =
+  | "connect-attempt"
+  | "connected"
+  | "disconnected"
+  | "connect-failed"
+  | "received"
+  | "accepted"
+  | "ignored"
+  | "refused"
+  | "dead-lettered"
+  | "handler-failed";
+
+export interface InboundReceipt {
+  at: string;
+  generation: number;
+  status: InboundReceiptStatus;
+  envelopeId?: string;
+  eventTs?: string;
+  channel?: string;
+  reason?: string;
+}
+
+/** Credential-free ingress/lifecycle ledger. A received receipt is appended before
+ * handler filtering, then a final typed disposition follows. It deliberately has no
+ * message body, sender, token, or secret fields. */
+export class InboundReceiptStore {
+  constructor(
+    private readonly file: string,
+    private readonly fsops: StateFsOps = nodeStateFs,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+
+  append(receipt: Omit<InboundReceipt, "at">): void {
+    this.fsops.mkdirp(path.dirname(this.file));
+    this.fsops.appendFileSync(this.file, JSON.stringify({ at: this.now().toISOString(), ...receipt } satisfies InboundReceipt) + "\n");
+  }
+
+  readAll(): InboundReceipt[] {
+    try {
+      return parseLines(this.fsops.readFileSync(this.file)) as InboundReceipt[];
+    } catch {
+      return [];
+    }
   }
 }
