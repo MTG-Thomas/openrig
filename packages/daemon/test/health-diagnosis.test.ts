@@ -62,6 +62,56 @@ it("previews without writes, then persists one non-exhaustive occurrence across 
   expect(t.service.show(rows[0]!.qitemId).disposition).toBeNull();
 });
 
+it("ignores a canceled topical Markdown receipt in the census and scheduled evaluation without changing it", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-05T21:00:00Z"));
+  const t = setup(); const p = t.policy.read().policy;
+  const foreignId = "qitem-xh-1d22fe73dfa8f0e1";
+  await t.queue.create({ qitemId: foreignId, sourceSession: "peer@rig", destinationSession: "owner@rig", nudge: false,
+    body: "# OpenRig 0.5.10 Slice 09 Founder-Visible Dogfood Receipt\n\nOrdinary cross-host receipt, not a typed occurrence.",
+    tags: ["slice-09", "dogfood", "health-diagnosis", "cross-host"] });
+  t.queue.update({ qitemId: foreignId, state: "canceled", actorSession: "peer@rig" });
+  const foreign = t.queue.getById(foreignId); const transitions = t.queue.listTransitions(foreignId);
+  const before = t.db.prepare("SELECT total_changes() AS n").get();
+  expect(t.service.list()).toEqual([]);
+  expect(() => t.service.show(foreignId)).toThrow("health_diagnosis_not_found");
+  const app = new Hono(); app.use("*", async (c, next) => { c.set("healthDiagnosis" as never, t.service); await next(); });
+  app.route("/api/health-diagnosis", healthDiagnosisRoutes());
+  expect(await (await app.request("/api/health-diagnosis")).json()).toEqual([]);
+  const refusal = await app.request(`/api/health-diagnosis/${foreignId}`);
+  expect(refusal.status).toBe(400);
+  expect(await refusal.json()).toMatchObject({ message: "health_diagnosis_not_found" });
+  expect(t.db.prepare("SELECT total_changes() AS n").get()).toEqual(before);
+
+  t.policy.apply({ ...p, diagnosis: { ...p.diagnosis, enabled: true, owner: "owner@rig" } }, "actor@rig");
+  t.service.start();
+  try { await vi.advanceTimersByTimeAsync(60000); } finally { await t.service.stop(); }
+  expect(t.service.status().lastEvaluation?.error).toBeNull();
+  const id = `qitem-health-diagnosis-${t.projection.list().records[0]!.id}`;
+  expect(t.service.list().map((o) => o.row.qitemId)).toEqual([id]);
+  await t.service.evaluate("actor@rig", true);
+  expect(t.service.list().map((o) => o.row.qitemId)).toEqual([id]);
+  expect(t.queue.getById(foreignId)).toEqual(foreign);
+  expect(t.queue.listTransitions(foreignId)).toEqual(transitions);
+});
+
+it.each(["markdown", "null", "schema", "finding-id", "authority", "presentedAt"])("refuses corrupt owned occurrence state (%s) instead of hiding or certifying it", async (defect) => {
+  const t = setup(); const p = t.policy.read().policy;
+  t.policy.apply({ ...p, diagnosis: { ...p.diagnosis, enabled: true, owner: "owner@rig" } }, "actor@rig");
+  const id = (await t.service.evaluate("actor@rig", true)).actions[0]!.qitemId;
+  const packet = JSON.parse(t.queue.getById(id)!.body);
+  if (defect === "schema") packet.schema = "unrelated/v1";
+  if (defect === "finding-id") packet.finding.id = "health-other";
+  if (defect === "authority") delete packet.authority;
+  if (defect === "presentedAt") packet.presentedAt = "unknown";
+  const body = defect === "markdown" ? "# Broken owned packet" : defect === "null" ? "null" : JSON.stringify(packet);
+  t.db.prepare("UPDATE queue_items SET body = ? WHERE qitem_id = ?").run(body, id);
+  const before = t.db.prepare("SELECT total_changes() AS n").get();
+  expect(() => t.service.show(id)).toThrow(`health_diagnosis_invalid_packet: ${id}`);
+  expect(() => t.service.list()).toThrow(`health_diagnosis_invalid_packet: ${id}`);
+  await expect(t.service.evaluate("actor@rig", true)).rejects.toThrow(`health_diagnosis_invalid_packet: ${id}`);
+  expect(t.db.prepare("SELECT total_changes() AS n").get()).toEqual(before);
+});
+
 it("preserves honest dispositions and never edits the source work or manufactures a resolution", async () => {
   const t = setup();
   const p = t.policy.read().policy;

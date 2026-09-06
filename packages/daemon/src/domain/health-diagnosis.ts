@@ -1,7 +1,7 @@
-import type { QueueRepository } from "./queue-repository.js";
+import type { QueueItem, QueueRepository } from "./queue-repository.js";
 import type { HealthProjectionService } from "./health-detectors.js";
 import { healthHash, object, type HealthPolicyStore } from "./health-policy.js";
-import type { HealthRecord, CeremonyProgressAssessment } from "./health-projection.js";
+import { HEALTH_RECORD_SCHEMA, type HealthRecord, type CeremonyProgressAssessment } from "./health-projection.js";
 
 export const DIAGNOSIS_VERDICTS = ["false positive", "early real condition", "established pathology", "insufficient evidence", "resolved"] as const;
 export interface HealthDisposition {
@@ -36,13 +36,24 @@ export class HealthDiagnosisService {
   }) {}
   private now(): string { return this.deps.now?.() ?? new Date().toISOString(); }
   private id(findingId: string): string { return `qitem-health-diagnosis-${findingId}`; }
+  private owns(row: QueueItem): boolean {
+    // The tag is also used topically; only our existing ID namespace denotes occurrences.
+    return row.qitemId.startsWith(this.id("")) && row.tags?.includes("health-diagnosis") === true;
+  }
   private receipt(qitemId: string, actor: string, value: Omit<Receipt, "kind" | "at">, identityProvenance: string | null = null): void {
     this.deps.queue.update({ qitemId, actorSession: actor, identityProvenance, transitionNote: JSON.stringify({ kind: "health-diagnosis", at: this.now(), ...value }) });
   }
   show(qitemId: string, refresh = true) {
     const row = this.deps.queue.getById(qitemId);
-    if (!row || !row.tags?.includes("health-diagnosis")) throw new Error("health_diagnosis_not_found");
-    const packet = JSON.parse(row.body) as Packet;
+    if (!row || !this.owns(row)) throw new Error("health_diagnosis_not_found");
+    const invalid = () => new Error(`health_diagnosis_invalid_packet: ${qitemId}`);
+    let packet: Packet;
+    try { packet = JSON.parse(row.body) as Packet; } catch { throw invalid(); }
+    if (packet?.schema !== "openrig.health-diagnosis/v0alpha1" || packet.finding?.schema !== HEALTH_RECORD_SCHEMA
+      || typeof packet.finding.id !== "string" || qitemId !== this.id(packet.finding.id)
+      || typeof packet.policyVersion !== "string" || !packet.policyVersion || !Array.isArray(packet.authority)
+      || typeof packet.instructions !== "string" || !packet.instructions
+      || typeof packet.presentedAt !== "string" || !Number.isFinite(Date.parse(packet.presentedAt))) throw invalid();
     const human = this.deps.queue.getById(`qitem-health-human-${packet.finding.id}`);
     const receipts: Receipt[] = this.deps.queue.listTransitions(qitemId).flatMap((t) => {
       try { const value = JSON.parse(t.transitionNote ?? "null") as Receipt | null; return value?.kind === "health-diagnosis" ? [value] : []; } catch { return []; }
@@ -56,7 +67,7 @@ export class HealthDiagnosisService {
     // Refuse a truncated ownership census rather than treating a hidden occurrence as absent.
     const rows = this.deps.queue.list({ tag: "health-diagnosis", limit: 10000 });
     if (rows.length === 10000) throw new Error("health_diagnosis_census_truncated");
-    const occurrences = rows.filter((r) => r.tags?.includes("health-diagnosis")).map((r) => this.show(r.qitemId, false));
+    const occurrences = rows.filter((r) => this.owns(r)).map((r) => this.show(r.qitemId, false));
     if (!refresh || !occurrences.some((o) => o.packet.finding.ceremony)) return occurrences;
     const current = new Map(this.deps.projection.records().map((finding) => [finding.id, finding]));
     return occurrences.map((o) => ({ ...o, finding: current.get(o.finding.id) ?? o.finding }));
