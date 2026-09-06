@@ -279,6 +279,10 @@ export interface QueueUpdateInput {
    *  accompany a blocked transition; a live qitem blocker is inferred. */
   wakeWatchdogId?: string;
   wakeAfterSeconds?: number;
+  /** Internal caller-supplied text for an atomic timer. Public queue routes do
+   *  not expose this; workflow projection uses it to re-present the exact
+   *  occurrence-bound continuation action instead of a generic reminder. */
+  wakeMessage?: string;
   /**
    * OPR.0.4.4.19 FR-6 — park-time inputs. summary + evidence_ref are
    * updatable AT THE PARK MOMENT (state=blocked with a human-seat blocker),
@@ -2149,6 +2153,7 @@ export class QueueRepository {
         || input.blockedOn != null
         || input.wakeWatchdogId != null
         || input.wakeAfterSeconds != null
+        || input.wakeMessage != null
         || input.summary != null
         || input.evidenceRef != null;
       if (disallowed) {
@@ -2199,6 +2204,18 @@ export class QueueRepository {
       throw new QueueRepositoryError(
         "wake_after_invalid",
         `wakeAfterSeconds must be a positive integer (got ${input.wakeAfterSeconds})`,
+      );
+    }
+    if (input.wakeMessage != null && input.wakeAfterSeconds == null) {
+      throw new QueueRepositoryError(
+        "wake_message_not_admitted",
+        "wakeMessage is internal timer content and requires wakeAfterSeconds",
+      );
+    }
+    if (input.wakeMessage != null && input.wakeMessage.trim().length === 0) {
+      throw new QueueRepositoryError(
+        "wake_message_invalid",
+        "wakeMessage must be non-empty when supplied",
       );
     }
 
@@ -2413,7 +2430,7 @@ export class QueueRepository {
           "policy: periodic-reminder",
           "target:",
           `  session: ${JSON.stringify(qitem.destinationSession)}`,
-          `message: ${JSON.stringify(`Wake timer fired for parked qitem ${qitem.qitemId}. Resume the recorded continuation and update the row.`)}`,
+          `message: ${JSON.stringify(input.wakeMessage ?? `Wake timer fired for parked qitem ${qitem.qitemId}. Resume the recorded continuation and update the row.`)}`,
           "",
         ].join("\n"),
         targetSession: qitem.destinationSession,

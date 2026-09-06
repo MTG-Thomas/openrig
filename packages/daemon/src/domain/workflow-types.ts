@@ -66,6 +66,10 @@ export interface WorkflowStepSpec {
   objective?: string;
   /** Allowed exit kinds for this step. Subset of WorkflowExitKind values. */
   allowed_exits?: WorkflowExitKind[];
+  /** Optional one-shot re-presentation deadline for an intentional, unmapped
+   *  `waiting` exit. Compiles to the queue's existing atomic park timer; the
+   *  agent still interprets evidence and selects the next authored exit. */
+  re_present_after_seconds?: number;
   /** Next-hop hint structure (informs projection).
    *  OPR.0.4.6.WF2 FR-4: `mode: prefer` is REMOVED from the value space
    *  (it never had distinct behavior — identical to omitting mode); the

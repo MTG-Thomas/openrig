@@ -91,6 +91,7 @@ export const WORKFLOW_STEP_KEYS = [
   "actor_role",
   "objective",
   "allowed_exits",
+  "re_present_after_seconds",
   "next_hop",
   // OPR.0.4.6.WF2: `gates` is deliberately NOT in this list — it is
   // REMOVED with a specific migration error (checked before the
@@ -339,6 +340,16 @@ export function parseWorkflowSpec(rawYaml: string, sourcePath: string): Workflow
   (wf.steps as unknown[]).forEach((step, idx) => {
     if (step && typeof step === "object" && !Array.isArray(step)) {
       const s = step as Record<string, unknown>;
+      if (
+        s.re_present_after_seconds !== undefined &&
+        (!Number.isInteger(s.re_present_after_seconds) || (s.re_present_after_seconds as number) <= 0)
+      ) {
+        throw new WorkflowSpecError(
+          "spec_field_invalid",
+          `workflow spec at ${sourcePath}: workflow.steps[${idx}].re_present_after_seconds must be a positive integer (got ${JSON.stringify(s.re_present_after_seconds)}). It is the one-shot delay before an intentionally waiting packet is shown to its owner again.`,
+          { sourcePath, path: `workflow.steps[${idx}].re_present_after_seconds` },
+        );
+      }
       // OPR.0.4.6.WF2 FR-5: the legacy `gates: [...]` string list is
       // REMOVED at parse — checked BEFORE the unknown-key sweep so the
       // author gets the specific migration recipe, not a generic

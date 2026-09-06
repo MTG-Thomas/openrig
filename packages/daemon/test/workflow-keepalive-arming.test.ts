@@ -204,7 +204,7 @@ describe("FR-3: keepalive auto-arm in-txn + disarm", () => {
     expect(terminalJob.terminalReason).toBe("workflow_failed");
   });
 
-  it("waiting keeps the job armed (the keepalive wakes the parked owner)", async () => {
+  it("waiting keeps the deadline-gated keepalive armed (authored re-presentation is a separate one-shot timer)", async () => {
     const inst = await runtime.instantiate({
       specPath,
       rootObjective: "waiting walk",

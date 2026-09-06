@@ -144,6 +144,26 @@ export class WorkflowValidator {
           }
         }
       }
+      if (
+        step.re_present_after_seconds !== undefined &&
+        step.allowed_exits?.length &&
+        !step.allowed_exits.includes("waiting")
+      ) {
+        issues.push({
+          code: "waiting_re_presentation_unreachable",
+          message: `step "${step.id}" declares re_present_after_seconds but does not allow the waiting exit. Add "waiting" to allowed_exits or remove the inert deadline.`,
+          field: `${fieldBase}.re_present_after_seconds`,
+          severity: "error",
+        });
+      }
+      if (step.re_present_after_seconds !== undefined && step.next_hop?.on?.waiting) {
+        issues.push({
+          code: "waiting_re_presentation_unreachable",
+          message: `step "${step.id}" maps the waiting exit to "${step.next_hop.on.waiting}", so waiting routes immediately and never parks. Remove re_present_after_seconds or remove the waiting branch.`,
+          field: `${fieldBase}.re_present_after_seconds`,
+          severity: "error",
+        });
+      }
       for (const dependency of step.depends_on ?? []) {
         if (dependency === step.id) {
           issues.push({ code: "dependency_self_reference", message: `step "${step.id}" cannot depend on itself.`, field: `${fieldBase}.depends_on`, severity: "error" });
