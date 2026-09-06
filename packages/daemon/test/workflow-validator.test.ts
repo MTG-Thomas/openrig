@@ -34,6 +34,56 @@ describe("WorkflowValidator (PL-004 Phase D)", () => {
     expect(result.summary.entryRole).toBe("producer");
   });
 
+  it.each([undefined, 100])("rejects a prerequisite cycle even with max_hops=%s", (maxHops) => {
+    const result = validator.validate(spec({
+      steps: [
+        { id: "produce", actor_role: "producer", depends_on: [] },
+        { id: "review", actor_role: "reviewer", depends_on: ["produce", "ship"] },
+        { id: "ship", actor_role: "producer", depends_on: ["review"] },
+      ],
+      loop_guards: maxHops === undefined ? undefined : { max_hops: maxHops },
+    }));
+    expect(result.ok).toBe(false);
+    expect(result.issues.find((issue) => issue.code === "dependency_cycle")).toMatchObject({
+      severity: "error", field: "workflow.steps",
+      message: expect.stringContaining("review → ship → review"),
+    });
+    expect(result.issues.some((issue) => issue.code === "cycle_without_max_hops")).toBe(false);
+  });
+
+  it("finds prerequisite cycles outside the entry's reachable component", () => {
+    const result = validator.validate(spec({
+      steps: [
+        { id: "produce", actor_role: "producer", depends_on: [] },
+        { id: "review", actor_role: "reviewer", depends_on: ["ship"] },
+        { id: "ship", actor_role: "producer", depends_on: ["review"] },
+      ],
+      loop_guards: { max_hops: 100 },
+    }));
+    expect(result.issues.some((issue) => issue.code === "dependency_cycle")).toBe(true);
+  });
+
+  it.each([undefined, 100])("keeps routing-loop guard semantics with acyclic prerequisites, max_hops=%s", (maxHops) => {
+    const result = validator.validate(spec({
+      steps: [
+        { id: "produce", actor_role: "producer", depends_on: [] },
+        { id: "review", actor_role: "reviewer", depends_on: ["produce"], next_hop: { on: { failed: "produce" } } },
+      ],
+      loop_guards: maxHops === undefined ? undefined : { max_hops: maxHops },
+    }));
+    expect(result.ok).toBe(maxHops !== undefined);
+    expect(result.issues.some((issue) => issue.code === "dependency_cycle")).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "cycle_without_max_hops")).toBe(maxHops === undefined);
+  });
+
+  it("does not mislabel a missing prerequisite as a cycle", () => {
+    const result = validator.validate(spec({
+      steps: [{ id: "produce", actor_role: "producer", depends_on: ["missing"] }],
+    }));
+    expect(result.issues.some((issue) => issue.code === "dependency_step_not_found")).toBe(true);
+    expect(result.issues.some((issue) => issue.code === "dependency_cycle")).toBe(false);
+  });
+
   it("entry_role_not_declared when entry.role not in roles", () => {
     const result = validator.validate(spec({ entry: { role: "ghost" } }));
     expect(result.ok).toBe(false);

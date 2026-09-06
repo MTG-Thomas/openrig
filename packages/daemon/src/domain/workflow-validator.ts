@@ -225,9 +225,9 @@ export class WorkflowValidator {
     // — never a parallel re-implementation) UNIONED with the WF-2
     // branch edges (arch composition note: branch edges CREATE cycles —
     // failed → remediate → verify → failed is the canonical remediation
-    // loop). A cycle is legitimate ONLY under a declared, enforceable
-    // max_hops (FR-6 enforces it at projection; without the guard it
-    // would hop unbounded, so validation fails naming the fix).
+    // loop). Routing cycles require an enforceable max_hops. Prerequisite
+    // cycles are unschedulable regardless of a hop guard, so check their
+    // edges separately before applying the routing-loop exception.
     if (spec.steps.length > 0 && spec.steps.every((s) => s.id)) {
       const stepById = new Map(spec.steps.map((s) => [s.id, s]));
       const dependencyGraph = spec.steps.some((step) => step.depends_on !== undefined);
@@ -258,28 +258,42 @@ export class WorkflowValidator {
         const step = stepById.get(id);
         if (step) queue.push(...successorsOf(step));
       }
-      // Cycle detection: DFS with an explicit recursion stack over the
-      // same successor graph; the first back-edge found names the cycle.
-      let cyclePath: string[] | null = null;
-      const color = new Map<string, "gray" | "black">();
-      const stack: string[] = [];
-      const dfs = (id: string): boolean => {
-        color.set(id, "gray");
-        stack.push(id);
-        const step = stepById.get(id);
-        for (const succ of step ? successorsOf(step) : []) {
-          const c = color.get(succ);
-          if (c === "gray") {
-            cyclePath = [...stack.slice(stack.indexOf(succ)), succ];
-            return true;
+      const findCycle = (successors: (step: WorkflowStepSpec) => string[], roots: string[]): string[] | null => {
+        let cyclePath: string[] | null = null;
+        const color = new Map<string, "gray" | "black">();
+        const stack: string[] = [];
+        const dfs = (id: string): boolean => {
+          color.set(id, "gray");
+          stack.push(id);
+          const step = stepById.get(id);
+          for (const succ of step ? successors(step) : []) {
+            const c = color.get(succ);
+            if (c === "gray") {
+              cyclePath = [...stack.slice(stack.indexOf(succ)), succ];
+              return true;
+            }
+            if (c !== "black" && dfs(succ)) return true;
           }
-          if (c !== "black" && dfs(succ)) return true;
+          stack.pop();
+          color.set(id, "black");
+          return false;
+        };
+        for (const id of roots) {
+          if (!color.has(id) && dfs(id)) break;
         }
-        stack.pop();
-        color.set(id, "black");
-        return false;
+        return cyclePath;
       };
-      dfs(spec.steps[0]!.id);
+      const dependencyCycle = dependencyGraph
+        ? findCycle((step) => step.depends_on ?? [], [...stepById.keys()]) : null;
+      if (dependencyCycle) {
+        issues.push({
+          code: "dependency_cycle",
+          message: `the prerequisite graph cycles (${dependencyCycle.join(" → ")}). These steps cannot become ready; remove a cyclic depends_on edge. loop_guards.max_hops bounds routing loops, not prerequisite cycles.`,
+          field: "workflow.steps",
+          severity: "error",
+        });
+      }
+      const cyclePath = findCycle(successorsOf, [spec.steps[0]!.id]);
       // Guard blocker 2: only an ENFORCEABLE guard sanctions a cycle —
       // a non-integer/non-positive max_hops (possible in pre-fix cached
       // spec_json blobs; the parser now rejects new ones) can never
@@ -288,7 +302,7 @@ export class WorkflowValidator {
         typeof spec.loop_guards?.max_hops === "number" &&
         Number.isInteger(spec.loop_guards.max_hops) &&
         spec.loop_guards.max_hops >= 1;
-      if (cyclePath && !enforceableMaxHops) {
+      if (cyclePath && !dependencyCycle && !enforceableMaxHops) {
         issues.push({
           code: "cycle_without_max_hops",
           message: `the routing graph cycles (${(cyclePath as string[]).join(" → ")}) and workflow.loop_guards.max_hops is not declared — the instance would hop unbounded. Loops (including branch-created remediation loops) are legitimate only under an enforced guard: declare loop_guards.max_hops to sanction the cycle.`,

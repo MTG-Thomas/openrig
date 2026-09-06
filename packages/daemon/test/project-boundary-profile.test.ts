@@ -90,6 +90,17 @@ describe("project-owned boundary profile", () => {
     expect(compile).toThrow(expect.objectContaining({ code: "lifecycle_required_step_missing" }));
   });
 
+  it.each([undefined, 100])("refuses an override retaining required ancestry but adding a prerequisite cycle, max_hops=%s", (maxHops) => {
+    const workflow = structuredClone(project.lifecycle.profiles["release-boundary-v0"].workflow);
+    workflow.steps.find((step: { id: string }) => step.id === "record-shipped").depends_on.push("release-boundary");
+    if (maxHops !== undefined) workflow.loop_guards = { max_hops: maxHops };
+    mission.lifecycle = { profile: "release-boundary-v0", mode: "override", workflow };
+    save();
+    const result = compile();
+    expect(result.eligible).toBe(false);
+    expect(result.unknowns.some((issue) => issue.includes("[dependency_cycle]"))).toBe(true);
+  });
+
   it.each([
     ["ambiguous", { workflow: example.lifecycle.profiles["release-boundary-v0"].workflow }, "lifecycle_override_ambiguous"],
     ["unknown mode", { mode: "merge", workflow: {} }, "lifecycle_override_ambiguous"],

@@ -1288,6 +1288,9 @@ composition. Customize the example's project ID, roles, and policy for the
 project. Every profile step declares `depends_on` (including `[]` on roots);
 conditional `next_hop.on` jumps are refused so required stages cannot be bypassed.
 Missing required IDs refuse with `lifecycle_required_step_missing`.
+Prerequisite cycles make compilation ineligible with `dependency_cycle`, even
+when `loop_guards.max_hops` is set. That guard bounds routing loops; it cannot
+make mutually dependent steps ready.
 
 Precedence is explicit:
 
