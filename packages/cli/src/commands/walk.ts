@@ -7,6 +7,7 @@
 // raw file list; each piece is one send into the pane.
 
 import { Command } from "commander";
+import { analyzeWalkSuffix } from "../lib/walk-consumption.js";
 import { existsSync, readFileSync } from "node:fs";
 import { DaemonClient, terminalAuthHeaders } from "../client.js";
 import { getDaemonStatus, getDaemonUrl , statusGuardMessage} from "../daemon-lifecycle.js";
@@ -86,9 +87,10 @@ Examples:
   rig walk dev-impl@my-rig --through packs/tui-onboarding --pace 12s
   rig walk dev-impl@my-rig --through intro.md steps.md wrapup.md --pace 10s
 
-Paced push-delivery: each piece is sent into the target pane, then --pace elapses
-before the next. The walker leads; it does not wait for replies — the spacing lets
-the agent process between sends. Small piece → 'rig send'; a real pack → walk.`)
+When a generation record resolves, each complete piece and its corresponding
+Claude or Codex turn closure must appear before --pace and the next piece.
+Verification proves delivery and turn completion, not comprehension. An unavailable
+initial record is explicitly reported as unverified delivery.`)
     .action(async (seat: string, opts: { through?: string[]; throughProfile?: string; situation?: string; runtime?: string; profile?: string; rig?: string; seatGrant?: string; mission?: string; slice?: string; budget?: string; pace?: string; consumeTimeout?: string; consumePoll?: string; turnTimeout?: string; json?: boolean }) => {
       try {
         const deps = getDeps();
@@ -151,7 +153,7 @@ the agent process between sends. Small piece → 'rig send'; a real pack → wal
         // Send success means TYPED, not CONSUMED: the paste + Enter can succeed at the tmux layer
         // while the target TUI leaves the text STAGED at the prompt, and the next pieces coalesce.
         // The effect source is the seat's current-generation record (the append-only conversation
-        // JSONL): a consumed piece appears as a user-role record containing the piece's head.
+        // JSONL): a consumed piece appears as a complete user-role message.
         // Same explicit-unit duration grammar as --pace (10s / 500ms); defaults 20s / 1.5s.
         const consumeTimeoutMs = opts.consumeTimeout !== undefined ? parsePaceMs(opts.consumeTimeout) : 20_000;
         const consumePollMs = opts.consumePoll !== undefined ? parsePaceMs(opts.consumePoll) : 1_500;
@@ -172,37 +174,11 @@ the agent process between sends. Small piece → 'rig send'; a real pack → wal
           return;
         }
         const normalize = (s: string) => s.replace(/\s+/g, "");
-        const pieceHead = (content: string) => normalize(content).slice(0, 64);
         const recordPath = `/api/sessions/${encodeURIComponent(seat)}/generation-record`;
 
         interface RecordRead { generationId?: string; totalBytes?: number; suffix?: string; error?: string; message?: string }
         const readRecord = async (sinceBytes?: number): Promise<{ status: number; data: RecordRead }> =>
           client.get<RecordRead>(sinceBytes === undefined ? recordPath : `${recordPath}?sinceBytes=${sinceBytes}`, { headers: terminalAuthHeaders() });
-
-        /** Parse the record suffix: where (if anywhere) the piece's distinct user turn is, and
-         *  whether a system/turn_duration CLOSURE record follows it (the capture atom's boundary —
-         *  the turn-pacing gate's signal that the seat finished processing the piece). */
-        const analyzeSuffix = (suffix: string, head: string): { consumed: boolean; turnClosed: boolean } => {
-          let consumedAt = -1;
-          const lines = suffix.split("\n");
-          for (let i = 0; i < lines.length; i++) {
-            const trimmed = lines[i]!.trim();
-            if (!trimmed) continue;
-            let rec: { type?: string; subtype?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> | string } };
-            try { rec = JSON.parse(trimmed); } catch { continue; }
-            if (consumedAt < 0 && rec.message?.role === "user") {
-              const c = rec.message.content;
-              const texts = typeof c === "string" ? [c] : Array.isArray(c) ? c.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text!) : [];
-              if (texts.some((t) => normalize(t).includes(head))) consumedAt = i;
-              continue;
-            }
-            if (consumedAt >= 0 && rec.type === "system" && rec.subtype === "turn_duration") {
-              return { consumed: true, turnClosed: true };
-            }
-          }
-          return { consumed: consumedAt >= 0, turnClosed: false };
-        };
-        const suffixShowsConsumed = (suffix: string, head: string): boolean => analyzeSuffix(suffix, head).consumed;
 
         // One pre-walk record probe decides the mode. No record (unsupported runtime / no sidecar /
         // a daemon without the route) → legacy delivery with a NAMED advisory: unverified is
@@ -228,7 +204,7 @@ the agent process between sends. Small piece → 'rig send'; a real pack → wal
 
         for (let i = 0; i < pieces.length; i++) {
           const piece = pieces[i]!;
-          const head = pieceHead(piece.content);
+          const head = normalize(piece.content).slice(0, 64); // staging hint only, never receipt evidence
 
           let preLen = 0;
           let preGen: string | undefined;
@@ -236,6 +212,10 @@ the agent process between sends. Small piece → 'rig send'; a real pack → wal
             const pre = await readRecord();
             if (pre.status !== 200 || typeof pre.data.generationId !== "string") {
               failPiece(i, piece.label, `the seat's generation record became unreadable before the send (${pre.data.message ?? pre.data.error ?? `HTTP ${pre.status}`}).`);
+              return;
+            }
+            if (pre.data.generationId !== preProbe.data.generationId) {
+              failPiece(i, piece.label, "the seat's generation changed between pieces; refusing to continue this walk into another generation.");
               return;
             }
             preGen = pre.data.generationId;
@@ -273,9 +253,11 @@ the agent process between sends. Small piece → 'rig send'; a real pack → wal
               const deadline = Date.now() + consumeTimeoutMs;
               for (;;) {
                 const rec = await readRecord(preLen);
+                if (rec.status !== 200) throw new Error(`Generation record became unavailable: ${rec.data.message ?? rec.data.error ?? rec.status}. Consumption is unverified.`);
                 if (rec.status === 200 && typeof rec.data.generationId === "string") {
                   if (rec.data.generationId !== preGen) return "generation-rolled";
-                  if (suffixShowsConsumed(rec.data.suffix ?? "", head)) return "consumed";
+                  if ((rec.data.totalBytes ?? -1) < preLen) return "generation-rolled";
+                  if (analyzeWalkSuffix(rec.data.suffix ?? "", piece.content).consumed) return "consumed";
                 }
                 if (Date.now() >= deadline) return "timeout";
                 await sleep(consumePollMs);
@@ -322,24 +304,22 @@ the agent process between sends. Small piece → 'rig send'; a real pack → wal
             }
           }
 
-          // TURN-PACING GATE (desk BLOCKING row 2ff16fa1): the piece is consumed, but sending the
-          // next one into a still-OPEN turn gets it QUEUED by the runtime (never a distinct user
-          // turn — the rerun's proven defect layer). Wait for the seat's turn to CLOSE — the
-          // system/turn_duration record after the piece's user turn (the capture atom's boundary)
-          // — before pacing to the next piece. N-of-N (r2 row b268b89b): the FINAL piece waits
-          // too — whatever follows the walk (rerun 4's seat-issued GET) meets the same open-turn
-          // queuing boundary. The wait is the install working as designed: a walk takes as long
-          // as the seat needs to actually read the pieces.
+          // Wait for the matched native turn, including on the final piece. Receipt alone
+          // must not send the next piece into an open turn or certify a completed walk.
           if (verifiable) {
             const turnDeadline = Date.now() + turnTimeoutMs;
             for (;;) {
               const rec = await readRecord(preLen);
+              if (rec.status !== 200) {
+                failPiece(i, piece.label, `generation record became unavailable while waiting for turn closure: ${rec.data.message ?? rec.data.error ?? rec.status}.`);
+                return;
+              }
               if (rec.status === 200 && typeof rec.data.generationId === "string") {
-                if (rec.data.generationId !== preGen) {
+                if (rec.data.generationId !== preGen || (rec.data.totalBytes ?? -1) < preLen) {
                   failPiece(i, piece.label, "the seat's generation rolled while waiting for its turn to close.");
                   return;
                 }
-                if (analyzeSuffix(rec.data.suffix ?? "", head).turnClosed) break;
+                if (analyzeWalkSuffix(rec.data.suffix ?? "", piece.content).turnClosed) break;
               }
               if (Date.now() >= turnDeadline) {
                 failPiece(i, piece.label, `consumed, but the seat's turn did not CLOSE within ${turnTimeoutMs}ms — refusing to send the next piece into an open turn (it would be queued, never a distinct user turn).`);

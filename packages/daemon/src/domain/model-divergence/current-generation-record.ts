@@ -221,9 +221,12 @@ export async function resolveLiveCodexThreadId(
   const processes = await deps.listProcesses();
   const codexPids = findDescendants(processes, panePid, commandBasenameIs("codex"));
   if (codexPids.length === 0) return { ok: false, reason: `no codex process under the live pane of ${sessionTarget}` };
+  const ids = new Set<string>();
   for (const pid of codexPids) {
     const threadId = await deps.readThreadIdByPid(pid, processes.find((p) => p.pid === pid)?.startedAt);
-    if (threadId) return { ok: true, id: threadId };
+    if (threadId) ids.add(threadId);
   }
+  if (ids.size === 1) return { ok: true, id: [...ids][0]! };
+  if (ids.size > 1) return { ok: false, reason: `multiple codex threads under the live pane of ${sessionTarget}` };
   return { ok: false, reason: `live codex process under ${sessionTarget} yielded no thread id from its logs` };
 }

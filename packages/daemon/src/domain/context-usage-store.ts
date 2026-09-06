@@ -180,6 +180,11 @@ export class ContextUsageStore {
     });
   }
 
+  /** Resolve an explicitly selected native thread, even before its first token count. */
+  readCodexTranscriptPath(threadId: string): string | null {
+    return this.readCodexThread(threadId)?.rollout_path ?? null;
+  }
+
   /** Normalize raw sidecar data into a ContextUsage record. */
   normalizeSample(raw: SidecarRaw | null): ContextUsage {
     if (!raw) {

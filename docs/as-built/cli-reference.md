@@ -870,6 +870,10 @@ Notes:
 - `--through` accepts either one path-like context ref or an ordered list of existing local files; mixing the two forms is rejected.
 - Sends one piece at a time through the normal transport and waits `--pace` between pieces (default `10s`; duration overrides require an explicit `ms` or `s` suffix). The same explicit-unit grammar applies to `--consume-timeout`, `--consume-poll`, and `--turn-timeout`; bare numbers are refused. There is no trailing delay.
 - A missing local file or missing/unreadable ref member aborts before the first send, so a walk delivers every piece or none.
+- Where a generation record resolves, each piece must appear as a complete user message in the newly appended record and its corresponding native turn must close before the next piece. Only CRLF line endings and surrounding whitespace are normalized; internal whitespace, missing middles, shared prefixes, and tails do not qualify.
+- Claude closure follows the message's UUID ancestry through an assistant response to `turn_duration`. Codex uses a `response_item` user message within a named `task_started`/`task_complete` turn; queued input or a different turn's completion is insufficient. These receipts prove delivery and turn completion, not semantic comprehension.
+- Codex records resolve through the verified current pane/process and native thread table, including before token telemetry exists. The rollout header must identify that thread. Missing or ambiguous identity is reported as unverified. A generation/file replacement or unreadable record during a verified walk aborts it; it never silently continues into a replacement occupant.
+- `--json` reports `consumptionVerified`. If the initial generation-record probe is unavailable, legacy delivery remains possible with an explicit unverified advisory and `consumptionVerified: false`.
 
 ### Cross-host execution (`--host <id>`)
 

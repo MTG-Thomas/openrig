@@ -9,9 +9,12 @@
 //      refusing LOUD when no record resolves.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type Database from "better-sqlite3";
+import Database from "better-sqlite3";
 import { Hono } from "hono";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, appendFileSync, renameSync } from "node:fs";
+import { Command } from "commander";
+import { walkCommand } from "../../cli/src/commands/walk.js";
+import { STATE_FILE } from "../../cli/src/daemon-lifecycle.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RigRepository } from "../src/domain/rig-repository.js";
@@ -20,6 +23,9 @@ import { SessionTransport } from "../src/domain/session-transport.js";
 import { AgentActivityStore } from "../src/domain/agent-activity-store.js";
 import { EventBus } from "../src/domain/event-bus.js";
 import { ContextUsageStore } from "../src/domain/context-usage-store.js";
+import { ProcessCensus } from "../src/domain/process-census.js";
+import { CodexThreadIdResolver } from "../src/domain/codex-thread-id.js";
+import { SeatIdentityStore } from "../src/domain/seat-identity-store.js";
 import type { TmuxAdapter, TmuxResult } from "../src/adapters/tmux.js";
 import { sessionAdminRoutes } from "../src/routes/sessions.js";
 import { createFullTestDb } from "./helpers/test-app.js";
@@ -317,16 +323,164 @@ describe("SessionTransport submitOnly — the guarded bare-Enter retry", () => {
 describe("GET /api/sessions/:sessionName/generation-record — the consumption-by-effect source", () => {
   let stateDir: string;
   let app: Hono;
+  let db: Database.Database;
+  let registry: SessionRegistry;
+  const threadId = "11111111-1111-4111-8111-111111111111";
 
   beforeEach(() => {
     stateDir = mkdtempSync(join(tmpdir(), "walk-genrec-"));
-    const db = createFullTestDb();
-    const store = new ContextUsageStore(db, { stateDir });
+    db = createFullTestDb();
+    registry = new SessionRegistry(db);
+    const store = new ContextUsageStore(db, { stateDir, codexHomeDir: stateDir });
     app = new Hono();
-    app.use("*", async (c, next) => { c.set("contextUsageStore" as never, store as never); await next(); });
+    app.use("*", async (c, next) => {
+      c.set("contextUsageStore" as never, store as never);
+      c.set("sessionRegistry" as never, registry as never);
+      c.set("tmuxAdapter" as never, { getPanePid: async () => 10 } as never);
+      await next();
+    });
     app.route("/api/sessions", sessionAdminRoutes);
   });
-  afterEach(() => rmSync(stateDir, { recursive: true, force: true }));
+  afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(stateDir, { recursive: true, force: true }); });
+
+  function seedCodex(metaId = threadId) {
+    const repo = new RigRepository(db);
+    const rig = repo.createRig("codex-rig");
+    const node = repo.addNode(rig.id, "dev.codex", { runtime: "codex" });
+    const seat = "dev-codex@codex-rig";
+    const session = registry.registerSession(node.id, seat);
+    registry.updateStatus(session.id, "running");
+    registry.updateBinding(node.id, { tmuxSession: seat, tmuxPane: "%42" });
+    new SeatIdentityStore(db).upsert({ nodeId: node.id, verdict: "verified", evidenceSource: "env", reason: null,
+      evidence: { registeredPane: "%42", observedPid: 10, observedCommand: "codex", matchedLayer: 1 },
+      sessionName: seat, observedAt: new Date().toISOString() } as never);
+    vi.spyOn(ProcessCensus.prototype, "list").mockResolvedValue([
+      { pid: 10, ppid: 1, command: "zsh" }, { pid: 20, ppid: 10, command: "codex", startedAt: "start" },
+    ]);
+    vi.spyOn(CodexThreadIdResolver.prototype, "resolve").mockResolvedValue(threadId);
+    mkdirSync(join(stateDir, ".codex"));
+    const nativeDb = new Database(join(stateDir, ".codex", "state_5.sqlite"));
+    const record = join(stateDir, "rollout.jsonl");
+    nativeDb.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)");
+    nativeDb.prepare("INSERT INTO threads VALUES (?, ?)").run(threadId, record);
+    nativeDb.close();
+    writeFileSync(record, JSON.stringify({ type: "session_meta", payload: { id: metaId } }) + "\n");
+    return { node, record, url: `/api/sessions/${seat}/generation-record` };
+  }
+
+  it("Codex current bound thread resolves before its first token_count event", async () => {
+    const { url } = seedCodex();
+    const response = await app.request(url);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ runtime: "codex", sessionId: threadId });
+  });
+
+  it("Codex refuses a wrong rollout identity instead of accepting the thread table pointer", async () => {
+    const { url } = seedCodex("old-thread");
+    const response = await app.request(url);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "record_identity_mismatch" });
+  });
+
+  it("Codex replacement at the same path changes generation identity", async () => {
+    const { url, record } = seedCodex();
+    const first = await (await app.request(url)).json();
+    const replacement = record + ".next";
+    writeFileSync(replacement, readFileSync(record));
+    const { renameSync } = await import("node:fs");
+    renameSync(replacement, record);
+    const second = await (await app.request(url)).json();
+    expect(first.generationId).toBeDefined();
+    expect(second.generationId).not.toBe(first.generationId);
+  });
+
+  it("Codex refuses an identity observation from a retired occupant", async () => {
+    const { node, url } = seedCodex();
+    db.prepare("UPDATE seat_identity_verdicts SET observed_at = '2000-01-01T00:00:00Z' WHERE node_id = ?").run(node.id);
+    const response = await app.request(url);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "record_identity_unverified" });
+  });
+
+  it("Codex refuses ambiguous native threads under one pane", async () => {
+    const { url } = seedCodex();
+    vi.mocked(ProcessCensus.prototype.list).mockResolvedValue([
+      { pid: 10, ppid: 1, command: "zsh" },
+      { pid: 20, ppid: 10, command: "codex", startedAt: "a" },
+      { pid: 21, ppid: 10, command: "codex", startedAt: "b" },
+    ]);
+    vi.mocked(CodexThreadIdResolver.prototype.resolve).mockImplementation(async pid => pid === 20 ? threadId : "other-thread");
+    const response = await app.request(url);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "record_identity_unverified", message: expect.stringContaining("multiple") });
+  });
+
+  it.each(["0.5", "-1", "NaN", "", "9007199254740992"])("refuses invalid byte offset %s", async offset => {
+    seedSidecar("dev-offset@r", "gen-offset", "{}\n");
+    expect((await app.request(`/api/sessions/dev-offset@r/generation-record?sinceBytes=${offset}`)).status).toBe(400);
+  });
+
+  it.each(["complete", "prefix", "old-file", "replaced-file", "changed-occupant", "wrong-turn", "missing-turn", "missing-file", "claude"])(
+    "integrated CLI → route → native record: %s", async (scenario) => {
+      const { record, node } = seedCodex();
+      const piece = "Shared heading. ".repeat(8) + "The complete middle matters.\n".repeat(9) + "unique tail Ω";
+      const seat = scenario === "claude" ? "dev-claude@r" : "dev-codex@codex-rig";
+      const claudePath = scenario === "claude" ? seedSidecar(seat, "claude-gen", "") : null;
+      const records = (text: string) => scenario === "claude" ? [
+        { type: "user", uuid: "input", message: { role: "user", content: text } },
+        { type: "assistant", uuid: "answer", parentUuid: "input", message: { role: "assistant", content: "done" } },
+        { type: "system", subtype: "turn_duration", uuid: "closed", parentUuid: "answer" },
+      ] : [
+        { type: "event_msg", payload: { type: "task_started", turn_id: "turn" } },
+        { type: "turn_context", payload: { turn_id: "turn" } },
+        { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } },
+        ...(scenario === "missing-turn" ? [] : [{ type: "event_msg", payload: { type: "task_complete", turn_id: scenario === "wrong-turn" ? "other" : "turn" } }]),
+      ];
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const oldExit = process.exitCode;
+      process.exitCode = undefined;
+      let sends = 0;
+      try {
+        const command = new Command().addCommand(walkCommand({
+          lifecycleDeps: {
+            readFile: p => p === STATE_FILE ? JSON.stringify({ pid: 123, port: 7777, db: "isolated", startedAt: new Date().toISOString() }) : null,
+            exists: p => p === STATE_FILE, isProcessAlive: () => true,
+            fetch: async () => ({ ok: true }),
+          } as never,
+          fileExists: () => true, readFile: () => piece,
+          clientFactory: () => ({
+            get: async (path: string) => {
+              const response = await app.request(path);
+              return { status: response.status, data: await response.json() };
+            },
+            post: async (path: string) => {
+              if (path.endsWith("/capture")) return { status: 200, data: { content: "idle" } };
+              sends++;
+              const text = scenario === "prefix" ? piece.slice(0, 115) : piece;
+              const suffix = records(text).map(r => JSON.stringify(r)).join("\n") + "\n";
+              if (scenario === "missing-file") rmSync(record);
+              else if (scenario === "replaced-file") {
+                writeFileSync(record + ".next", readFileSync(record, "utf8") + suffix);
+                renameSync(record + ".next", record);
+              } else if (scenario === "changed-occupant") {
+                registry.mintOccupantTenure(node.id, "handover", "new-native-id");
+                appendFileSync(record, suffix);
+              } else appendFileSync(scenario === "old-file" ? join(stateDir, "retired.jsonl") : claudePath ?? record, suffix);
+              return { status: 200, data: { ok: true } };
+            },
+          }) as never,
+          sleep: async () => {},
+        }));
+        await command.parseAsync(["node", "rig", "walk", seat, "--through", "piece.md", "--json", "--pace", "0ms",
+          "--consume-timeout", "20ms", "--consume-poll", "1ms", "--turn-timeout", "20ms"]);
+        const positive = scenario === "complete" || scenario === "claude";
+        expect(process.exitCode).toBe(positive ? undefined : 1);
+        expect(log.mock.calls.some(([line]) => String(line).includes('"consumptionVerified":true'))).toBe(positive);
+        expect(sends).toBe(1);
+      } finally { process.exitCode = oldExit; }
+    },
+  );
 
   const seedSidecar = (seat: string, generationId: string, jsonlContent: string): string => {
     const jsonl = join(stateDir, `${generationId}.jsonl`);
@@ -349,15 +503,17 @@ describe("GET /api/sessions/:sessionName/generation-record — the consumption-b
     seedSidecar("dev-x@r", "gen-abc", early + late);
     const idRes = await app.request(`/api/sessions/${encodeURIComponent("dev-x@r")}/generation-record`);
     expect(idRes.status).toBe(200);
-    const id = await idRes.json() as { generationId: string; totalBytes: number; suffix?: string };
-    expect(id.generationId).toBe("gen-abc");
+    const id = await idRes.json() as { generationId: string; sessionId: string; totalBytes: number; suffix?: string };
+    expect(id.sessionId).toBe("gen-abc");
+    expect(id.generationId).toEqual(expect.any(String));
     expect(id.totalBytes).toBe(Buffer.byteLength(early + late, "utf8"));
     expect(id.suffix).toBeUndefined();
 
     const since = Buffer.byteLength(early, "utf8");
     const sufRes = await app.request(`/api/sessions/${encodeURIComponent("dev-x@r")}/generation-record?sinceBytes=${since}`);
     expect(sufRes.status).toBe(200);
-    const suf = await sufRes.json() as { suffix: string; truncated: boolean };
+    const suf = await sufRes.json() as { generationId: string; suffix: string; truncated: boolean };
+    expect(suf.generationId).toBe(id.generationId);
     expect(suf.suffix).toBe(late);
     expect(suf.truncated).toBe(false);
   });

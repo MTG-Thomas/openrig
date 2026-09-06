@@ -32,6 +32,13 @@ import type { MiddlewareHandler } from "hono";
 import type { EventBus } from "../domain/event-bus.js";
 import { validateResumeToken } from "../domain/resume-token-validation.js";
 import type { PermissionDriftReader } from "../domain/permission-drift-observer.js";
+import { ProcessCensus } from "../domain/process-census.js";
+import { CodexThreadIdResolver } from "../domain/codex-thread-id.js";
+import { resolveLiveCodexThreadId } from "../domain/model-divergence/current-generation-record.js";
+import { SeatIdentityStore } from "../domain/seat-identity-store.js";
+
+const generationCensus = new ProcessCensus({ freshnessMs: 0 }); // coalesce concurrent receipts; recheck each later read
+const generationThreadIds = new CodexThreadIdResolver();
 
 function terminalAuthGuard(): MiddlewareHandler {
   return async (c, next) => {
@@ -652,9 +659,9 @@ sessionAdminRoutes.post("/:sessionRef/unclaim", terminalAuthGuard(), async (c) =
 // GET /api/sessions/:sessionName/generation-record?sinceBytes=N
 // Mechanics-gate fix (desk ruling d9b3989a): the CONSUMPTION-BY-EFFECT source for `rig walk`.
 // Serves the seat's current-generation append-only conversation record identity plus the suffix
-// from sinceBytes, resolved through the ContextUsageStore sidecar (the same authority the Test-A
-// runner's default reader uses) — never a pane snapshot. Refuses LOUD when the seat has no
-// resolvable record (unsupported runtime / no sidecar): a caller must know verification is
+// from sinceBytes. Claude uses its context sidecar; Codex joins the current bound pane/process
+// to its native thread and then the existing context store's thread table — never a pane snapshot
+// or a transcript-recency search. Refuses LOUD when the seat has no resolvable record: verification is
 // impossible, never receive an empty success.
 // Round-2 (r2 HIGH-2): raw conversation bytes with no transcript redaction — a TERMINAL-CLASS
 // surface behind the same bearer gate as its neighbors (401/401/200; null-token loopback passes).
@@ -664,41 +671,93 @@ sessionAdminRoutes.get("/:sessionName/generation-record", terminalAuthGuard(), a
   if (!store) {
     return c.json({ error: "unsupported_runtime", message: "No context-usage store on this daemon; the seat's generation record cannot be resolved." }, 409);
   }
-  const usage = store.readAndNormalize(sessionName);
-  const transcriptPath = usage.transcriptPath;
-  const generationId = usage.sessionId;
-  if (!transcriptPath || !generationId) {
-    return c.json({ error: "unsupported_runtime", message: `No current-generation record resolves for '${sessionName}' (no sidecar transcript_path/session_id) — consumption cannot be verified for this seat.` }, 409);
+  const { sessionRegistry: registry, tmuxAdapter } = getDeps(c);
+  const context = registry?.findResumeContextByName(sessionName);
+  const occupant = context ? registry.currentOccupantTenure(context.nodeId) : null;
+  const runtime = context?.runtime ?? "claude-code";
+  let transcriptPath: string | null;
+  let sessionId: string | null;
+  if (runtime === "codex") {
+    const binding = registry.getBindingForNode(context!.nodeId);
+    const identity = new SeatIdentityStore(registry.db).getForNode(context!.nodeId);
+    if (!occupant || !binding?.tmuxPane || binding.tmuxSession !== sessionName
+      || identity?.verdict !== "verified" || identity.sessionName !== sessionName
+      || identity.evidence.registeredPane !== binding.tmuxPane
+      || !(Date.parse(identity.observedAt) >= Date.parse(occupant.bootAt))) {
+      return c.json({ error: "record_identity_unverified", message: `No verified current occupant/pane binding for '${sessionName}'.` }, 409);
+    }
+    try {
+      const pid = await tmuxAdapter?.getPanePid?.(binding.tmuxPane);
+      if (!pid || pid !== identity.evidence.observedPid) {
+        return c.json({ error: "record_identity_unverified", message: `The bound pane for '${sessionName}' no longer matches its verified occupant.` }, 409);
+      }
+      const live = await resolveLiveCodexThreadId(binding.tmuxPane, {
+        getPanePid: async () => pid,
+        listProcesses: () => generationCensus.list(),
+        readThreadIdByPid: (nativePid, startedAt) => startedAt
+          ? generationThreadIds.resolve(nativePid, startedAt) : undefined,
+      });
+      if (!live.ok) return c.json({ error: "record_identity_unverified", message: live.reason }, 409);
+      sessionId = live.id;
+      transcriptPath = store.readCodexTranscriptPath(sessionId);
+      if (registry.currentOccupantTenure(context!.nodeId)?.generationUuid !== occupant.generationUuid
+        || registry.getBindingForNode(context!.nodeId)?.tmuxPane !== binding.tmuxPane
+        || await tmuxAdapter.getPanePid?.(binding.tmuxPane) !== pid) {
+        return c.json({ error: "record_identity_unverified", message: `The occupant binding changed while resolving '${sessionName}'.` }, 409);
+      }
+    } catch (err) {
+      return c.json({ error: "record_identity_unverified", message: `Cannot resolve '${sessionName}': ${(err as Error).message}` }, 409);
+    }
+  } else {
+    const usage = store.readAndNormalize(sessionName);
+    transcriptPath = usage.transcriptPath;
+    sessionId = usage.sessionId;
+  }
+  if (!transcriptPath || !sessionId) {
+    return c.json({ error: "unsupported_runtime", message: `No current-generation record resolves for '${sessionName}' (${runtime}) — consumption cannot be verified for this seat.` }, 409);
   }
   const fs = await import("node:fs");
-  let totalBytes: number;
-  try {
-    totalBytes = fs.statSync(transcriptPath).size;
-  } catch (err) {
-    return c.json({ error: "record_unreadable", message: `Generation record for '${sessionName}' names '${transcriptPath}' but it is unreadable: ${(err as Error).message}` }, 409);
-  }
   const sinceRaw = c.req.query("sinceBytes");
-  if (sinceRaw === undefined) {
-    return c.json({ generationId, totalBytes });
-  }
-  const since = Number(sinceRaw);
-  if (!Number.isFinite(since) || since < 0) {
-    return c.json({ error: "invalid_since_bytes", message: "sinceBytes must be a non-negative number." }, 400);
+  const since = sinceRaw === undefined ? 0 : Number(sinceRaw);
+  if (!Number.isSafeInteger(since) || since < 0 || sinceRaw === "") {
+    return c.json({ error: "invalid_since_bytes", message: "sinceBytes must be a non-negative safe integer." }, 400);
   }
   // Cap the served suffix — the caller polls; a runaway record must not become a runaway response.
   const MAX_SUFFIX_BYTES = 8 * 1024 * 1024;
-  const start = Math.min(since, totalBytes);
-  const length = Math.min(totalBytes - start, MAX_SUFFIX_BYTES);
-  let suffix = "";
-  if (length > 0) {
+  try {
     const fd = fs.openSync(transcriptPath, "r");
     try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) throw new Error("record is not a regular file");
+      const totalBytes = stat.size;
+      // Identity and bytes come from the same open file. Appends preserve this identity;
+      // replacing a rollout at the same path changes it, even if its native id is unchanged.
+      const generationId = JSON.stringify([occupant?.generationUuid ?? null, sessionId, transcriptPath, stat.dev, stat.ino, stat.birthtimeMs]);
+      if (runtime === "codex") {
+        let header = "";
+        for (let offset = 0; offset < Math.min(totalBytes, MAX_SUFFIX_BYTES) && !header.includes("\n");) {
+          const chunk = Buffer.alloc(Math.min(64 * 1024, totalBytes - offset, MAX_SUFFIX_BYTES - offset));
+          const n = fs.readSync(fd, chunk, 0, chunk.length, offset);
+          if (!n) break;
+          header += chunk.subarray(0, n).toString("utf8");
+          offset += n;
+        }
+        let meta;
+        try { meta = JSON.parse(header.slice(0, header.indexOf("\n"))); } catch { /* explicit no-answer below */ }
+        if (meta?.type !== "session_meta" || meta.payload?.id !== sessionId) {
+          return c.json({ error: "record_identity_mismatch", message: `The rollout header does not identify current thread '${sessionId}'.` }, 409);
+        }
+      }
+      if (sinceRaw === undefined) return c.json({ generationId, sessionId, runtime, totalBytes });
+      if (since > totalBytes) return c.json({ error: "record_truncated", message: "Generation record shrank below the requested byte boundary." }, 409);
+      const length = Math.min(totalBytes - since, MAX_SUFFIX_BYTES);
       const buf = Buffer.alloc(length);
-      const read = fs.readSync(fd, buf, 0, length, start);
-      suffix = buf.subarray(0, read).toString("utf8");
+      const read = fs.readSync(fd, buf, 0, length, since);
+      return c.json({ generationId, sessionId, runtime, totalBytes, suffix: buf.subarray(0, read).toString("utf8"), truncated: totalBytes - since > read });
     } finally {
       fs.closeSync(fd);
     }
+  } catch (err) {
+    return c.json({ error: "record_unreadable", message: `Generation record for '${sessionName}' is unreadable: ${(err as Error).message}` }, 409);
   }
-  return c.json({ generationId, totalBytes, suffix, truncated: totalBytes - start > length });
 });

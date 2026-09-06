@@ -208,7 +208,7 @@ describe("rig walk — paced push-delivery (Atom 6)", () => {
 // the piece; a client timeout with server-side completion reconciles BY EFFECT, never a re-send.
 describe("rig walk — per-piece consumption verification (RED-first, mechanics-gate fix)", () => {
   const userRec = (text: string) =>
-    JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] } });
+    JSON.stringify({ type: "user", uuid: "input", message: { role: "user", content: [{ type: "text", text }] } });
 
   interface ScriptedWorld {
     /** mutable: what the generation record currently holds (suffix after piece sends). */
@@ -269,7 +269,64 @@ describe("rig walk — per-piece consumption verification (RED-first, mechanics-
   const walkArgs = ["node", "rig", "walk", "dev@rig", "--through", "packs/p", "--pace", "1ms",
     "--consume-timeout", "60ms", "--consume-poll", "1ms"];
   const pacingArgs = [...walkArgs, "--turn-timeout", "80ms"];
-  const closureRec = '{"type":"system","subtype":"turn_duration","isMeta":false}';
+  const closureRec = '{"type":"assistant","uuid":"answer","parentUuid":"input","message":{"role":"assistant"}}\n{"type":"system","subtype":"turn_duration","uuid":"close","parentUuid":"answer","isMeta":false}';
+
+  const longPiece = "Shared heading for two different pieces. ".repeat(3) + "middle must survive\n".repeat(10) + "unique final paragraph";
+  const linkedClaude = (text: string, parent = "answer") => [
+    { type: "user", uuid: "input", message: { role: "user", content: text } },
+    { type: "assistant", uuid: "answer", parentUuid: "input", message: { role: "assistant", content: "done" } },
+    { type: "system", subtype: "turn_duration", uuid: "closed", parentUuid: parent },
+  ].map(r => JSON.stringify(r)).join("\n") + "\n";
+  const codexTurn = (text: string, endId = "turn-1") => [
+    { type: "event_msg", payload: { type: "task_started", turn_id: "turn-1" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } },
+    { type: "turn_context", payload: { turn_id: "turn-1" } },
+    { type: "event_msg", payload: { type: "task_complete", turn_id: endId } },
+  ].map(r => JSON.stringify(r)).join("\n") + "\n";
+
+  it.each([
+    ["complete Claude", linkedClaude(longPiece), true],
+    ["CRLF and outside whitespace", linkedClaude("\n" + longPiece.replace(/\n/g, "\r\n") + "\n"), true],
+    ["head only", linkedClaude(longPiece.slice(0, 115)), false],
+    ["middle loss", linkedClaude(longPiece.replace("middle must survive\n", "")), false],
+    ["tail only", linkedClaude(longPiece.slice(-70)), false],
+    ["different piece with same prefix", linkedClaude(longPiece.slice(0, 150) + "different ending"), false],
+    ["internal whitespace lost", linkedClaude(longPiece.replace("must survive", "mustsurvive")), false],
+    ["unrelated Claude closure", linkedClaude(longPiece, "other-answer"), false],
+    ["Claude closure without linked assistant", userRec(longPiece) + '\n{"type":"system","subtype":"turn_duration","uuid":"close","parentUuid":"input"}\n', false],
+    ["complete Codex", codexTurn(longPiece), true],
+    ["wrong Codex turn", codexTurn(longPiece, "other-turn"), false],
+    ["missing Codex completion", codexTurn(longPiece).split("\n").slice(0, -2).join("\n") + "\n", false],
+    ["Codex completion from subsequent turn", codexTurn(longPiece).split("\n").slice(0, -2).join("\n") + '\n{"type":"event_msg","payload":{"type":"task_started","turn_id":"other-turn"}}\n{"type":"event_msg","payload":{"type":"task_complete","turn_id":"other-turn"}}\n', false],
+    ["Codex queue event without conversation input", '{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}\n' + JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: longPiece } }) + '\n{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}\n', false],
+  ])("integrity: %s", async (_name, suffix, succeeds) => {
+    const w: ScriptedWorld = { record: { generationId: "g1", content: "" }, pane: "", sends: [], gets: [] };
+    w.sendBehavior = () => { w.record.content += suffix; return { status: 200, data: { ok: true } }; };
+    const deps = consumptionDeps(w);
+    deps.fileExists = () => true;
+    deps.readFile = () => longPiece;
+    const result = await captureLogs(() => makeCmd(deps).parseAsync([
+      "node", "rig", "walk", "dev@rig", "--through", "piece.md", "--json", "--pace", "0ms",
+      "--consume-timeout", "5ms", "--consume-poll", "1ms", "--turn-timeout", "5ms",
+    ]));
+    expect(result.exitCode).toBe(succeeds ? undefined : 1);
+    expect(result.logs.some(l => l.includes('"consumptionVerified":true'))).toBe(succeeds);
+  });
+
+  it.each(["during-send", "between-pieces"])("generation changes %s cannot produce a verified walk", async when => {
+    const w: ScriptedWorld = { record: { generationId: "g1", content: "" }, pane: "", sends: [], gets: [] };
+    w.sendBehavior = b => {
+      w.record.content += linkedClaude(String(b.text));
+      if (when === "during-send") w.record.generationId = "g2";
+      return { status: 200, data: { ok: true } };
+    };
+    const deps = consumptionDeps(w);
+    deps.sleep = async () => { if (when === "between-pieces") w.record.generationId = "g2"; };
+    const result = await captureLogs(() => makeCmd(deps).parseAsync([...pacingArgs, "--json"]));
+    expect(result.exitCode).toBe(1);
+    expect(w.sends.filter(s => s.path === "/api/transport/send")).toHaveLength(1);
+    expect(result.logs.some(l => l.includes('"consumptionVerified":true'))).toBe(false);
+  });
 
   it("PIN W1 — a typed-but-never-consumed piece FAILS LOUD naming the piece; the next piece is never sent [GREEN — consumption verification]", async () => {
     const w: ScriptedWorld = { record: { generationId: "g1", content: "" }, pane: "", sends: [], gets: [] };
@@ -293,8 +350,7 @@ describe("rig walk — per-piece consumption verification (RED-first, mechanics-
         return { status: 200, data: { ok: true } };
       }
       // The bare-Enter retry (submitOnly): the TUI accepts it — the piece lands in the record.
-      const staged = /❯ (.+)\n/.exec(w.pane)?.[1] ?? "";
-      w.record.content += userRec(staged + " …full piece body…") + "\n" + closureRec + "\n";
+      w.record.content += userRec(String(b["expectedStagedText"])) + "\n" + closureRec + "\n";
       w.pane = "❯ \n";
       return { status: 200, data: { ok: true, submitOnly: true } };
     };
