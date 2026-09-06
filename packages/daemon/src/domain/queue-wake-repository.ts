@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { isQueueWait } from "./queue-wait-backoff.js";
 
 export type ParkWakeKind = "watchdog" | "timer" | "blocker";
 export type ParkWakePhase = "armed" | "fired";
@@ -107,7 +108,7 @@ export class QueueWakeRepository {
       kind,
       ref: armed.wake_ref,
       phase: fired ? "fired" : "armed",
-      live: fired ? false : this.isLive(kind, armed.wake_ref),
+      live: fired && !this.isRepeatingTimer(armed.wake_ref) ? false : this.isLive(kind, armed.wake_ref),
       deliveryStatus: fired?.delivery_status ?? null,
       unconsumed: fired !== undefined && state === "blocked",
       ...(expiresAt ? { expiresAt } : {}),
@@ -122,12 +123,12 @@ export class QueueWakeRepository {
          JOIN queue_items q ON q.qitem_id = w.qitem_id
         WHERE w.phase = 'armed' AND w.wake_ref = ?
           AND w.wake_kind IN ('watchdog', 'timer') AND q.state = 'blocked'
-          AND NOT EXISTS (
+          AND (? OR NOT EXISTS (
             SELECT 1 FROM queue_transition_wakes f
              WHERE f.qitem_id = w.qitem_id AND f.phase = 'fired'
                AND f.wake_ref = w.wake_ref AND f.transition_id > w.transition_id
-          )`,
-    ).all(jobId).map((row) => {
+          ))`,
+    ).all(jobId, this.isRepeatingTimer(jobId) ? 1 : 0).map((row) => {
       const r = row as { qitem_id: string; wake_kind: "watchdog" | "timer" };
       return { qitemId: r.qitem_id, kind: r.wake_kind };
     });
@@ -181,6 +182,11 @@ export class QueueWakeRepository {
       | { state: string }
       | undefined;
     return row?.state === "active";
+  }
+
+  private isRepeatingTimer(ref: string): boolean {
+    const row = this.db.prepare("SELECT spec_yaml FROM watchdog_jobs WHERE job_id = ? AND state = 'active'").get(ref) as { spec_yaml: string } | undefined;
+    return row ? isQueueWait(row.spec_yaml) : false;
   }
 
   private isUsageLimitBlocker(qitemId: string): boolean {

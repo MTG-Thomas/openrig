@@ -85,6 +85,7 @@ export const WORKFLOW_TOP_LEVEL_KEYS = [
   // OPR.0.4.6.WF5 FR-2: the maturity dial's spec-declared routing surface.
   "exception_routing",
   "coordination_terminal_turn_rule",
+  "context_refs",
 ] as const;
 export const WORKFLOW_STEP_KEYS = [
   "id",
@@ -92,6 +93,7 @@ export const WORKFLOW_STEP_KEYS = [
   "objective",
   "allowed_exits",
   "re_present_after_seconds",
+  "re_present_max_seconds",
   "next_hop",
   // OPR.0.4.6.WF2: `gates` is deliberately NOT in this list — it is
   // REMOVED with a specific migration error (checked before the
@@ -337,6 +339,9 @@ export function parseWorkflowSpec(rawYaml: string, sourcePath: string): Workflow
   )) {
     rejectUnknownKeys(role, WORKFLOW_ROLE_KEYS, `workflow.roles.${roleName}`, sourcePath);
   }
+  if (wf.context_refs !== undefined && (!Array.isArray(wf.context_refs) || wf.context_refs.some((ref) => typeof ref !== "string" || !ref.trim()))) {
+    throw new WorkflowSpecError("spec_field_invalid", `workflow spec at ${sourcePath}: context_refs must be non-empty string addresses.`);
+  }
   (wf.steps as unknown[]).forEach((step, idx) => {
     if (step && typeof step === "object" && !Array.isArray(step)) {
       const s = step as Record<string, unknown>;
@@ -349,6 +354,13 @@ export function parseWorkflowSpec(rawYaml: string, sourcePath: string): Workflow
           `workflow spec at ${sourcePath}: workflow.steps[${idx}].re_present_after_seconds must be a positive integer (got ${JSON.stringify(s.re_present_after_seconds)}). It is the one-shot delay before an intentionally waiting packet is shown to its owner again.`,
           { sourcePath, path: `workflow.steps[${idx}].re_present_after_seconds` },
         );
+      }
+      if (s.re_present_max_seconds !== undefined && (
+        !Number.isInteger(s.re_present_max_seconds) ||
+        s.re_present_after_seconds === undefined ||
+        (s.re_present_max_seconds as number) < (s.re_present_after_seconds as number)
+      )) {
+        throw new WorkflowSpecError("spec_field_invalid", `workflow spec at ${sourcePath}: re_present_max_seconds requires re_present_after_seconds and must be an integer at least as large as that initial delay.`);
       }
       // OPR.0.4.6.WF2 FR-5: the legacy `gates: [...]` string list is
       // REMOVED at parse — checked BEFORE the unknown-key sweep so the
@@ -514,6 +526,7 @@ export function parseWorkflowSpec(rawYaml: string, sourcePath: string): Workflow
     id: wf.id,
     version: String(wf.version),
     objective: typeof wf.objective === "string" ? wf.objective : undefined,
+    context_refs: wf.context_refs as string[] | undefined,
     target: wf.target as WorkflowSpec["target"],
     entry: wf.entry as WorkflowSpec["entry"],
     roles: wf.roles as WorkflowSpec["roles"],

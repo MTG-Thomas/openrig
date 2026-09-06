@@ -1237,6 +1237,72 @@ Phase D extends the policy enum with `workflow-keepalive` (the policy deferred f
 
 The owner-as-author + workflow-as-transactional-scribe contract is enforced by the daemon. The owner of a packet decides when it closes; the workflow runtime atomically records the closure AND creates/projects the next qitem per the workflow spec, in a single daemon transaction.
 
+### Authored mission boundary
+
+When a mission declares `lifecycle.workflow`, `compile` uses that explicit
+workflow instead of deriving steps from active slices. Slice membership and
+backlinks are still validated and included in provenance; slice SDLC selections
+do not add workflow steps or gates. `lifecycle.profile` must match the profile
+selected in `project.yaml`:
+
+```yaml
+# Add to mission.yaml; project.yaml already selects release-boundary-v0.
+lifecycle:
+  profile: release-boundary-v0
+  workflow:
+    context_refs: [SPEC.md, PROGRESS.md, NOTES.md]
+    entry: {role: orchestrator}
+    roles:
+      orchestrator: {preferred_targets: [orch@my-rig]}
+    steps:
+      - id: mission-boundary
+        actor_role: orchestrator
+        objective: Inspect current evidence and decide the next authored exit.
+        allowed_exits: [waiting, done, failed]
+        re_present_after_seconds: 300
+        re_present_max_seconds: 3600
+```
+
+The nested `workflow` uses the ordinary workflow language; its ID defaults to
+`lifecycle-<project>-<mission>`, and its compiled version is derived from source
+digests. Boundary steps explicitly allowing `waiting` default to a five-minute
+initial reminder and a one-hour cap; both fields in the example override those
+defaults. Missing operation identity leaves compilation ineligible. Instantiation
+with one opaque `--operation-key` persists the compiled input digest and lifecycle
+binding; exact replay returns the same instance/entry packet, and changed input
+under that key refuses. Authoring alone never starts an instance.
+
+`context_refs` carries addresses in entry, successor, route/resume, and reminder
+packets. The lifecycle compiler also includes the project/mission manifests and
+`project.install.context`. Relative project references resolve from the project
+root; relative workflow references resolve from the mission directory. References
+are not evidence verdicts: the receiving agent opens current context, may inspect
+beyond it, and chooses the exit. The daemon neither interprets receipts nor
+activates a mission. `rigx project` remains a separate manual shadow.
+
+Outside mission-boundary compilation, an unmapped `waiting` exit with
+`re_present_after_seconds` alone remains one-shot.
+Adding `re_present_max_seconds` opts into an existing queue/watchdog timer that
+repeats with exponential backoff: the example waits 5, 10, 20, 40, then 60 minutes
+between reminders. The cap must be an integer at least as large as the initial
+delay. No new packet is created. Repeated waiting acknowledgments retain the
+schedule; changed structured `closureEvidence` or a new blocker resets it.
+`rig workflow project --evidence-ref <ref>` records an attributed reference as
+closure evidence, without interpreting it or substituting for typed acceptance. Omitted
+evidence preserves the prior evidence, and object key order is immaterial.
+
+A transition on the exact qitem blocker makes the reminder due on the next
+scheduler tick (normally within one second), resetting the initial delay.
+Wake delivery receipts do not count as progress. The workflow's own waiting
+acknowledgments are on its frontier packet, not its upstream blocker; a repeating
+wait cannot name itself as its blocker. Blocker completion retains native
+queue unpark/wake behavior. Terminal or rerouted packets retire their timer.
+Restart reconciles blocker transition identity and resumes the persisted delay;
+replaying the same transition does not create another wake. A live repeating
+timer can have an unconsumed wake: these are separate facts in park status.
+Hard human gates are authored using the existing `gate` field; a reminder does
+not manufacture a gate or satisfy one.
+
 ## Operational Inspection
 
 Read-only inspection commands for compaction planning, workflow heartbeat, and seat handover observability. Default mode is read-only across this section.

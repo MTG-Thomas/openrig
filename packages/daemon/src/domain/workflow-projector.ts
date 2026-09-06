@@ -74,6 +74,7 @@ export function renderWorkflowProjectCommand(input: {
  * carrying a stale packet id or owner forward in copied body text. */
 export function withWorkflowContinuation(input: {
   body: string;
+  contextRefs?: string[];
   instanceId: string;
   packetId: string;
   ownerSession: string;
@@ -81,11 +82,12 @@ export function withWorkflowContinuation(input: {
 }): string {
   const lines = input.body
     .split("\n")
-    .filter((line) => !line.startsWith("Continuation: ") && line !== WORKFLOW_CONTEXT_SHORTCUT);
+    .filter((line) => !line.startsWith("Continuation: ") && line !== WORKFLOW_CONTEXT_SHORTCUT && !(input.contextRefs && line.startsWith("Context reference: ")));
   while (lines.at(-1) === "") lines.pop();
   return [
     ...lines,
     "",
+    ...(input.contextRefs ?? []).map((ref) => `Context reference: ${ref}`),
     `Continuation: ${renderWorkflowProjectCommand(input)}`,
     WORKFLOW_CONTEXT_SHORTCUT,
   ].join("\n");
@@ -99,8 +101,9 @@ export function workflowWaitWakeMessage(input: {
   ownerSession: string;
 }): string {
   return [
-    `Workflow waiting deadline reached: ${input.spec.id}@${input.spec.version} instance ${input.instance.instanceId} step ${input.step.id}.`,
+    `Workflow wait re-presentation (blocker progress or reminder): ${input.spec.id}@${input.spec.version} instance ${input.instance.instanceId} step ${input.step.id}.`,
     `You still own the same frontier packet ${input.packetId}. Read it and inspect current evidence before choosing an authored exit.`,
+    ...(input.spec.context_refs ?? []).map((ref) => `Context reference: ${ref}`),
     `Continuation: ${renderWorkflowProjectCommand({ ...input, instanceId: input.instance.instanceId })}`,
     WORKFLOW_CONTEXT_SHORTCUT,
   ].join("\n");
@@ -500,6 +503,8 @@ export class WorkflowProjector {
         handedOffTo: closure.handedOffTo,
         blockedOn: closure.blockedOn,
         transitionNote: closure.transitionNote,
+        wakeMaxSeconds: effectiveExit === "waiting" && !routes ? currentStep.re_present_max_seconds : undefined,
+        wakeProgressEvidence: input.closureEvidence,
         wakeAfterSeconds:
           effectiveExit === "waiting" && !routes
             ? currentStep.re_present_after_seconds
@@ -1073,6 +1078,8 @@ export class WorkflowProjector {
         handedOffTo: closure.handedOffTo,
         blockedOn: closure.blockedOn,
         transitionNote: closure.transitionNote,
+        wakeMaxSeconds: effectiveExit === "waiting" && ownerPlans.length === 0 ? currentStep.re_present_max_seconds : undefined,
+        wakeProgressEvidence: input.closureEvidence,
         wakeAfterSeconds:
           effectiveExit === "waiting" && ownerPlans.length === 0
             ? currentStep.re_present_after_seconds
@@ -1766,6 +1773,7 @@ function workflowHandoffBody(input: {
   }
   return withWorkflowContinuation({
     body: lines.join("\n"),
+    contextRefs: input.spec.context_refs,
     instanceId: input.instance.instanceId,
     packetId: input.packetId,
     ownerSession: input.ownerSession,

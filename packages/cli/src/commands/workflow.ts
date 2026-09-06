@@ -271,6 +271,7 @@ Examples:
     .requiredOption("--exit <kind>", "Closure exit kind: handoff | waiting | done | failed")
     .requiredOption("--actor-session <session>", "Session closing the packet (owner-as-author)")
     .option("--result-note <text>", "Closure result note (audit context)")
+    .option("--evidence-ref <ref>", "Record attributed progress evidence; a changed reference resets an intentional-wait reminder")
     .option("--blocked-on <ref>", "For waiting exits: blocker reference (qitem id, gate name)")
     .option("--next-owner <session>", "Override default next-step owner")
     .option("--acceptance-candidate <identity>", "Typed acceptance candidate identity (use with verdict and evidence-ref)")
@@ -302,6 +303,7 @@ Examples:
       exit: string;
       actorSession: string;
       resultNote?: string;
+      evidenceRef?: string;
       blockedOn?: string;
       nextOwner?: string;
       acceptanceCandidate?: string;
@@ -337,13 +339,14 @@ Examples:
           actorSession: opts.actorSession,
           resultNote: opts.resultNote,
           blockedOn: opts.blockedOn,
-          closureEvidence: opts.acceptanceCandidate !== undefined || opts.acceptanceVerdict !== undefined || opts.acceptanceEvidenceRef !== undefined
+          closureEvidence: opts.evidenceRef !== undefined || opts.acceptanceCandidate !== undefined || opts.acceptanceVerdict !== undefined || opts.acceptanceEvidenceRef !== undefined
             ? {
-                acceptance: {
+                ...(opts.evidenceRef !== undefined ? { evidence_ref: opts.evidenceRef } : {}),
+                ...(opts.acceptanceCandidate !== undefined || opts.acceptanceVerdict !== undefined || opts.acceptanceEvidenceRef !== undefined ? { acceptance: {
                   candidate: opts.acceptanceCandidate,
                   verdict: opts.acceptanceVerdict,
                   evidence_ref: opts.acceptanceEvidenceRef,
-                },
+                } } : {}),
               }
             : undefined,
           nextOwnerSession: opts.nextOwner,

@@ -23,6 +23,7 @@ import {
   type ParkWakeStatus,
 } from "./queue-wake-repository.js";
 import { WatchdogJobsRepository } from "./watchdog-jobs-repository.js";
+import { armQueueWait, backOffQueueWait, refreshQueueWaits } from "./queue-wait-backoff.js";
 
 export const QUEUE_STATES = [
   "pending",
@@ -279,6 +280,10 @@ export interface QueueUpdateInput {
    *  accompany a blocked transition; a live qitem blocker is inferred. */
   wakeWatchdogId?: string;
   wakeAfterSeconds?: number;
+  /** Internal opt-in to repeating, event-first park reminders. Evidence is
+   * compared structurally; an acknowledgment note is never progress. */
+  wakeMaxSeconds?: number;
+  wakeProgressEvidence?: Record<string, unknown>;
   /** Internal caller-supplied text for an atomic timer. Public queue routes do
    *  not expose this; workflow projection uses it to re-present the exact
    *  occurrence-bound continuation action instead of a generic reminder. */
@@ -707,6 +712,21 @@ export class QueueRepository {
    *  fixtures fall back to a repository on this same SQLite connection. */
   attachWatchdogJobsRepository(repo: WatchdogJobsRepository): void {
     this.watchdogJobsRepo = repo;
+  }
+
+  /** Startup wires this after queue/watchdog composition. Tests may also call
+   * it after reconstruction; it only reconciles queue-owned repeating timers. */
+  reconcileWaitReminders(changedQitem?: string): void {
+    refreshQueueWaits(this.db, this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), changedQitem);
+  }
+
+  startWaitReminders(): () => void {
+    this.reconcileWaitReminders();
+    return this.eventBus.subscribe((event) => {
+      if (event.type.startsWith("queue.") && "qitemId" in event && typeof event.qitemId === "string") {
+        this.reconcileWaitReminders(event.qitemId);
+      }
+    });
   }
 
   /**
@@ -2153,6 +2173,8 @@ export class QueueRepository {
         || input.blockedOn != null
         || input.wakeWatchdogId != null
         || input.wakeAfterSeconds != null
+        || input.wakeMaxSeconds != null
+        || input.wakeProgressEvidence != null
         || input.wakeMessage != null
         || input.summary != null
         || input.evidenceRef != null;
@@ -2211,6 +2233,9 @@ export class QueueRepository {
         "wake_message_not_admitted",
         "wakeMessage is internal timer content and requires wakeAfterSeconds",
       );
+    }
+    if (input.wakeMaxSeconds != null && (input.wakeAfterSeconds == null || !Number.isInteger(input.wakeMaxSeconds) || input.wakeMaxSeconds < input.wakeAfterSeconds)) {
+      throw new QueueRepositoryError("wake_max_invalid", "wakeMaxSeconds requires an initial delay and must be an integer at least as large");
     }
     if (input.wakeMessage != null && input.wakeMessage.trim().length === 0) {
       throw new QueueRepositoryError(
@@ -2423,6 +2448,20 @@ export class QueueRepository {
         );
       }
       parkWake = { kind: "watchdog", ref: job.jobId };
+    } else if (input.wakeAfterSeconds != null && input.wakeMaxSeconds != null) {
+      if (effectiveBlockedOn === input.qitemId) {
+        throw new QueueRepositoryError("wake_self_blocker", "a repeating wait must name an upstream blocker, not its own packet");
+      }
+      const oldWake = this.wakeRepo.getStatus(input.qitemId);
+      const job = armQueueWait(this.db, jobsRepo, {
+        previousJobId: oldWake?.kind === "timer" ? oldWake.ref : undefined,
+        qitemId: input.qitemId, blocker: effectiveBlockedOn,
+        evidence: input.wakeProgressEvidence,
+        initialSeconds: input.wakeAfterSeconds, maxSeconds: input.wakeMaxSeconds,
+        message: input.wakeMessage ?? `Resume parked qitem ${input.qitemId} and inspect current evidence.`,
+        owner: qitem.destinationSession, actor: input.actorSession,
+      });
+      parkWake = { kind: "timer", ref: job.jobId };
     } else if (input.wakeAfterSeconds != null) {
       const job = jobsRepo.register({
         policy: "periodic-reminder",
@@ -2531,7 +2570,9 @@ export class QueueRepository {
       // timer left by any path that did not unpark cleanly. It cannot over-reach:
       // a job already terminal fails `live`, and an operator's attached watchdog
       // fails the kind test.
-      this.retireParkGeneratedTimer(input.qitemId, "park_superseded");
+      if (this.wakeRepo.getStatus(input.qitemId)?.ref !== parkWake.ref) {
+        this.retireParkGeneratedTimer(input.qitemId, "park_superseded");
+      }
       this.wakeRepo.record({
         transitionId: transition.transitionId,
         qitemId: input.qitemId,
@@ -2756,7 +2797,7 @@ export class QueueRepository {
     const events = this.db.transaction(() => {
       const firedEvents = targets.map(recordFired);
       if (usageLimitBlockers.length === 0) {
-        if (parkGeneratedTimer) {
+        if (parkGeneratedTimer && !backOffQueueWait(this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), jobId)) {
           (this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db)).markTerminal(
             jobId,
             "park_timer_fired_once",

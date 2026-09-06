@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify } from "yaml";
 import type { WorkflowSpec, WorkflowStepSpec } from "./workflow-types.js";
-import { WorkflowSpecError } from "./workflow-spec-cache.js";
+import { WorkflowSpecError, parseWorkflowSpec } from "./workflow-spec-cache.js";
 import { WorkflowValidator } from "./workflow-validator.js";
 import {
   LifecycleManifestValidationError,
@@ -67,6 +67,30 @@ export function compileProjectLifecycle(input: {
   const roles: WorkflowSpec["roles"] = {};
   const unknowns: string[] = [];
   const advisories: string[] = [];
+  const boundary = asMapping(mission.lifecycle, `${missionPath}: lifecycle`, true);
+  let authoredBoundary: WorkflowSpec | null = null;
+  if (boundary) {
+    for (const key of Object.keys(boundary)) {
+      if (!["profile", "workflow"].includes(key)) throw manifestError("lifecycle_boundary_unknown_key", `Unknown mission lifecycle key: ${key}`);
+    }
+    if (requiredString(boundary.profile, `${missionPath}: lifecycle.profile`) !== lifecycleProfile) {
+      throw manifestError("lifecycle_profile_mismatch", "Mission lifecycle.profile must match the profile selected by project.yaml");
+    }
+    const workflow = asMapping(boundary.workflow, `${missionPath}: lifecycle.workflow`);
+    const projectRefs = stringList(asMapping(project.install, `${projectPath}: install`, true)?.context, `${projectPath}: install.context`, true);
+    const missionRefs = stringList(workflow.context_refs, `${missionPath}: lifecycle.workflow.context_refs`, true);
+    const address = (root: string, ref: string) => /^(?:[a-z]+:|\$|\/)/i.test(ref) ? ref : resolve(root, ref);
+    authoredBoundary = parseWorkflowSpec(stringify({ workflow: {
+      id: `lifecycle-${projectId}-${missionName}`, version: "1", ...workflow,
+      steps: Array.isArray(workflow.steps) ? workflow.steps.map((step: Mapping) => {
+        if (!step || !Array.isArray(step.allowed_exits) || !step.allowed_exits.includes("waiting")) return step;
+        const initial = step.re_present_after_seconds ?? 300;
+        return { ...step, re_present_after_seconds: initial,
+          re_present_max_seconds: step.re_present_max_seconds ?? Math.max(3600, typeof initial === "number" ? initial : 300) };
+      }) : workflow.steps,
+      context_refs: [...new Set([projectPath, missionPath, ...projectRefs.map((ref) => address(workspaceRoot, ref)), ...missionRefs.map((ref) => address(missionDir, ref))])],
+    } }), `${missionPath}#lifecycle.workflow`);
+  }
 
   members.forEach((member) => {
     const { ref, normalizedRef, path: slicePath } = member;
@@ -82,7 +106,8 @@ export function compileProjectLifecycle(input: {
       throw manifestError("lifecycle_slice_mission_mismatch", `${slicePath}: composition.mission does not resolve to ${missionPath}`, { slicePath, missionRef, missionPath });
     }
 
-    if (!member.active) return;
+    // A mission boundary is explicitly authored; slice SDLC never manufactures its steps.
+    if (boundary || !member.active) return;
     const execution = asMapping(slice.execution, `${slicePath}: execution`, true);
     if (!execution) {
       unknowns.push(`${normalizedRef}: execution contract missing`);
@@ -110,11 +135,12 @@ export function compileProjectLifecycle(input: {
 
   if (!input.operationKey) unknowns.push("opaque lifecycle operation key not supplied");
   if (!lifecycleProfile) unknowns.push("project lifecycle profile missing");
-  if (steps.length === 0) unknowns.push("no active slice declares an execution contract");
+  if (authoredBoundary) steps.push(...authoredBoundary.steps);
+  if (steps.length === 0) unknowns.push("no active slice declares an execution contract; author mission.lifecycle for an independent mission boundary");
   if (steps.length > 0 && steps.every((step) => (step.depends_on ?? []).length > 0)) {
     unknowns.push("execution graph has no root step");
   }
-  const draftWorkflowSpec: WorkflowSpec | null = steps.length > 0
+  const draftWorkflowSpec: WorkflowSpec | null = authoredBoundary ?? (steps.length > 0
     ? {
         id: `lifecycle-${projectId}-${missionName}`,
         version: "1",
@@ -123,7 +149,7 @@ export function compileProjectLifecycle(input: {
         roles,
         steps,
       }
-    : null;
+    : null);
   const compiledInputDigest = sha256(stableJson({
     version: 1,
     identity: { project: projectId, mission: missionName, lifecycleProfile },

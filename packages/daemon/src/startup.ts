@@ -1942,6 +1942,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
         }),
       ],
     });
+    queueRepoInstance.startWaitReminders();
     const watchdogScheduler = new WatchdogScheduler({
       jobsRepo: watchdogJobsRepoInstance,
       policyEngine: watchdogPolicyEngine,

@@ -10,6 +10,7 @@
 // Pattern mirrors Phase B's ProjectClassifier facade shape.
 
 import type Database from "better-sqlite3";
+import type { WorkflowSpec } from "./workflow-types.js";
 import type { EventBus } from "./event-bus.js";
 import type { QueueRepository } from "./queue-repository.js";
 import {
@@ -1049,6 +1050,7 @@ export class WorkflowRuntime {
           packetId: redrivePacketId,
           ownerSession: owner,
           step,
+          contextRefs: specRow.spec.context_refs,
         }),
         priority: "routine",
         tier: "mode2",
@@ -1257,6 +1259,7 @@ export class WorkflowRuntime {
           packetId: redrivePacketId,
           ownerSession: owner,
           step,
+          contextRefs: specRow.spec.context_refs,
         }),
         priority: "routine",
         tier: "mode2",
@@ -1431,6 +1434,7 @@ export class WorkflowRuntime {
           packetId: routedPacketId,
           ownerSession: input.toSession,
           step: step ?? undefined,
+          contextRefs: specRow?.spec.context_refs,
         }),
         priority: oldPacket.priority ?? "routine",
         tier: oldPacket.tier ?? "mode2",
@@ -1488,6 +1492,7 @@ export class WorkflowRuntime {
           blockedOn: oldPacket.blockedOn,
           transitionNote: `workflow route: park preserved (${oldPacket.blockedOn})`,
           wakeAfterSeconds: step?.re_present_after_seconds,
+          wakeMaxSeconds: step?.re_present_max_seconds,
           wakeMessage:
             step?.re_present_after_seconds !== undefined
               ? workflowWaitWakeMessage({
@@ -1660,7 +1665,7 @@ export type WorkflowInstanceWithInspection = WorkflowInstanceWithDeadline & {
 };
 
 function workflowInstantiateBody(input: {
-  spec: { id: string; version: string };
+  spec: Pick<WorkflowSpec, "id" | "version" | "context_refs">;
   instanceId: string;
   entryStep: WorkflowStepSpec;
   rootObjective: string;
@@ -1689,6 +1694,7 @@ function workflowInstantiateBody(input: {
   }
   return withWorkflowContinuation({
     body: lines.join("\n"),
+    contextRefs: input.spec.context_refs,
     instanceId: input.instanceId,
     packetId: input.packetId,
     ownerSession: input.ownerSession,

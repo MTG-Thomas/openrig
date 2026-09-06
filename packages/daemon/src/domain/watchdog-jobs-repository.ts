@@ -511,6 +511,12 @@ export class WatchdogJobsRepository {
     }
   }
 
+  /** Preserve job identity while its owner adjusts a durable reminder schedule. */
+  updateSchedule(jobId: string, specYaml: string, intervalSeconds: number, lastEvaluationAt: string | null): void {
+    this.db.prepare(`UPDATE watchdog_jobs SET spec_yaml = ?, interval_seconds = ?, last_evaluation_at = ?
+      WHERE job_id = ? AND state = 'active'`).run(specYaml, intervalSeconds, lastEvaluationAt, jobId);
+  }
+
   /**
    * R1 fix: write the actionable-state machine columns. Mirrors POC
    * engine's `state.actionable` + `state.last_actionable_at`. Called
