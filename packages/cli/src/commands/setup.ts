@@ -510,7 +510,7 @@ export async function runSetup(deps: SetupDeps, opts: { dryRun?: boolean; full?:
         id: "claude_install",
         status: "fail",
         message: `Failed to install Claude Code: ${(err as Error).message}`,
-        reason: "The demo rig launches Claude Code nodes, so the Claude CLI must be installed on this machine.",
+        reason: "Claude Code seats need the Claude CLI; a Codex-only project can use its own runtime readiness result.",
         fixHint: "Install Claude Code with `npm install -g @anthropic-ai/claude-code`.",
       });
     }
@@ -525,7 +525,7 @@ export async function runSetup(deps: SetupDeps, opts: { dryRun?: boolean; full?:
         id: "claude_auth",
         status: "fail",
         message: `Claude Code is installed but not ready to launch: ${(err as Error).message}`,
-        reason: "The demo rig cannot launch Claude Code nodes until the Claude CLI is logged in and usable.",
+        reason: "Claude Code seats cannot launch until the Claude CLI is logged in and usable.",
         fixHint: "Run `claude auth login` or open `claude` once to complete authentication, then rerun `rig setup` or `rig doctor`.",
       });
     }
@@ -555,7 +555,7 @@ export async function runSetup(deps: SetupDeps, opts: { dryRun?: boolean; full?:
         id: "codex_install",
         status: "fail",
         message: `Failed to install Codex: ${(err as Error).message}`,
-        reason: "The demo rig launches Codex nodes, so the Codex CLI must be installed on this machine.",
+        reason: "Codex seats need the Codex CLI installed on this machine.",
         fixHint: "Install Codex with `npm install -g @openai/codex`.",
       });
     }
@@ -570,7 +570,7 @@ export async function runSetup(deps: SetupDeps, opts: { dryRun?: boolean; full?:
         id: "codex_auth",
         status: "fail",
         message: `Codex is installed but not ready to launch: ${(err as Error).message}`,
-        reason: "The demo rig cannot launch Codex nodes until the Codex CLI is logged in and usable.",
+        reason: "Codex seats cannot launch until the Codex CLI is logged in and usable.",
         fixHint: "Run `codex login` and complete authentication, then rerun `rig setup` or `rig doctor`.",
       });
     }
@@ -709,11 +709,12 @@ function buildDefaultDoctorDeps(setupDeps: SetupDeps): DoctorDeps {
 export function goldenPathNextSteps(): string[] {
   return [
     "Next steps (the guided path; full reference: docs/reference/getting-started.md):",
-    "  1. rig up <rig-spec>                Launch a rig (auto-starts the daemon; the kernel boots on daemon-start)",
-    "  2. rig status                       See daemon port, kernel readiness, and your effective workspace root",
-    "  3. rig workspace doctor             Check your workspace is ready",
-    "  4. rig workflow instantiate <name>  Start a workflow by its discovered name (e.g. conveyor); 'rig workflow specs' shows built-ins",
-    "  5. rig scope ...                    Browse the durable mission/slice artifacts the workflow coordinates",
+    "  1. cd <your-repository>             Choose the code the team will work on",
+    "  2. rig up first-project --cwd .     Launch an owner + checker (Codex); auto-starts daemon and kernel",
+    "  3. rig status                       Check daemon/kernel readiness; rig ps --nodes --rig first-project checks the team",
+    "  4. rig send dev-owner@first-project '<one useful change, boundaries, and how to check it>'",
+    "  5. rig tui --shared                  Join the kernel dashboard; plain rig tui opens your own view",
+    "  Next: rig queue list --rig first-project; rig workspace doctor; rig scope ...; rig workflow specs",
   ];
 }
 

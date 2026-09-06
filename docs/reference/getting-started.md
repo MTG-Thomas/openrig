@@ -1,38 +1,128 @@
-# Getting started: the guided golden path
+# Getting started: one useful change in your repository
 
-This is the ordered new-operator path from a fresh machine to a running rig with
-a workspace and a workflow. It uses the **existing** `rig` verbs in order - there
-is no magic one-command onboarding; each step is a real, inspectable verb.
+Start with a repository and one bounded change you can exercise. The shipped
+`first-project` starter provides two native Codex seats: an outcome owner and
+an independent checker. It uses your installed Codex executable and login;
+terminal-provider support does not change the harness or account being used.
 
 > Everything below reports **what is currently true**, never a guarantee that
 > downstream work will succeed. "Daemon up" does not mean every agent is healthy;
 > "kernel ready" does not mean every kernel agent is healthy; a workspace root
 > being *live* does not mean it is the *right* one for your project.
 
-## The ordered path
+## Prepare and launch
 
-1. **`rig setup`** - install and verify the local runtime (tmux, cmux, Claude
-   Code / Codex, runtime config). Run once per machine. `rig setup` does NOT boot
-   the kernel (see "Kernel framing" below).
-2. **`rig up <rig-spec>`** - launch a rig. This **auto-starts the daemon** if it
-   is not already running (the four daemon-dependent verbs below do not auto-start
-   it - they tell you to run `rig up` or `rig daemon start`). Daemon start first
-   reconciles the additive [OpenRig instance layout](instance-layout.md).
-3. **`rig status`** - see what is currently true: daemon up/down + port, kernel
-   readiness (distinct from daemon health), and your effective workspace root
-   (default vs override).
-4. **`rig workspace doctor`** - check that your workspace is ready; it reports
-   state + fix-hints. The effective workspace root defaults to
-   `~/.openrig/workspace/` unless you override `workspace.root` (env or config).
-5. **`rig workflow instantiate <name>`** - start a workflow runtime instance by
-   its **discovered name** (e.g. `conveyor`, `basic-loop`) - no hidden file path
-   needed. `rig workflow specs` shows the seeded built-ins. Instantiating creates a
-   workflow instance and its first **entry qitem**.
-6. **`rig scope ...`** - browse and manage the durable mission/slice artifacts the
-   workflow coordinates (see the scope <-> workflow bridge below).
+Install OpenRig and inspect `rig setup --dry-run` before applying machine
+changes. Check `tmux -V`, `codex --version` and `codex login status` in your
+launch shell; install missing prerequisites and complete `codex login` when
+needed. This starter needs tmux and Codex, without a Claude login or Herdr
+plugin. The kernel selects its available native runtime variant separately.
 
-`rig setup` prints this ordered sequence as its next-steps output; `rig status`
-points back here. This doc is the durable reference.
+`rig setup` currently installs/checks both harnesses and cmux. Use it when you
+want that full environment. Its overall failure can include an optional
+component for this starter: read the individual result and verify the three
+prerequisites above rather than treating a missing Claude login as broken
+Codex. A missing Codex login remains a real launch blocker.
+
+```sh
+cd <your-repository>
+rig specs preview first-project
+rig up first-project --cwd . --plan
+rig up first-project --cwd .
+rig status
+rig ps --nodes --rig first-project
+```
+
+Preview the starter's seats and resources; plan checks resolution and
+preflight for the selected working directory. Launch starts the daemon if needed; the kernel boots in the
+background. Read readiness for the project seats, not only daemon health. If a
+seat has an authentication, trust or permission prompt, resolve the named
+prompt before assigning it work. A model pin is configuration; the native
+harness must report the intended model before consequential work.
+
+The default Codex workspace sandbox may also ask before local `rig` calls.
+Approve only the intended operations in the selected instance. A waiting
+permission prompt is not task progress; inspect it before retrying delivery.
+
+`first-project` is a deliberately small starting point, not a universal team.
+For a different installed runtime or team shape, inspect `rig specs ls --kind
+rig` and `rig specs preview <name>` before selecting it. A seven-seat showcase
+is optional and consumes more concurrent capacity.
+
+## Give the owner an outcome
+
+For example, in a project that imports CSV files:
+
+```sh
+rig send dev-owner@first-project 'Improve the CSV import error when a required column is missing: name the column and leave the existing data unchanged. Add a regression check, ask dev-check for an independent check of the exact candidate, and record the result and how I can try it. Keep the change local; do not publish.'
+```
+
+Replace the example with a real problem in your repository. Include what the
+user should observe, a boundary and how success can be checked. The owner
+creates and claims a durable task, implements it, and routes the selected
+independent check. You should not have to relay the review between terminals.
+`rig send` is the initial conversation; the queue and repository artifacts
+retain the work. An unbound shell does not need to impersonate a queue owner.
+
+Follow the work with `rig queue list --rig first-project --limit 1000`, then
+`rig queue show <id> --full` and `rig queue transitions <id>`. A delivered
+message is not a reviewed result. Read the final artifact, exercise the stated
+behavior, and check the candidate the review actually covered.
+
+## Share the dashboard and return to it
+
+```sh
+rig tui --shared
+```
+
+A fresh kernel runs the ordinary TUI in its existing `operator-human` terminal.
+This command attaches another client to that terminal. **Ctrl-b, then d**
+detaches without quitting the TUI; return with the same command and the view
+stays where it was. Another authorized agent can capture or operate that same
+pane. It should tell you before changing your view. The terminal is not a
+human inbox and does not prove anyone is watching it.
+
+Plain `rig tui` remains an independent local view. If an older kernel or a TUI
+you quit shows a shell, run `rig tui` in that shell once. `--shared` does not
+start or replace a terminal, so a missing binding is reported with recovery
+guidance rather than creating a second kernel.
+
+Herdr users follow the same launch and task path. To place the managed team in
+Herdr, use `rig terminal open first-project --provider herdr`; for the shared
+dashboard, use `rig terminal open kernel --provider herdr`. The equivalent
+cmux provider is also available. Read the opened/absent/degraded result: a
+partial terminal view is not a healthy team. Repeated terminal-open calls can
+create another provider workspace; return to the one already open when you
+want to preserve it. This is terminal integration, not native plugin enrollment.
+
+## Continue real project work
+
+Return to the same owner with the next outcome, citing the earlier result.
+The seat address and durable queue survive closing your viewing terminal.
+Keep intent, acceptance and evidence in the repository's existing project,
+mission and slice artifacts; the starter reads those before inventing a path.
+
+If the project has no work tree, start with `rig workspace doctor` and
+`rig scope mission create --help`, then `rig scope slice create --help`. Set
+the actual intended outcome before creating work. `rig scope` retains what is
+being built. When repeated coordination warrants a workflow, discover with
+`rig workflow specs`, inspect its owners and inputs, and instantiate the
+selected name with `rig workflow instantiate --help`. A workflow is not needed
+merely to make the first local change.
+
+## Incomplete setup and restart
+
+| Observation | Next action |
+| --- | --- |
+| Tool missing or login fails | Use the specific setup/auth hint; recheck that executable in the launch shell. Do not send work to an unready seat. |
+| Daemon is healthy, kernel is still starting | Read `rig status` and `rig ps --nodes --rig kernel`; kernel readiness is separate. |
+| Shared terminal is absent | Inspect the existing kernel binding and recovery state; use standalone `rig tui` while resolving it. |
+| Viewing terminal was closed | Reattach with `rig tui --shared`; do not relaunch the team. |
+| Daemon restarted but tmux survived | Re-read `rig status` and the existing queue; a daemon restart is not a fresh project. |
+| Host reboot lost tmux sessions | Use the crash-cart/restore guidance from `rig` and inspect its recovery plan. Do not erase the old rig or create another to recover it. |
+| Work is waiting on a prompt or decision | Read the row, transition and named prompt; preserve the obligation until the missing decision arrives. |
+
+`rig setup` prints the short form of this path; `rig status` points back here.
 
 ## Kernel framing (what `rig setup` does and does not do)
 

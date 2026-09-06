@@ -1,14 +1,11 @@
-// 0.5.0 — `rig tui`: a NAMED ALIAS for what bare `rig` does (open mission control).
-// ZERO NEW BEHAVIOR: it delegates to the front door's `openMissionControl` (probe →
-// friendly degrade → resolveTuiPath + launch), the exact path bare `rig` uses — no
-// duplicated launch logic. It only adds the same TTY-awareness on stdout: launching
-// the interactive TUI into a non-TTY stdout can't render, so it prints the same
-// friendly first-impression degrade instead of piping garbage.
+// Standalone entry shares the bare-rig front door. Shared entry attaches a client
+// to the kernel's existing terminal without launching a second TUI.
 import { Command } from "commander";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { openMissionControl, USAGE_LINES, type FrontDoorIo } from "../front-door.js";
+import { sharedTuiTarget, attachSharedTui } from "../shared-tui.js";
 
 /** The registry-entry shape `rig tui commands` serializes (REGISTRY I2, ruling 64f1dbdf).
  *  Structural mirror of the TUI's CommandEntry data fields (functions are not serialized). */
@@ -39,9 +36,15 @@ async function loadRegistryFromDist(baseDir: string): Promise<TuiCommandEntry[]>
   }));
 }
 
-export function tuiCommand(io: FrontDoorIo & { loadRegistry?: () => Promise<TuiCommandEntry[]> } = {}): Command {
+export function tuiCommand(io: FrontDoorIo & {
+  loadRegistry?: () => Promise<TuiCommandEntry[]>;
+  sharedTarget?: () => Promise<string>;
+  attachShared?: (target: string) => Promise<number>;
+} = {}): Command {
   const cmd = new Command("tui")
-    .description("open mission control (the interactive terminal UI; same as bare `rig`)");
+    .description("open mission control (standalone by default; --shared joins the kernel terminal)")
+    .option("--shared", "join the kernel's existing shared terminal; detach with Ctrl-b d")
+    .addHelpText("after", "\nThe shared terminal keeps its view when you detach. On an older kernel, or after quitting the TUI, run rig tui in that terminal once. No agent or terminal is started by --shared.\nHerdr/cmux users can also open the kernel through rig terminal open kernel --provider herdr|cmux.");
 
   cmd
     .command("commands")
@@ -67,17 +70,32 @@ export function tuiCommand(io: FrontDoorIo & { loadRegistry?: () => Promise<TuiC
     });
 
   cmd
-    .action(async () => {
+    .action(async (opts: { shared?: boolean }) => {
       const stdoutIsTTY = io.stdoutIsTTY ?? process.stdout.isTTY === true;
-      if (!stdoutIsTTY) {
+      if (!stdoutIsTTY || (opts.shared && !(io.stdinIsTTY ?? process.stdin.isTTY === true))) {
         // Same TTY-awareness on stdout as the bare-`rig` front door — degrade, never
         // launch the interactive TUI into a redirected/piped stdout.
         const err = io.err ?? ((l: string) => process.stderr.write(l + "\n"));
         const exit = io.exit ?? ((c: number) => process.exit(c));
         for (const line of USAGE_LINES) err(line);
         err("");
-        err("mission control needs an interactive terminal (stdout is not a TTY)");
+        err("mission control needs an interactive terminal (shared entry requires TTY input and output)");
         exit(1);
+        return;
+      }
+      if (opts.shared) {
+        const err = io.err ?? ((line: string) => process.stderr.write(line + "\n"));
+        const exit = io.exit ?? ((code: number) => process.exit(code));
+        try {
+          const target = await (io.sharedTarget ?? sharedTuiTarget)();
+          err("Joining the kernel terminal. Ctrl-b d detaches and preserves the view; if a shell is shown, run rig tui once.");
+          const code = await (io.attachShared ?? attachSharedTui)(target);
+          if (code !== 0) err("Could not attach the kernel terminal. Inspect rig ps --nodes --rig kernel and rig status; standalone: rig tui.");
+          exit(code);
+        } catch (error) {
+          err(error instanceof Error ? error.message : String(error));
+          exit(1);
+        }
         return;
       }
       await openMissionControl(io);

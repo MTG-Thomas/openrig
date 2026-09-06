@@ -2,42 +2,42 @@
 
 A harness wraps a model. A rig wraps your harnesses. Define your agent team in YAML, boot it with one command. Claude Code and Codex in the same rig, managed as one system.
 
-OpenRig turns AI coding agents from a pile of terminal sessions into a persistent, organized team. A rig is the team that doesn't go away. If you've got tabs full of agents you're afraid to close, this is the layer you're missing: it's open source, it's local, and you're four commands away.
+OpenRig turns AI coding agents from a pile of terminal sessions into a persistent, organized team. Start with a repository and one useful change, then keep the team's work and context at the same addresses.
 
-The OpenRig UI is experimental and in maintenance mode. It is not under active development; support is best-effort. The CLI is the primary supported interface. Contributions welcome.
+The terminal UI is the shared dashboard; the CLI drives work and coordination. The older web UI is in maintenance mode with best-effort support.
 
 ```bash
 npm install -g @openrig/cli
-rig setup
-rig up product-team
-rig ui open
+rig setup --dry-run
+cd <your-repository>
+rig up first-project --cwd .
+rig tui --shared
 ```
 
-![OpenRig UI](https://openrig.dev/screenshots/remotion/hero-ui-workspace.png)
-
-It runs locally: a daemon, a SQLite database, a CLI, and a dashboard. The agents are ordinary Claude Code and Codex sessions in tmux. `product-team` is the fuller starter, 7 seats, 4 Claude and 3 Codex, with an orchestration HA pair plus development and review pods.
-
-Because 4 Claude seats run at once, single-plan users should expect provider throttling. For the light-footprint path, use `conveyor`, a 4-seat starter with 2 Claude and 2 Codex.
-
-```bash
-# Preview the smaller starter
-rig specs preview conveyor
-
-# Boot the light-footprint path
-rig up conveyor
-```
+`first-project` has two native Codex seats: an owner and a checker. The kernel
+provides separate operational support and a shared TUI terminal. Check
+`codex login status` and inspect `rig up first-project --cwd . --plan` before
+launching. [The guided first-use path](docs/reference/getting-started.md) covers
+readiness, a useful task, a reviewed result, Herdr/cmux terminals and recovery.
+Review setup's plan before applying `rig setup`: it checks both native
+harnesses and cmux. This starter requires tmux and authenticated Codex; the
+other harness and terminal provider are optional for its repository task.
 
 ## First Run
 
-After `product-team` boots, `rig ps` shows the fleet map and `rig ps --nodes --rig product-team` shows the running pods and seats. When you're ready to shut the team down and bring it back, use the same rig name:
+Check readiness, then give the owner a bounded outcome from your repository:
 
 ```bash
-rig ps
-rig down product-team
-rig up product-team
+rig ps --nodes --rig first-project
+rig send dev-owner@first-project 'Implement <one useful change>. Keep it local, verify the behavior, ask dev-check to check the exact candidate, and record the result and how I can try it.'
+rig queue list --rig first-project --limit 1000
 ```
 
-`rig ps` is a fleet glance. `rig down product-team` snapshots the team and stops it. `rig up product-team` brings it back by name from that snapshot.
+Read the final artifact and the review of its exact candidate. Return to the
+same owner for the next change. To leave the shared dashboard without stopping
+it, press Ctrl-b then d; `rig tui --shared` returns to that view. Plain `rig tui`
+opens an independent view. Closing a viewing terminal does not mean you should
+relaunch the team.
 
 ## Upgrading an existing instance to 0.5.9
 
@@ -96,7 +96,8 @@ Every agent runs in a tmux session you can attach to, inspect, and work with dir
 
 ## Starter Rigs
 
-OpenRig's hero starter is `product-team`, the fuller product-development rig:
+Use `first-project` for the focused first-use path. `product-team` is an optional
+larger product-development example:
 
 ```bash
 rig specs preview product-team

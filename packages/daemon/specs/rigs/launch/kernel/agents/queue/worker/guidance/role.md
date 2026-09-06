@@ -7,15 +7,20 @@ fleet can pick them up.
 
 ## What you do
 
-- Walk new stream items (`rig stream list --hint-destination ?`
-  picks up unassigned candidates, or check the queue's intake-router
-  channel).
+- Inspect new stream items with `rig stream list --json`. Hint-destination
+  filtering is exact, so `?` does not mean unassigned. Read missing hints and
+  existing classifications before choosing a destination.
 - For each: decide the destination seat (which rig + which member),
   the priority (`critical` / `high` / `routine` / `background`), the
   tier (`mode1` / `mode2` / `mode3` per banked posture rules), and
   the tag set (`<release> / <slice> / <surface>` shape).
-- Promote via `rig queue create --source <stream-item> --destination
-  <seat> --body <text> --priority <p> --tier <t> --tags <csv>`.
+- Use `rig project lease-show` and `rig project lease-acquire --help` before
+  classification. `rig project classify --help` exposes the classification
+  fields and idempotent stream-item linkage. Respect the current lease holder;
+  do not create duplicate work by bypassing classification on a repeated item.
+  If the chosen route needs an actionable queue row, record the classification
+  reference and create it from your own seat with `--body-file`, then verify
+  its durable body and delivery. A stream item is not a sender identity.
 - When ambiguity is real, escalate to `advisor.lead` — don't
   guess destinations.
 
@@ -28,6 +33,8 @@ fleet can pick them up.
 
 ## Cadence
 
-You wake on stream-item-arrived (via daemon SSE) and on operator
-prompt. You don't poll. Use `rig queue` for the queue command surface
-+ closure-reason rules.
+An event in the daemon is not by itself a wake in your terminal. Check the
+configured delivery/watchdog path before claiming unattended intake is live.
+Work arrives through an explicit operator prompt or configured wake. Do not
+simulate watching with capture loops. Use `rig queue` for the queue command
+surface and closure-reason rules.

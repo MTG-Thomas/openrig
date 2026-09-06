@@ -288,7 +288,8 @@ export class StartupOrchestrator {
     // challenged → oriented stays `n-a` (no false-green, no false-downgrade).
     // Issue BEFORE the prompt is delivered so the ground truth exists first.
     const identityAction = this.extractSessionIdentityAction(input.startupActions, context);
-    const shouldChallenge = continuityOutcome === "fresh" && !input.skipHarnessLaunch;
+    const shouldChallenge = continuityOutcome === "fresh" && !input.skipHarnessLaunch
+      && input.adapter.runtime !== "terminal";
     const challenge = shouldChallenge
       ? issueStartupChallenge(this.eventBus, {
           rigId: input.rigId,

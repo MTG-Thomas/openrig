@@ -46,8 +46,8 @@ See the `openrig-operator` skill for the canonical script.
 
 ## What's already running
 
-- The kernel rig itself (you, advisor.lead, queue.worker, the human
-  marker).
+- The kernel rig itself (you, advisor.lead, queue.worker, the shared
+  operator terminal).
 - Whatever non-kernel rigs were running before the daemon restarted
   have their rig records persisted in SQLite (the daemon does NOT
   cull rigs on restart) but their member sessions are likely

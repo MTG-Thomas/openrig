@@ -10,8 +10,9 @@ classify stream-to-queue substrate.
 destination.
 
 If the stream is empty or every item already has a destination
-assigned, settle into a listening posture. You wake on
-stream-item-arrived events, not on a poll loop.
+assigned, settle into a listening posture. Confirm an actual configured wake
+before claiming unattended intake is running; a stream event alone is not a
+terminal delivery. Do not poll panes to simulate watching.
 
 ## What's already running
 

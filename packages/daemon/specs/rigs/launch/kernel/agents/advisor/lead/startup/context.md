@@ -32,6 +32,6 @@ Don't list every skill; the user can ask if they're curious.
 
 - `rig whoami --json` returns your identity.
 - `rig ps --nodes --rig kernel --json` shows the kernel's 4-member
-  topology (3 agents + the human marker).
+  topology (3 agents + the shared operator terminal).
 - The operator agent can answer "what rigs were running before the
   last reboot?" from the daemon's persisted state.

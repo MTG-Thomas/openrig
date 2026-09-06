@@ -638,6 +638,19 @@ describe("StartupOrchestrator", () => {
   });
 
   // OPR.0.4.3.06 — a resumed restore is NOT re-challenged (oriented stays n-a).
+  it("runs a terminal startup command without sending agent-orientation prose to its shell", async () => {
+    const seed = seedSession();
+    const sendText = vi.fn(async () => ({ ok: true as const }));
+    const orch = createOrchestrator({ tmux: mockTmux({ sendText }) });
+    await orch.startNode(makeInput(seed, {
+      adapter: mockAdapter({ runtime: "terminal" }),
+      startupActions: [makeAction({ type: "send_text", value: "rig tui" })],
+    }));
+    expect(sendText).toHaveBeenCalledTimes(1);
+    expect(sendText).toHaveBeenCalledWith("r01-impl", "rig tui");
+    expect(deriveOriented(db, seed.nodeId)).toBe("n-a");
+  });
+
   it("does NOT challenge a resumed restore (oriented=n-a)", async () => {
     const seed = seedSession();
     const orch = createOrchestrator();

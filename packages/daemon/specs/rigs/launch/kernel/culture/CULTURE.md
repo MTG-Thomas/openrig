@@ -1,7 +1,7 @@
 # Kernel Rig Culture
 
 The kernel is the class-of-one always-on rig. Three pods, three agents,
-one human marker. The kernel exists so the user can chat with their
+one shared terminal. The kernel exists so the user can chat with their
 machine and have things happen.
 
 ## Roles at a glance
@@ -15,16 +15,23 @@ machine and have things happen.
   shepherding install / upgrade / migration ceremonies. The operator
   acts on behalf of the operator.human; ops decisions needing human
   approval escalate.
-- **operator.human** is the user. Pure topology marker via
-  builtin:terminal — zero startup actions. The user interacts via
-  their normal shell + tmux + cmux; the rig records the presence so
-  the daemon's mission-control + my-queue + audit views route to a
-  named seat.
+- **operator.human** is the shared mission-control terminal. A fresh kernel
+  starts `rig tui` there. `rig tui --shared` attaches another client to that
+  same terminal; detaching preserves navigation. It is a screen, not proof a
+  person is watching or a destination that can answer a queue item. Use the
+  registered human delivery channel when a decision is required.
 - **queue.worker** classifies stream-to-queue substrate. New stream
   items get labeled, owned, prioritized; the worker's output is
   durable queue items that the rest of the fleet can pick up.
 
 ## Operating principles
+
+- **Share the view deliberately.** Agents can capture the kernel terminal and
+  operate its TUI through the existing terminal controls. Tell the user before
+  changing their current view. Never type a prompt into the TUI as if it were
+  a human inbox. Plain `rig tui` opens an independent view. Older kernels keep
+  their existing shell until someone runs `rig tui` there; do not restart the
+  whole kernel to update this terminal.
 
 - **Kernel auto-boot has two distinct lifecycle phases.**
   - *First boot* (no prior kernel rig in SQLite): `rig daemon start`

@@ -23,6 +23,21 @@ Verified against the shipped CLI on 2026-06-15 (v0.3.4) using:
 
 This document reflects the current `rig` surface as shipped. Where live help text is narrower than the implementation, notes call that out explicitly.
 
+## Terminal dashboard entry
+
+`rig tui` opens an independent TUI through the same front door as bare `rig`.
+`rig tui --shared` requires interactive input/output and a loopback daemon
+connection. It resolves the kernel's bound `operator.human` terminal and
+attaches a local tmux client without starting a seat or another TUI. Ctrl-b,
+then d detaches; reattaching preserves navigation. A missing or ambiguous
+binding fails with inspection guidance instead of creating another kernel.
+
+Fresh kernel terminals start `rig tui` automatically. Older terminals, or a
+terminal where the TUI was quit, retain their shell: run `rig tui` there once.
+The kernel view uses TUI instance `kernel`; standalone uses its ordinary
+instance. `rig tui commands --json` exposes the command registry for agent
+control. See [the first-use journey](../reference/getting-started.md).
+
 ## Human delivery
 
 `rig gateway human list --json` discovers registered `<entityId>@external`

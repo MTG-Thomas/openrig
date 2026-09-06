@@ -126,6 +126,10 @@ export async function probeFrontDoor(input: {
       return { state: "diagnostic", diagnostic: transportDiagnostic("response", `daemon returned HTTP ${res.status}`) };
     }
     if (!identityQuery) return { state: "ready" };
+    const identity = (res.data as { identity?: { runtime?: string; agentRef?: string } } | null)?.identity;
+    // Infrastructure terminals have no harness permission configuration to
+    // diagnose. This permits the TUI; it does not relabel unknown diagnostics.
+    if (identity?.runtime === "terminal" && identity.agentRef === "builtin:terminal") return { state: "ready" };
     const diagnostic = (res.data as { permissionDrift?: FrontDoorPermissionDiagnostic } | null)?.permissionDrift;
     if (!diagnostic) {
       return { state: "diagnostic", diagnostic: transportDiagnostic("response", "daemon response omitted permission diagnostics") };
@@ -195,7 +199,8 @@ async function defaultLaunchTui(): Promise<number> {
   const entry = resolveTuiPath(import.meta.dirname);
   if (!entry) throw new Error("mission-control TUI is not installed (no tui/dist/main.js next to this CLI)");
   return await new Promise<number>((resolve, reject) => {
-    const child = spawn(process.execPath, [entry], { stdio: "inherit" });
+    const sharedKernel = envValue(process.env, "OPENRIG_SESSION_NAME", "RIGGED_SESSION_NAME") === "operator-human@kernel";
+    const child = spawn(process.execPath, [entry, ...(sharedKernel ? ["--instance", "kernel"] : [])], { stdio: "inherit" });
     child.on("error", reject);
     child.on("exit", (code) => resolve(code ?? 0));
   });

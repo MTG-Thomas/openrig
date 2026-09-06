@@ -212,13 +212,16 @@ describe("rig setup", () => {
     const upIdx = out.indexOf("rig up");
     const statusIdx = out.indexOf("rig status");
     const wsIdx = out.indexOf("rig workspace doctor");
-    const wfIdx = out.indexOf("rig workflow instantiate");
+    const wfIdx = out.indexOf("rig workflow specs");
     const scopeIdx = out.indexOf("rig scope");
     expect(upIdx).toBeGreaterThan(-1);
     expect(statusIdx).toBeGreaterThan(upIdx);
     expect(wsIdx).toBeGreaterThan(statusIdx);
     expect(wfIdx).toBeGreaterThan(wsIdx);
-    expect(scopeIdx).toBeGreaterThan(wfIdx);
+    expect(scopeIdx).toBeGreaterThan(wsIdx);
+    expect(out).toContain("rig up first-project --cwd .");
+    expect(out).toContain("rig send dev-owner@first-project");
+    expect(out).toContain("rig tui --shared");
     expect(out).toContain("docs/reference/getting-started.md");
     // no magic mega-command - the path is existing verbs only
     expect(out).not.toMatch(/rig (journey|onboarding)\b/);
