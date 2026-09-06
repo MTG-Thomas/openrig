@@ -125,6 +125,63 @@ describe("rig gateway human lifecycle verbs (S12)", () => {
     expect(out.humans[0]!.deliveryReadiness).toMatchObject({ state: "ready", configured: true, enabled: true, active: true, ready: true });
   });
 
+  it("preserves readiness uncertainty through real HTTP in list/show JSON and human output", async () => {
+    const valid = await ready();
+    let status = 200;
+    let body: unknown;
+    let requests = 0;
+    const server = createServer((req, res) => {
+      expect(req.url).toBe("/api/gateway/human/mike/readiness");
+      requests++;
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const previousUrl = process.env.OPENRIG_URL;
+    process.env.OPENRIG_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const cases = [
+      { status: 503, body: { error: "human_registry_unavailable", message: "fixture projection unavailable" }, detail: /HTTP 503.*human_registry_unavailable/ },
+      { status: 200, body: { ok: true }, detail: /HTTP 200.*malformed/i },
+      { status: 200, body: { ok: false, readiness: valid }, detail: /HTTP 200.*malformed/i },
+      { status: 200, body: { ok: true, readiness: { ...valid, enabled: "true" } }, detail: /HTTP 200.*malformed/i },
+      { status: 200, body: { ok: true, readiness: { ...valid, state: "indeterminate" } }, detail: /HTTP 200.*malformed/i },
+      { status: 200, body: { ok: true, readiness: valid }, detail: null },
+    ];
+    try {
+      for (const entry of cases) {
+        status = entry.status;
+        body = entry.body;
+        for (const command of [["list"], ["show", "mike"]]) {
+          for (const json of [true, false]) {
+            logSpy.mockClear();
+            const p = createProgram(); // default helper and real DaemonClient, no readiness injection
+            p.exitOverride();
+            await p.parseAsync(["node", "rig", "gateway", "human", ...command, ...(json ? ["--json"] : [])]);
+            expect(process.exitCode).toBeUndefined();
+            const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+            if (json) {
+              const result = JSON.parse(output);
+              const readiness = (command[0] === "list" ? result.humans[0] : result.record).deliveryReadiness;
+              if (!entry.detail) expect(readiness).toEqual(valid);
+              else {
+                expect(readiness).toMatchObject({ state: "indeterminate", configured: null, enabled: null, active: null, ready: false, nextAction: "rig status" });
+                expect(readiness.reason).toMatch(entry.detail);
+              }
+            } else if (entry.detail) {
+              expect(output).toContain("indeterminate");
+              expect(output).toMatch(entry.detail);
+              expect(output).toContain("next: rig status");
+            } else expect(output).toMatch(/delivery(?:-readiness: |=)ready/);
+          }
+        }
+      }
+      expect(requests).toBe(cases.length * 4);
+    } finally {
+      if (previousUrl === undefined) delete process.env.OPENRIG_URL; else process.env.OPENRIG_URL = previousUrl;
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it("A1 advisory receipt: with several hand-authored fragments list --json renders all + the 0.5.7 advisory", async () => {
     // Fix-r1 F1: the SECOND human arrives by hand-authoring (the registry surface), never
     // through the add verb — the verb is the single-human boundary.

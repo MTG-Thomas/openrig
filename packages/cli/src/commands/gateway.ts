@@ -50,10 +50,25 @@ export type HumanReadinessLookup = (entityId: string) => Promise<HumanReadinessV
 export async function daemonHumanReadiness(entityId: string): Promise<HumanReadinessView> {
   try {
     const { DaemonClient } = await import("../client.js");
-    const response = await new DaemonClient().get<{ ok: boolean; readiness: HumanReadinessView }>(
+    const response = await new DaemonClient().get<{ ok?: boolean; readiness?: HumanReadinessView; error?: unknown; message?: unknown }>(
       `/api/gateway/human/${encodeURIComponent(entityId)}/readiness`,
     );
-    return response.data.readiness;
+    if (response.status !== 200) {
+      const detail = [response.data?.error, response.data?.message].filter((value) => typeof value === "string").join(": ");
+      throw new Error(`HTTP ${response.status}: ${detail || "readiness request refused"}`);
+    }
+    const readiness = response.data?.readiness;
+    if (response.data?.ok !== true || !readiness
+      || !["ready", "not-ready", "indeterminate"].includes(readiness.state)
+      || [readiness.configured, readiness.enabled, readiness.active].some((value) => value !== null && typeof value !== "boolean")
+      || readiness.ready !== (readiness.state === "ready")
+      || typeof readiness.reason !== "string" || !readiness.reason.trim()
+      || (readiness.nextAction !== null && typeof readiness.nextAction !== "string")
+      || (readiness.connector !== undefined && (!readiness.connector || typeof readiness.connector.kind !== "string" || typeof readiness.connector.ref !== "string"))
+      || (readiness.checkedAt !== undefined && typeof readiness.checkedAt !== "string")) {
+      throw new Error("HTTP 200: malformed delivery readiness response");
+    }
+    return readiness;
   } catch (error) {
     return {
       state: "indeterminate",
