@@ -29,6 +29,7 @@ import { makeThreadRouteResolver } from "./thread-routing.js";
 import { startSocketInbound, type SocketInboundHandle, type WsLike } from "./socket-inbound.js";
 import { loadHumanRegistry, resolveSlackHandle } from "../human-registry.js";
 import type { QueueRepository } from "../../queue-repository.js";
+import { parseSessionName } from "../../session-name.js";
 import type { FetchImpl } from "./slack-api.js";
 import { ownerNotificationLevelAtLeast } from "../../queue-transition-log.js";
 // OPR.0.5.6.1 — the delivery rules engine: ONE decision per message replaces
@@ -83,7 +84,30 @@ export function makeHumanReplyResolver(
       if ((error as { code?: string }).code !== "qitem_not_leg1_parked") throw error;
       const alreadyResolved = queueRepo.transitionLog.listForQitem(input.qitemId)
         .some((transition) => transition.ownerNotificationKind === "human-decision-resolved");
-      return alreadyResolved ? "already-resolved" : "not-applicable";
+      if (alreadyResolved) return "already-resolved";
+
+      // A direct human request is the inverse of the older park shape: the
+      // human owns the pending row and the originating agent receives the
+      // correlated inbound row. Closing the request here records the durable
+      // disposition; the inbound create is already the one wake back to the
+      // source, so a second nudge here would duplicate attention.
+      const direct = queueRepo.getById(input.qitemId);
+      if (
+        direct?.state !== "pending" ||
+        direct.destinationSession !== input.actorSession ||
+        parseSessionName(direct.destinationSession).kind !== "external"
+      ) {
+        return "not-applicable";
+      }
+      queueRepo.update({
+        qitemId: input.qitemId,
+        actorSession: input.actorSession,
+        state: "done",
+        closureReason: "no-follow-on",
+        transitionNote: "direct human reply received",
+        ownerNotificationKind: "human-decision-resolved",
+      });
+      return "resolved";
     }
   };
 }

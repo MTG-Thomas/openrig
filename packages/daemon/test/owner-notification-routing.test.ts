@@ -527,4 +527,113 @@ describe("S14 owner notifications — system notices, not remembered tags", () =
       replayWire.stop();
     }
   });
+
+  it("resolves a direct human-owned request and wakes its originating seat exactly once", async () => {
+    let nudges = 0;
+    const directRepo = new QueueRepository(db, bus, {
+      validateRig: () => true,
+      loadHumanRegistry: () => registry,
+      transport: {
+        async send() {
+          nudges += 1;
+          return { ok: true, verified: true };
+        },
+      },
+    });
+    const direct = await directRepo.create({
+      sourceSession: "driver@rig",
+      destinationSession: "human-founder@external",
+      body: "Choose the release option.",
+      summary: "Release choice",
+      evidenceRef: "proof/release-choice.md",
+      tier: "human-gate",
+      nudge: false,
+    });
+    const map = new ThreadSeatMap(db);
+    map.open({
+      threadTs: "T-DIRECT",
+      channel: "C-OWNER",
+      human: "human-founder@external",
+      seat: "driver@rig",
+      conversationId: direct.qitemId,
+    });
+    const resolver = makeHumanReplyResolver(directRepo, new MissionControlWriteContract({
+      db,
+      eventBus: bus,
+      queueRepo: directRepo,
+      actionLog: new MissionControlActionLog(db),
+    }));
+    const router = new InboundRouter({
+      queue: makeQueuePorts(directRepo, { loadHumanRegistry: () => registry }),
+      seen: new SeenStore(join(home, "direct-inbound-seen.jsonl")),
+      deadLetter: new DeadLetterStore<SlackEvent>(join(home, "direct-inbound-dead.jsonl")),
+      destination: "operator-agent@kernel",
+      resolveSender: () => ({ admitted: true, source: "human-founder@external" }),
+      resolveRoute: makeThreadRouteResolver({ map, unroutedDestination: "operator-agent@kernel" }),
+      resolveHumanReply: resolver,
+    });
+    const reply: SlackEvent = {
+      type: "message",
+      user: "UFOUNDER",
+      text: "Use option A.",
+      ts: "200.2",
+      thread_ts: "T-DIRECT",
+      channel: "C-OWNER",
+    };
+
+    const beforeRows = directRepo.list({ limit: 100 }).length;
+    expect(await router.route(reply)).toMatchObject({
+      landed: true,
+      correlationQitemId: direct.qitemId,
+      replyResolution: "resolved",
+    });
+    const afterRows = directRepo.list({ limit: 100 }).length;
+    expect(directRepo.getById(direct.qitemId)).toMatchObject({
+      state: "done",
+      closureReason: "no-follow-on",
+    });
+    const resolved = directRepo.listTransitions(direct.qitemId).filter((transition) =>
+      transition.ownerNotificationKind === "human-decision-resolved",
+    );
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]!.transitionNote).not.toContain(reply.text!);
+    expect(afterRows - beforeRows).toBe(1);
+    expect(nudges).toBe(1);
+
+    expect(await router.route(reply)).toMatchObject({ landed: false, disposition: "ignored", reason: "dup" });
+    expect(directRepo.list({ limit: 100 })).toHaveLength(afterRows);
+    expect(directRepo.listTransitions(direct.qitemId).filter((transition) =>
+      transition.ownerNotificationKind === "human-decision-resolved",
+    )).toHaveLength(1);
+    expect(nudges).toBe(1);
+
+    const ordinary = await directRepo.create({
+      sourceSession: "requester@rig",
+      destinationSession: "driver@rig",
+      body: "ordinary",
+      nudge: false,
+    });
+    expect(await resolver({
+      qitemId: ordinary.qitemId,
+      actorSession: "human-founder@external",
+      decision: "not this row",
+    })).toBe("not-applicable");
+    expect(directRepo.getById(ordinary.qitemId)?.state).toBe("pending");
+
+    const mismatched = await directRepo.create({
+      sourceSession: "driver@rig",
+      destinationSession: "human-founder@external",
+      body: "another choice",
+      summary: "Another choice",
+      evidenceRef: "proof/another-choice.md",
+      tier: "human-gate",
+      nudge: false,
+    });
+    expect(await resolver({
+      qitemId: mismatched.qitemId,
+      actorSession: "human-other@external",
+      decision: "not this human",
+    })).toBe("not-applicable");
+    expect(directRepo.getById(mismatched.qitemId)?.state).toBe("pending");
+  });
 });
