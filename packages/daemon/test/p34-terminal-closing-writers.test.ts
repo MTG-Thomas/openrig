@@ -136,7 +136,10 @@ function makeHarness(): Harness {
   // stages an intent, not whether the store exists. A harness without an outbox
   // could not tell "not staged" from "nowhere to stage it".
   repo.attachOutbox(outbox);
-  const runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo: repo });
+  const runtime = new WorkflowRuntime({
+    db, eventBus: bus, queueRepo: repo,
+    exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" },
+  });
   const mc = new MissionControlWriteContract({
     db,
     eventBus: bus,

@@ -18,6 +18,7 @@ import type { CmuxTransportFactory } from "../src/adapters/cmux.js";
 import type { ExecFn } from "../src/adapters/tmux.js";
 import type { RuntimeAdapter } from "../src/domain/runtime-adapter.js";
 import { RigSpecCodec } from "../src/domain/rigspec-codec.js";
+import { DEFAULT_SYSTEM_WORLD_MANIFEST } from "../src/domain/system-world.js";
 
 function saveEnv(...names: string[]): Record<string, string | undefined> {
   return Object.fromEntries(names.map((name) => [name, process.env[name]]));
@@ -141,8 +142,17 @@ describe("createDaemon startup composition", () => {
       `name: impl\nversion: "1.0.0"\nresources:\n  skills: []\nprofiles:\n  default:\n    uses:\n      skills: []`,
     );
 
-    const { db, deps } = await createDaemon({ cmuxFactory, tmuxExec });
+    // A real selected World is required before dispatch. Supply the shipped
+    // selector privately instead of relying on the operator's installation.
+    const worldPath = path.join(rigRoot, "world.yaml");
+    fs.writeFileSync(worldPath, DEFAULT_SYSTEM_WORLD_MANIFEST);
+    const saved = saveEnv("OPENRIG_CONTEXT_SYSTEM_WORLD");
+    process.env.OPENRIG_CONTEXT_SYSTEM_WORLD = worldPath;
+    let db: ReturnType<typeof createDb> | undefined;
     try {
+      const daemon = await createDaemon({ cmuxFactory, tmuxExec });
+      db = daemon.db;
+      const { deps } = daemon;
       // Reach the PRODUCTION instantiator's private adapters map (startup.ts:710).
       const adapters = (deps.podInstantiator as unknown as {
         deps: { adapters: Record<string, RuntimeAdapter> };
@@ -167,12 +177,13 @@ describe("createDaemon startup composition", () => {
         edges: [],
       });
 
-      await deps.podInstantiator.instantiate(specYaml, rigRoot);
+      const result = await deps.podInstantiator.instantiate(specYaml, rigRoot);
 
       // Load-bearing assertion: dispatch reached the stub adapter's project() (startup-orchestrator.ts:130).
-      expect(projectSpy, "instantiate must dispatch project() to the production stub adapter").toHaveBeenCalled();
+      expect(projectSpy, `instantiate must dispatch project() to the production stub adapter: ${JSON.stringify(result)}`).toHaveBeenCalled();
     } finally {
-      db.close();
+      restoreEnv(saved);
+      db?.close();
       fs.rmSync(rigRoot, { recursive: true, force: true });
     }
   }, 30000); // harness budget (cold createDaemon compose), not product readiness

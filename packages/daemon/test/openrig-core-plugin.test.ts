@@ -170,8 +170,8 @@ describe("openrig-core plugin — skills (HG-2.1 skill content per agentskills.i
     expect(workflows).toMatch(/agent[^\n]*interpretation[^\n]*sequencing[^\n]*effect verification/i);
     expect(workflows).toMatch(/human[^\n]*destructive ambiguity[^\n]*product policy/i);
     expect(workflows).toMatch(/(?:closed[^\n]*state space|state space[^\n]*closed)/i);
-    expect(workflows).toContain("Agent-Operated Migration");
-    expect(workflows).toContain("Slice 05");
+    expect(workflows).toContain("skills/core/openrig-upgrade/SKILL.md");
+    expect(workflows).toContain("bounded inspection, backup, plugin-refresh and migration helpers");
     expect(workflows).toContain("agent-operated-software");
 
     const softwareDescription = description(software);
@@ -278,7 +278,8 @@ describe("openrig-core plugin — skills (HG-2.1 skill content per agentskills.i
     const specTemplate = fs.readFileSync(nodePath.join(skillRoot, "templates", "SPEC.md"), "utf-8");
 
     expect(skill).toContain("ships in the mode-neutral `openrig-core` plugin");
-    expect(skill).toContain("PROGRESS reconciliation (2026-08-26)");
+    expect(skill).toContain("Progress checklists:");
+    expect(skill).toContain("derived at render time");
     expect(skill).toContain("authored acceptance marks");
     expect(skill).not.toContain("mode plugin's operating-model skill");
     expect(specTemplate).toContain("PROGRESS.md is the authored acceptance checklist");

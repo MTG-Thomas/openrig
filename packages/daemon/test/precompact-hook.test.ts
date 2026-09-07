@@ -44,14 +44,24 @@ const BRIDGE_SCRIPT = resolve(
 );
 const APPEND_MARKER = "Operator-configured post-compaction restore instruction";
 
-function runHook(openrigHome: string): { stdout: string; stderr: string; status: number | null } {
+function runHook(openrigHome: string, withTranscript = true): { stdout: string; stderr: string; status: number | null } {
+  const fixtureRoot = dirname(openrigHome);
+  const transcript = join(fixtureRoot, "transcript.jsonl");
+  if (withTranscript) writeFileSync(transcript, `${JSON.stringify({
+    sessionId: "precompact-fixture",
+    cwd: fixtureRoot,
+    message: { role: "user", content: "Resume the private compaction fixture." },
+  })}\n`);
   const result = spawnSync(process.execPath, [HOOK_SCRIPT], {
-    input: JSON.stringify({}),
+    input: JSON.stringify({ cwd: fixtureRoot, ...(withTranscript ? { transcript_path: transcript } : {}) }),
     encoding: "utf8",
     env: {
       ...process.env,
+      HOME: fixtureRoot,
+      CLAUDE_CONFIG_DIR: join(fixtureRoot, ".claude"),
       OPENRIG_HOME: openrigHome,
       OPENRIG_SESSION_NAME: "test-seat@kernel",
+      OPENRIG_COMPACTION_OUT_ROOT: join(fixtureRoot, "packets"),
       // Ensure RIGGED_HOME doesn't pre-empt OPENRIG_HOME selection.
       RIGGED_HOME: undefined,
     } as NodeJS.ProcessEnv,
@@ -67,7 +77,7 @@ function runBridge(openrigHome: string, input: Record<string, unknown> = {
   hook_event_name: "UserPromptSubmit",
 }): { stdout: string; stderr: string; status: number | null } {
   const result = spawnSync(process.execPath, [BRIDGE_SCRIPT], {
-    input: JSON.stringify(input),
+    input: JSON.stringify({ transcript_path: join(dirname(openrigHome), "transcript.jsonl"), ...input }),
     encoding: "utf8",
     env: {
       ...process.env,
@@ -162,10 +172,17 @@ describe("precompact-hook.mjs (slice 27 custom message append)", () => {
     const markerPath = join(markerDir, "test-seat@kernel.json");
     expect(existsSync(markerPath)).toBe(true);
     const marker = JSON.parse(readFileSync(markerPath, "utf8"));
-    expect(marker.outputDir).toMatch(/^\/tmp\/claude-compaction-restore\//);
+    expect(dirname(marker.outputDir)).toBe(join(tmpDir, "packets"));
     expect(marker.postCompactInstruction).toContain("Inline restore instruction");
     expect(marker.postCompactInstruction).toContain("Read the queue before resuming.");
     expect(marker.deliveryCount).toBe(0);
+
+    const wrongTranscript = runBridge(openrigHome, {
+      hook_event_name: "UserPromptSubmit", transcript_path: join(tmpDir, "other.jsonl"),
+    });
+    expect(wrongTranscript.status).toBe(0);
+    expect(wrongTranscript.stdout).toBe("");
+    expect(JSON.parse(readFileSync(markerPath, "utf8")).deliveryCount).toBe(0);
 
     const bridge = runBridge(openrigHome);
     expect(bridge.status).toBe(0);
@@ -281,6 +298,16 @@ describe("precompact-hook.mjs (slice 27 custom message append)", () => {
     expect(payload.systemMessage).not.toContain(APPEND_MARKER);
     expect(payload.systemMessage).toContain("Pre-compaction restore seed packet prepared");
   });
+
+  it("missing transcript is reported without inventing a restore packet or borrowing ambient history", () => {
+    const { stdout, status } = runHook(openrigHome, false);
+    expect(status).toBe(0);
+    expect(JSON.parse(stdout).systemMessage).toContain("could not find a Claude JSONL transcript");
+    const markerDir = join(openrigHome, "compaction", "restore-pending");
+    expect(existsSync(join(markerDir, "test-seat@kernel.expected.json"))).toBe(true);
+    expect(existsSync(join(markerDir, "test-seat@kernel.json"))).toBe(false);
+    expect(existsSync(join(tmpDir, "packets"))).toBe(false);
+  });
 });
 
 // OPR.0.4.1.09 (part 2 guard blocker de2d25c7): the product-owned PreCompact writer must
@@ -309,7 +336,7 @@ describe("OPR.0.4.1.09 — PreCompact writer generates a real packet + records r
     const { status } = runHook(openrigHome);
     expect(status).toBe(0);
     const marker = readMarker();
-    expect(marker["outputDir"]).toMatch(/^\/tmp\/claude-compaction-restore\//);
+    expect(dirname(marker["outputDir"] as string)).toBe(join(tmpDir, "packets"));
     // The writer RAN restore-from-jsonl, so the packet directory actually exists on disk.
     expect(existsSync(marker["outputDir"] as string)).toBe(true);
   });

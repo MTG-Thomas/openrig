@@ -67,16 +67,16 @@ const EXPECTED_PUBLIC_CLAIM_IDS = [
 ] as const;
 
 const EXPECTED_COVERAGE_MAP_ROWS = [
-  "| product | `project-world/identity/product-identity-and-instincts.md#current-position` |",
-  "| topology | `project-world/craft/topology-design-judgment.md#judgment-rules` |",
+  "| product | `world-public/boundaries.md#this-pack-does-not-cover` |",
+  "| topology | `skills/core/openrig-architect/SKILL.md` |",
   "| context | `world-public/build-your-world.md#separate-kinds-tag-regions` |",
   "| skill | `onboarding-width/public-reference-material.md#the-one-you-read-rather-than-consult` |",
   "| queue/custody | `onboarding-width/public-what-you-can-do.md#making-work-outlive-you` |",
   "| source/worktree | `onboarding-width/public-reference-material.md#the-command-surface-docs-as-built-in-the-source-repo` |",
-  "| proof/review | `project-world/craft/seam-first-negative-proof.md#the-discipline` |",
-  "| lifecycle/release | `project-world/project-authority/release-ownership.md` |",
+  "| proof/review | `skills/process/verification-before-completion/SKILL.md` |",
+  "| lifecycle/release | `skills/core/rig-lifecycle/SKILL.md` |",
   "| continuity/recovery | `onboarding-width/public-what-you-can-do.md#when-something-is-broken` |",
-  "| host-boundary | `project-world/project-authority/lifecycle-authority.md` |",
+  "| host-boundary | `skills/core/cross-host-rig-commands/SKILL.md` |",
 ] as const;
 
 const EXPECTED_MANIFEST_CLAIMS = [
@@ -321,6 +321,7 @@ describe("public world pack", () => {
   it("keeps the Codex coverage map bound to the ten exact authoritative addresses", () => {
     const prose = readFileSync(join(publicWorldDir(), "build-your-world.md"), "utf8");
     for (const row of EXPECTED_COVERAGE_MAP_ROWS) expect(prose).toContain(row);
+    expect(prose).not.toContain("project-world/");
     expect(prose.match(/^\| (?:product|topology|context|skill|queue\/custody|source\/worktree|proof\/review|lifecycle\/release|continuity\/recovery|host-boundary) \|/gm)).toHaveLength(10);
   });
 

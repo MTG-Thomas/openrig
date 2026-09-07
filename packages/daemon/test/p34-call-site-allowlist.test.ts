@@ -64,8 +64,8 @@ const SANCTIONED: Record<string, { sites: number; why: string }> = {
     why: "legacy terminal close + gate park; dependency-graph packet close + dependency-graph gate park (parallel successors remain in the same transaction)",
   },
   "domain/workflow-runtime.ts": {
-    sites: 5,
-    why: "entry-gate park; explicit abort closes every live packet; no-successor exception close; packet-addressed route close; route re-park",
+    sites: 6,
+    why: "entry-gate park; explicit abort closes every live packet; no-successor exception close; packet-addressed route close; route re-park; reconcileStuckExceptions closes only recovered overdue occurrences with no-follow-on (59d252f6; workflow-exception-stuck.test.ts)",
   },
 };
 
@@ -202,9 +202,9 @@ describe("P34 RED 3 — the enumeration guard (rev 2: call-site granularity)", (
   it("the LIVE corpus matches the sanctioned set exactly, by CALL SITE", () => {
     const result = checkCallSites(realCorpus(), SANCTIONED);
     expect(result.violations).toEqual([]);
-    // Counts SITES, not files. 11 sites across 3 files.
+    // Counts SITES, not files. 12 sites across 3 files.
     expect(result.examined).toBe(TOTAL_SITES);
-    expect(result.examined).toBe(11);
+    expect(result.examined).toBe(12);
     expect(result.vacuous).toBe(false);
   });
 
@@ -308,6 +308,6 @@ describe("P34 RED 5 — KNOWN-NEGATIVE: a guard that examines nothing must FAIL"
   it("the LIVE run is NOT vacuous and examined the expected number of SITES", () => {
     const live = checkCallSites(realCorpus(), SANCTIONED);
     expect(live.vacuous).toBe(false);
-    expect(live.examined).toBe(11);
+    expect(live.examined).toBe(12);
   });
 });

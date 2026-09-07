@@ -274,7 +274,12 @@ describe("OPR.0.5.6.1 §3 — the gateway consults the engine before dispatch", 
     migrate(db, ALL_MIGRATIONS);
     ensureFinalColumns(db);
     bus = new EventBus(db);
-    repo = new QueueRepository(db, bus, { validateRig: () => true });
+    // Classify the park at write time against the same private human identity
+    // used by the gateway reader. Delivery preferences are selected per test.
+    repo = new QueueRepository(db, bus, {
+      validateRig: () => true,
+      loadHumanRegistry: () => registryWith({}),
+    });
     home = mkdtempSync(join(tmpdir(), "s01-rules-"));
   });
   afterEach(() => {
@@ -401,7 +406,10 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
     db = createDb();
     migrate(db, ALL_MIGRATIONS);
     ensureFinalColumns(db);
-    repo = new QueueRepository(db, new EventBus(db), { validateRig: () => true });
+    repo = new QueueRepository(db, new EventBus(db), {
+      validateRig: () => true,
+      loadHumanRegistry: () => registryWith({}),
+    });
     home = mkdtempSync(join(tmpdir(), "s01-digest-"));
   });
   afterEach(() => {
