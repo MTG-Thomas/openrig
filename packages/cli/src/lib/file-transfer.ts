@@ -312,7 +312,7 @@ export function classifyRsyncResult(exitCode: number | null, stdout: string, std
       exitCode,
       stdout,
       stderr,
-      hint: "See openrig-work/field-notes/2026-04-29-l4-3-d6-claude-keychain-over-ssh-diagnostic.md for guidance on Keychain-over-SSH issues.",
+      hint: "Check the registered host/user and the SSH error. For authentication errors, inspect availability of the intended key, agent or Keychain in this process. For host-key or signature-algorithm errors, confirm the expected fingerprint or supported key type with the host owner; keep host verification enabled.",
     };
   }
   if (exitCode === 255 || CONNECTION_FAILURE_PATTERNS.some((re) => re.test(stderr))) {

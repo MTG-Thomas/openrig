@@ -82,13 +82,23 @@ describe("classifyResult", () => {
     });
   });
 
-  it("exit 255 with Permission denied → permission-gate (with field-note hint)", () => {
-    const r = classifyResult(255, "", "ssh: Permission denied (publickey).");
+  it.each([
+    "ssh: Permission denied (publickey).",
+    "Could not query Keychain entry",
+    "Host key verification failed",
+    "Could not request authentication agent",
+    "no mutual signature algorithm",
+  ])("permission failure retains classification and usable inline guidance: %s", (stderr) => {
+    const r = classifyResult(255, "", stderr);
     expect(r.ok).toBe(false);
     expect(r.failedStep).toBe("permission-gate");
     if (r.failedStep === "permission-gate") {
-      expect(r.sshStderr).toContain("Permission denied");
-      expect(r.hint).toContain("Keychain-over-SSH");
+      expect(r.sshStderr).toBe(stderr);
+      expect(r.hint).toContain("registered host/user");
+      expect(r.hint).toContain("authentication");
+      expect(r.hint).toContain("host-key");
+      expect(r.hint).toContain("keep host verification enabled");
+      expect(r.hint).not.toContain("openrig-work/");
     }
   });
 

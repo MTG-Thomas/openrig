@@ -142,7 +142,7 @@ export async function runCrossHostCommand(
  * - Exit 0 → success.
  * - Exit 255 → ssh-layer failure. If stderr matches a known permission/auth
  *   gate (Permission denied, Keychain, host key verification), classify as
- *   `permission-gate` with a hint pointing at the field-note diagnostic.
+ *   `permission-gate` with inline guidance for the reported SSH failure.
  *   Otherwise classify as `ssh-unreachable`.
  * - Any other non-zero → ssh succeeded but the remote rig command failed.
  *   If the remote stderr matches the daemon-not-running signature, classify
@@ -158,7 +158,7 @@ export function classifyResult(exitCode: number, stdout: string, stderr: string)
         ok: false,
         failedStep: "permission-gate",
         sshStderr: stderr,
-        hint: "See openrig-work/field-notes/2026-04-29-l4-3-d6-claude-keychain-over-ssh-diagnostic.md for guidance on Keychain-over-SSH issues.",
+        hint: "Check the registered host/user and the SSH error. For authentication errors, inspect availability of the intended key, agent or Keychain in this process. For host-key or signature-algorithm errors, confirm the expected fingerprint or supported key type with the host owner; keep host verification enabled.",
       };
     }
     return { ok: false, failedStep: "ssh-unreachable", sshStderr: stderr };

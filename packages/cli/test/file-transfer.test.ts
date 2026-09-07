@@ -269,8 +269,20 @@ describe("classifyRsyncResult / runFileCopy", () => {
     expect(res).toMatchObject({ ok: true, failedStep: "none", bytesTransferred: 2048, filesTransferred: 1 });
   });
 
-  it("permission-gate stderr signature → permission-gate (single-source via the exported executor matcher)", () => {
-    expect(classifyRsyncResult(255, "", "user@host: Permission denied (publickey).").failedStep).toBe("permission-gate");
+  it.each([
+    "user@host: Permission denied (publickey).",
+    "Could not query Keychain entry",
+    "Host key verification failed",
+    "Could not request authentication agent",
+    "no mutual signature algorithm",
+  ])("permission failure retains taxonomy, stderr and usable inline guidance: %s", (stderr) => {
+    const result = classifyRsyncResult(255, "", stderr);
+    expect(result).toMatchObject({ ok: false, failedStep: "permission-gate", exitCode: 255, stderr });
+    expect(result.hint).toContain("registered host/user");
+    expect(result.hint).toContain("authentication");
+    expect(result.hint).toContain("host-key");
+    expect(result.hint).toContain("keep host verification enabled");
+    expect(result.hint).not.toContain("openrig-work/");
   });
 
   it("exit 255 / connection-class stderr → ssh-unreachable; other non-zero → remote-command-failed; NO daemon class exists", () => {
