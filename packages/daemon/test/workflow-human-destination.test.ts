@@ -1,0 +1,129 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Hono } from "hono";
+import { createDb } from "../src/db/connection.js";
+import { migrate } from "../src/db/migrate.js";
+import { ALL_MIGRATIONS } from "../src/db/all-migrations.js";
+import { EventBus } from "../src/domain/event-bus.js";
+import { OutboxHandler } from "../src/domain/outbox-handler.js";
+import { QueueRepository, QueueRepositoryError } from "../src/domain/queue-repository.js";
+import { WorkflowRuntime } from "../src/domain/workflow-runtime.js";
+import { resolveWorkflowHumanDestination } from "../src/domain/workflow-human-destination.js";
+import { addHumanFragment, writeProjection, projectionPath, type HumanFragment } from "../src/domain/gateway/human-registry.js";
+import { makeEnsureStuckExceptionItem } from "../src/domain/workflow-exception-escalation.js";
+import { workflowRoutes } from "../src/routes/workflow.js";
+
+const human = (name: string): HumanFragment => ({ entityId: name, class: "human", displayName: name,
+  address: `${name}@external`, connectorBindings: [{ kind: "slack", connectorRef: "fixture", secretsRef: "fixture", role: "primary" }],
+  prefs: { deliveryClass: "A" } });
+const spec = `workflow:
+  id: registered-human-test
+  version: 1
+  roles:
+    worker: { preferred_targets: [worker@rig] }
+  steps:
+    - id: work
+      actor_role: worker
+      allowed_exits: [done, failed]
+`;
+
+describe("workflow registered-human selection at the actual runtime callers", () => {
+  let dir: string;
+  let db: ReturnType<typeof createDb>;
+  let runtime: WorkflowRuntime;
+  let queue: QueueRepository;
+  let bus: EventBus;
+  let specPath: string;
+  let terminal: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "workflow-human-selection-"));
+    vi.stubEnv("OPENRIG_HOME", dir);
+    vi.stubEnv("OPENRIG_WORKSPACE_OPERATOR_SEAT_NAME", "");
+    expect(writeProjection()).toMatchObject({ ok: true });
+    db = createDb();
+    migrate(db, ALL_MIGRATIONS);
+    db.prepare("INSERT INTO rigs(id,name) VALUES ('r','rig')").run();
+    bus = new EventBus(db);
+    terminal = vi.fn(async () => ({ success: true }));
+    queue = new QueueRepository(db, bus, { validateRig: () => true, transport: { send: terminal } });
+    queue.attachOutbox(new OutboxHandler(db));
+    runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo: queue });
+    specPath = join(dir, "workflow.yaml");
+    writeFileSync(specPath, spec);
+  });
+  afterEach(() => { db.close(); vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: true }); });
+  const add = (name: string) => expect(addHumanFragment(human(name))).toMatchObject({ ok: true });
+  const start = () => runtime.instantiate({ specPath, rootObjective: "private fixture", createdBySession: "ops@rig" });
+  const fail = (i: Awaited<ReturnType<typeof start>>) => runtime.project({ instanceId: i.instance.instanceId,
+    currentPacketId: i.entryQitemId, actorSession: "worker@rig", exit: "failed" });
+  const exceptions = () => db.prepare("SELECT * FROM queue_items WHERE tags LIKE '%workflow-exception%'").all() as Array<Record<string, unknown>>;
+
+  it("failed projection and overdue detection both route to the registered gateway address, never its terminal", async () => {
+    add("decision-owner");
+    const first = await start();
+    terminal.mockClear();
+    await fail(first);
+    expect(exceptions()[0]).toMatchObject({ destination_session: "decision-owner@external", tier: "human-gate" });
+    expect(exceptions()[0]!.evidence_ref).toBe(`rig workflow trace ${first.instance.instanceId}`);
+    expect(exceptions()[0]!.last_nudge_result).toMatch(/^gateway-owned:/);
+    expect(terminal).not.toHaveBeenCalled();
+    const second = await start();
+    db.prepare("UPDATE queue_items SET ts_created = '2020-01-01T00:00:00Z' WHERE qitem_id = ?").run(second.entryQitemId);
+    terminal.mockClear();
+    const ensure = makeEnsureStuckExceptionItem({ db, queueRepo: queue,
+      resolveRoute: (n, v, c, r) => runtime.resolveExceptionRouteFor(n, v, c, r) });
+    const result = await ensure({ workflowName: second.instance.workflowName, workflowVersion: second.instance.workflowVersion,
+      createdBySession: "ops@rig", verdict: runtime.inspect(second.instance.instanceId).frontier[0]!.deadline });
+    expect(result.outcome).toBe("created");
+    expect(queue.getById(result.qitemId!)?.destinationSession).toBe("decision-owner@external");
+    expect(queue.getById(result.qitemId!)?.lastNudgeResult).toMatch(/^gateway-owned:/);
+    expect(terminal).not.toHaveBeenCalled();
+  });
+
+  it("an explicit existing setting selects among humans and is re-read for the next episode", () => {
+    add("owner-one"); add("owner-two");
+    expect(() => resolveWorkflowHumanDestination()).toThrow(/explicitly select/);
+    vi.stubEnv("OPENRIG_WORKSPACE_OPERATOR_SEAT_NAME", "owner-two@external");
+    expect(resolveWorkflowHumanDestination()).toBe("owner-two@external");
+    vi.stubEnv("OPENRIG_WORKSPACE_OPERATOR_SEAT_NAME", "owner-one@external");
+    expect(resolveWorkflowHumanDestination()).toBe("owner-one@external");
+    vi.stubEnv("OPENRIG_WORKSPACE_OPERATOR_SEAT_NAME", "human@host");
+    expect(() => resolveWorkflowHumanDestination()).toThrow(/does not select a registered human/);
+  });
+
+  it.each(["missing", "ambiguous", "registry-unavailable"])("%s selection returns 409 and rolls back the failed close without a phantom row", async (state) => {
+    if (state === "ambiguous") { add("owner-one"); add("owner-two"); }
+    if (state === "registry-unavailable") { add("owner-one"); writeFileSync(projectionPath(), "not a registry"); }
+    const i = await start();
+    const app = new Hono();
+    app.use("*", async (c, next) => { c.set("workflowRuntime" as never, runtime as never); c.set("eventBus" as never, bus as never); await next(); });
+    app.route("/workflow", workflowRoutes());
+    const response = await app.request("/workflow/project", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ instanceId: i.instance.instanceId, currentPacketId: i.entryQitemId, actorSession: "worker@rig", exit: "failed" }) });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "workflow_human_destination_unavailable", state });
+    expect(runtime.instanceStore.getByIdOrThrow(i.instance.instanceId).status).toBe("active");
+    expect(queue.getById(i.entryQitemId)?.state).toBe("pending");
+    expect(exceptions()).toHaveLength(0);
+  });
+
+  it("a configured orchestrator route works without any registered human", async () => {
+    writeFileSync(specPath, spec + "  exception_routing:\n    orchestrator_role: worker\n");
+    await fail(await start());
+    expect(exceptions()[0]).toMatchObject({ destination_session: "worker@rig", tier: "mode2" });
+  });
+
+  it("a storage/admission failure cannot be relabeled as a bad agent destination", async () => {
+    add("owner-one");
+    writeFileSync(specPath, spec + "  exception_routing:\n    orchestrator_role: worker\n");
+    const i = await start();
+    const spy = vi.spyOn(queue, "createWithinTransaction").mockImplementation(() => {
+      throw new QueueRepositoryError("fixture_storage_failure", "storage write refused");
+    });
+    await expect(fail(i)).rejects.toMatchObject({ code: "fixture_storage_failure" });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(exceptions()).toHaveLength(0);
+  });
+});

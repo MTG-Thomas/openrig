@@ -145,7 +145,7 @@ describe("workflow route (WF3 FR-4 — close+recreate+rebind)", () => {
     // P34: the W1 seam is fail-closed (MF2) — a nudge-intended terminal
     // close needs a SAME-DB intent store to make its wake durable.
     queueRepo.attachOutbox(new OutboxHandler(db));
-    runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo });
+    runtime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo });
     app = buildApp({ eventBus: bus, runtime });
     tmp = mkdtempSync(join(tmpdir(), "wf-route-"));
     specPath = join(tmp, "spec.yaml");

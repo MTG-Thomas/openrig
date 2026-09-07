@@ -9,6 +9,7 @@ import {
   type WorkflowRuntime,
 } from "../domain/workflow-runtime.js";
 import { WorkflowSpecError } from "../domain/workflow-spec-cache.js";
+import { WorkflowHumanDestinationError } from "../domain/workflow-human-destination.js";
 
 /**
  * Workflow runtime HTTP routes (PL-004 Phase D). Backs `rig workflow` CLI.
@@ -41,6 +42,9 @@ export function workflowRoutes(): Hono {
     c: { json: (body: unknown, status?: number) => Response },
     err: unknown,
   ): Response {
+    if (err instanceof WorkflowHumanDestinationError) {
+      return c.json({ error: err.code, message: err.message, ...err.details }, 409);
+    }
     if (err instanceof WorkflowSpecError) {
       // OPR.0.4.6.WF1 FR-7 (guard round-2 blocker): the new strict-
       // validation rejections (spec_unknown_key, spec_field_invalid)

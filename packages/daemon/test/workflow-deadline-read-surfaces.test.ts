@@ -100,7 +100,7 @@ describe("WF-1 FR-2 completion fixback — deadline on the read surfaces", () =>
     // P34: the W1 seam is fail-closed (MF2) — a nudge-intended terminal
     // close needs a SAME-DB intent store to make its wake durable.
     queueRepo.attachOutbox(new OutboxHandler(db));
-    writerRuntime = new WorkflowRuntime({ db, eventBus: bus, queueRepo });
+    writerRuntime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo });
     tmp = mkdtempSync(join(tmpdir(), "wf-deadline-read-"));
     specPath = join(tmp, "spec.yaml");
     writeFileSync(specPath, SPEC);

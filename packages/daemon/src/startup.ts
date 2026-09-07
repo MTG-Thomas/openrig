@@ -106,6 +106,7 @@ import {
   recordManagedWidthReceipt,
 } from "./domain/continuity-policy-materializer.js";
 import { WorkflowRuntime } from "./domain/workflow-runtime.js";
+import { resolveWorkflowHumanDestination } from "./domain/workflow-human-destination.js";
 import { makeWorkflowKeepalivePolicy } from "./domain/policies/workflow-keepalive.js";
 import { makeIdleGateQitemPolicy } from "./domain/policies/idle-gate-qitem.js";
 import { makeParkedOwnerConsumerPolicy, makeRigAnchor, PARKED_OWNER_POLICY_NAME } from "./domain/policies/parked-owner-consumer.js";
@@ -1325,7 +1326,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
             .value as string | undefined;
           return v === "orchestrator" || v === "human_only" ? v : null;
         },
-        humanFallbackSeat: "human@host",
+        humanFallbackSeat: resolveWorkflowHumanDestination,
       },
     });
     deps.workflowRuntime = workflowRuntime;
@@ -1341,7 +1342,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
         queueRepo: queueRepoForWorkflow,
         resolveRoute: (name, version, cls, boundRig) =>
           workflowRuntime!.resolveExceptionRouteFor(name, version, cls, boundRig),
-        humanFallbackSeat: "human@host",
+        humanFallbackSeat: resolveWorkflowHumanDestination,
         log: (line) => console.log(line),
       });
     }
@@ -1836,8 +1837,9 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
           db,
           // OPR.0.4.6.WF5 FR-2 class (b): detection-time exception items,
           // dedup by occurrence; dial resolved via the runtime's cached
-          // spec (never-lost fallback inside the helper).
+          // spec (registered-human selection inside the helper).
           ensureStuckExceptionItem: workflowExceptionEnsurer,
+          reconcileStuckExceptions: (id) => workflowRuntime?.reconcileStuckExceptions(id) ?? 0,
         }),
         makeIdleGateQitemPolicy({ db, seatActivity: seatActivityService }),
         // OPR.0.5.6.24 F-14: the parked-owner consumer — the WHOLE shipped
@@ -2138,6 +2140,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
           log: (line) => console.log(line),
           // OPR.0.4.6.WF5 FR-2 class (b): the sweep leg of detection.
           ensureStuckExceptionItem: workflowExceptionEnsurer,
+          reconcileStuckExceptions: () => workflowRuntime?.reconcileStuckExceptions() ?? 0,
         });
       } catch (err) {
         console.warn(

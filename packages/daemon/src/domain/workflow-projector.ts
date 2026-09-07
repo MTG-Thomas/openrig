@@ -42,8 +42,9 @@ import {
   type RoleResolutionContext,
 } from "./workflow-role-context.js";
 import { classifyFailedInstance, classifyGateTrip, workflowExceptionTags } from "./workflow-exception.js";
-import { newQitemId } from "./queue-repository.js";
+import { newQitemId, QueueRepositoryError } from "./queue-repository.js";
 import { resolveExceptionRoute } from "./workflow-exception-router.js";
+import { workflowHumanDestination, type WorkflowHumanDestination } from "./workflow-human-destination.js";
 import type { WatchdogJobsRepository } from "./watchdog-jobs-repository.js";
 import {
   disarmWorkflowKeepalive,
@@ -203,10 +204,10 @@ export class WorkflowProjector {
      *  (the validateRig precedent — the projector never reads config
      *  itself). hostDefault is read LIVE per exception (dial flips apply
      *  to future items only). Absent = engine defaults (orchestrator-
-     *  first chain with the human@host never-lost fallback). */
+     *  first chain with registered-human selection). */
     private readonly exceptionDial?: {
       hostDefault: () => "orchestrator" | "human_only" | null;
-      humanFallbackSeat: string;
+      humanFallbackSeat: WorkflowHumanDestination;
     },
   ) {}
 
@@ -842,13 +843,13 @@ export class WorkflowProjector {
             // preferred_targets stay the override; a bound instance's
             // orchestrator-role dial position falls through to a
             // NON-THROWING capability pick on the bound rig (null →
-            // the router's human@host never-lost fallback — exception
-            // routing never fails a close). Fresh decision per episode;
+            // registered-human selection, with an explicit error if no
+            // human can be selected). Fresh decision per episode;
             // not a replay concern.
             resolveRoleTarget: (role) =>
               spec.roles?.[role]?.preferred_targets?.[0] ??
               tryResolveRoleByCapability(roleCtx, role),
-            humanFallbackSeat: this.exceptionDial?.humanFallbackSeat ?? "human@host",
+            humanFallbackSeat: this.exceptionDial?.humanFallbackSeat,
           });
           const evidenceRef = `rig workflow trace ${instance.instanceId}`;
           const itemBody =
@@ -874,17 +875,13 @@ export class WorkflowProjector {
           let createdException;
           try {
             createdException = createExceptionItem(route.destinationSession, route.tier);
-          } catch {
-            // THE NEVER-LOST WRITE-GATE FALLBACK: a routed destination the
-            // queue's destination gate rejects (e.g. a spec-declared
-            // target that is not a live session) must not lose the
-            // exception OR fail the close — re-route human@host (always
-            // validates: the destination gate special-cases human seats)
-            // with the human-routed tier. Any failure of THIS create is a
-            // real storage error and propagates: the whole close rolls
-            // back rather than committing an item-less failure.
+          } catch (error) {
+            if (!(error instanceof QueueRepositoryError) || error.code !== "unknown_destination_rig" || route.humanRouted) throw error;
+            // Only an unavailable agent rig invokes human selection. Other
+            // admission/storage failures propagate unchanged and roll back the
+            // close, retaining the failure+attention-item atomic contract.
             createdException = createExceptionItem(
-              this.exceptionDial?.humanFallbackSeat ?? "human@host",
+              workflowHumanDestination(this.exceptionDial?.humanFallbackSeat),
               "human-gate",
             );
           }

@@ -342,19 +342,37 @@ and the flow resumes from where it stopped.
   settings key): target resolution = spec per-class → spec default →
   host dynamic key → ORCHESTRATOR-FIRST (the declared orchestrator
   role via the same `preferred_targets` pick step owners use) →
-  `human@host` never-lost fallback. THE TIER SPLIT: `human-gate` rides
+  registered-human selection (`workflow-human-destination.ts`). THE TIER SPLIT: `human-gate` rides
   ONLY human-routed positions — an orchestrator-routed item carries
   the ordinary tier so the shipped attention union (which matches on
   tier regardless of destination) never leaks it into NEEDS-YOU. The
   shipped attention predicate is untouched.
 - **Class (a) born-in-txn**: the projector's failed-terminal branch
   creates the item INSIDE the failing transaction — no window where
-  the instance is failed and no item exists; a gate-rejected routed
-  destination re-creates on `human@host` (never lost, never fails the
-  close). **Class (b) at detection**: the boot sweep and the keepalive
+  the instance is failed and no item exists. An agent destination rejected
+  as an unknown rig tries registered-human selection. Selection, admission,
+  or storage failure rolls back the close; it never commits a phantom
+  human alert. Other errors retain their original diagnosis. **Class (b) at detection**: the boot sweep and the keepalive
   evaluation call the injected ensurer (`workflow-exception-
   escalation.ts`) — occurrence-deduped against OPEN items by tag
-  query; the crash-surviving sweep re-creates a missed item.
+  query, scoped to the exact workflow, instance and packet; the crash-surviving
+  sweep re-creates a missed item. Normal projection, keepalive (including
+  healthy/terminal returns), and boot (including completed instances) reconcile
+  each overdue item's own packet. A resolved wait, completion or obsolete
+  frontier packet closes only that occurrence with a retained transition;
+  an overdue sibling stays open. Unknown provenance is retained. A later
+  overdue episode can create a fresh item even when it reuses the same packet.
+- **Human selection and failure**: the existing `workspace.operator_seat_name`
+  setting selects a registered human; when unset, exactly one registered human
+  is required. No `human@host` alias is invented and no arbitrary choice is made
+  among several humans. The setting and registry are read at fallback time,
+  so a valid configured agent route needs no human registry. Missing, ambiguous,
+  invalid or unavailable selection produces `workflow_human_destination_unavailable`
+  (HTTP 409 for failed projection). Fix the registration/selection and retry.
+  Detection-time admission failures are logged by boot and included in the
+  keepalive's existing owner nudge and evaluation notes; later detection retries.
+  A registered destination still uses the gateway's ordinary delivery rules and
+  receipt ledger. Admission is not proof of posting or readership.
 - **`resume`** (`POST /api/workflow/:id/resume`, runtime `resume()`,
   `rig workflow resume`): redrive semantics in ONE scribe transaction —
   failed→active REBOUND to the recorded failed step; the owner is
@@ -427,8 +445,8 @@ spec — the self-driving factory's binding substrate. Three seams:
   no live resolution of future steps; a warming rig instantiates), and
   resume. The WF-5 exception dial's orchestrator-role position resolves
   capability-aware on the bound rig at both homes (in-txn class-(a) +
-  detection-time class-(b)), non-throwing with the human@host
-  never-lost fallback. Failures are loud-with-candidates: structured
+  detection-time class-(b)), then uses registered-human selection if no
+  agent resolves. Failures are loud-with-candidates: structured
   per-candidate disqualifiers + a named zero-candidate message; never a
   spawn, never auto-`add_member`, never a dead-seat route. Additive
   `owner_resolution` trail evidence records `{mode, role, boundRig?,

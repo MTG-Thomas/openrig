@@ -54,6 +54,7 @@ export interface WorkflowBootSweepDeps {
    *  item). Optional so pre-WF-5 embedders keep working; startup wires
    *  the real closure. Failures are non-fatal to the sweep. */
   ensureStuckExceptionItem?: EnsureStuckExceptionItem;
+  reconcileStuckExceptions?: () => number;
 }
 
 export async function runWorkflowBootSweep(
@@ -61,6 +62,8 @@ export async function runWorkflowBootSweep(
 ): Promise<WorkflowBootSweepResult> {
   const log = deps.log ?? (() => {});
   const now = (deps.now ?? (() => new Date()))();
+  const exceptionsClosed = deps.reconcileStuckExceptions?.() ?? 0;
+  if (exceptionsClosed) log(`workflow boot sweep: ${exceptionsClosed} resolved overdue exception item(s) closed`);
   const instances = [
     ...deps.instanceStore.listByStatus("active"),
     ...deps.instanceStore.listByStatus("waiting"),

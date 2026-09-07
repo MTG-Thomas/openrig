@@ -7,15 +7,15 @@
 //   2. the spec's declared per-WORKFLOW default (exception_routing.default)
 //   3. the host-level dial default              (settings key
 //      `workflow.exception_routing` — the MH-1 dynamic-key pattern;
-//      READ BY THE CALLER and passed in: this module stays pure)
+//      READ BY THE CALLER and passed in)
 //   4. absent everywhere → ORCHESTRATOR-FIRST (the v1.3 engine default)
 //
 // Position → target:
 //   orchestrator → the spec-declared orchestrator role, resolved through
 //     the SAME shipped role→preferred_targets mechanism step owners use
 //     (caller passes the resolver — no new resolution machinery, no
-//     binding-layer dependency). Unresolvable → THE NEVER-LOST FALLBACK:
-//     the human seat (an exception NEVER fails to route).
+//     binding-layer dependency). Unresolvable → registered-human selection,
+//     or an explicit selection error when no human can be chosen.
 //   human_only → the human seat FIRST, and it GATES there (the
 //     orchestrator never auto-acts). Class (c) is intrinsically
 //     human-only — its WF-2-compiled park IS the item; FR-2 mints no
@@ -34,6 +34,7 @@
 
 import type { WorkflowExceptionClass } from "./workflow-exception.js";
 import type { WorkflowExceptionDialPosition, WorkflowSpec } from "./workflow-types.js";
+import { workflowHumanDestination, type WorkflowHumanDestination } from "./workflow-human-destination.js";
 
 /** The ordinary workflow-packet tier (the shipped default the attention
  *  union deliberately does NOT match on). */
@@ -50,13 +51,13 @@ export interface ExceptionRouteInput {
   /** The shipped role→preferred_targets resolution, wrapped by the caller
    *  (workflow-runtime owns runtime matching). null = unresolvable. */
   resolveRoleTarget: (roleName: string) => string | null;
-  /** The honest never-lost fallback seat (human@<host> form). */
-  humanFallbackSeat: string;
+  /** Lazy: a valid agent route must not require human configuration. */
+  humanFallbackSeat?: WorkflowHumanDestination;
 }
 
 export interface ExceptionRoute {
   /** Where the chain landed. `fallback` = orchestrator position whose
-   *  role target did not resolve (still never lost). */
+   *  role target did not resolve. */
   position: "orchestrator" | "human_only" | "fallback";
   destinationSession: string;
   /** THE TIER SPLIT — human-gate iff humanRouted. */
@@ -93,7 +94,7 @@ export function resolveExceptionRoute(input: ExceptionRouteInput): ExceptionRout
   if (position === "human_only") {
     return {
       position: "human_only",
-      destinationSession: input.humanFallbackSeat,
+      destinationSession: workflowHumanDestination(input.humanFallbackSeat),
       tier: WORKFLOW_EXCEPTION_HUMAN_TIER,
       humanRouted: true,
       resolvedVia,
@@ -102,13 +103,13 @@ export function resolveExceptionRoute(input: ExceptionRouteInput): ExceptionRout
 
   // orchestrator position: resolve the declared orchestrator role via the
   // shipped mechanism; unresolvable (no role declared, role unknown, or
-  // no target) = the never-lost human fallback.
+  // no target) = registered-human selection.
   const roleName = routing?.orchestrator_role;
   const target = roleName ? input.resolveRoleTarget(roleName) : null;
   if (!target) {
     return {
       position: "fallback",
-      destinationSession: input.humanFallbackSeat,
+      destinationSession: workflowHumanDestination(input.humanFallbackSeat),
       tier: WORKFLOW_EXCEPTION_HUMAN_TIER,
       humanRouted: true,
       resolvedVia,

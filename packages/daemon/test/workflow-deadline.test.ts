@@ -251,7 +251,7 @@ describe("FR-2 named test: claimed → unclaimed → overdue (the arch third sta
     // P34: the W1 seam is fail-closed (MF2) — a nudge-intended terminal
     // close needs a SAME-DB intent store to make its wake durable.
     queueRepo.attachOutbox(new OutboxHandler(db));
-    runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo });
+    runtime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo });
     tmp = mkdtempSync(join(tmpdir(), "wf-deadline-"));
     specPath = join(tmp, "spec.yaml");
     writeFileSync(specPath, SPEC);
@@ -370,7 +370,7 @@ describe("FR-6: loop_guards.max_hops enforced at projection (G4 — migration 03
     // P34: the W1 seam is fail-closed (MF2) — a nudge-intended terminal
     // close needs a SAME-DB intent store to make its wake durable.
     queueRepo.attachOutbox(new OutboxHandler(db));
-    runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo });
+    runtime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo });
     events = [];
     bus.subscribe((e) => events.push(e as never));
     tmp = mkdtempSync(join(tmpdir(), "wf-maxhops-"));

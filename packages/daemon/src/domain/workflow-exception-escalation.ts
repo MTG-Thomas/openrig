@@ -22,7 +22,7 @@
 // at startup per the validateRig precedent.
 
 import type Database from "better-sqlite3";
-import type { QueueRepository } from "./queue-repository.js";
+import { QueueRepositoryError, type QueueRepository } from "./queue-repository.js";
 import type { WorkflowDeadlineVerdict } from "./workflow-deadline.js";
 import {
   classifyDeadlineVerdict,
@@ -30,6 +30,7 @@ import {
   type WorkflowExceptionClass,
 } from "./workflow-exception.js";
 import type { ExceptionRoute } from "./workflow-exception-router.js";
+import { workflowHumanDestination, type WorkflowHumanDestination } from "./workflow-human-destination.js";
 
 export interface EnsureStuckExceptionInput {
   workflowName: string;
@@ -54,7 +55,7 @@ export interface StuckExceptionDeps {
   queueRepo: QueueRepository;
   /** The maturity-dial resolution for a cached spec (runtime-owned —
    *  spec lookup + the shipped role resolution live there). null =
-   *  spec not cached; the never-lost fallback applies.
+   *  spec not cached; registered-human selection applies.
    *  OPR.0.4.6.FAC1 (arch Q3): boundRig = the stuck instance's bound
    *  rig (read from workflow_instances at detection time) so the
    *  orchestrator-role dial position resolves capability-aware. */
@@ -64,13 +65,12 @@ export interface StuckExceptionDeps {
     exceptionClass: WorkflowExceptionClass,
     boundRig?: string | null,
   ) => ExceptionRoute | null;
-  humanFallbackSeat?: string;
+  humanFallbackSeat?: WorkflowHumanDestination;
   log?: (line: string) => void;
 }
 
 export function makeEnsureStuckExceptionItem(deps: StuckExceptionDeps): EnsureStuckExceptionItem {
   const log = deps.log ?? (() => {});
-  const fallbackSeat = deps.humanFallbackSeat ?? "human@host";
   return async (input: EnsureStuckExceptionInput): Promise<EnsureStuckExceptionResult> => {
     const exception = classifyDeadlineVerdict(input.workflowName, input.verdict);
     if (!exception) return { outcome: "skipped-healthy" };
@@ -82,11 +82,17 @@ export function makeEnsureStuckExceptionItem(deps: StuckExceptionDeps): EnsureSt
       .prepare(
         `SELECT qitem_id, destination_session FROM queue_items
          WHERE state IN ('pending','in-progress','blocked')
-           AND tags LIKE ? AND tags LIKE ?`,
+           AND json_valid(tags)
+           AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)
+           AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)
+           AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)
+           AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'workflow-exception')
+           AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'exception:stuck_overdue')`,
       )
       .get(
-        `%"occurrence:${exception.identity.occurrenceKey}"%`,
-        `%"exception:stuck_overdue"%`,
+        `occurrence:${exception.identity.occurrenceKey}`,
+        `instance:${exception.identity.instanceId}`,
+        `workflow:${exception.identity.workflowName}`,
       ) as { qitem_id: string; destination_session: string } | undefined;
     if (open) {
       // Re-detection of the same unresolved episode: re-nudge the ONE
@@ -114,7 +120,7 @@ export function makeEnsureStuckExceptionItem(deps: StuckExceptionDeps): EnsureSt
     const route =
       deps.resolveRoute(input.workflowName, input.workflowVersion, "stuck_overdue", detectionBoundRig) ?? {
         position: "fallback" as const,
-        destinationSession: fallbackSeat,
+        destinationSession: workflowHumanDestination(deps.humanFallbackSeat),
         tier: "human-gate",
         humanRouted: true,
         resolvedVia: "engine-default" as const,
@@ -144,12 +150,11 @@ export function makeEnsureStuckExceptionItem(deps: StuckExceptionDeps): EnsureSt
     let created;
     try {
       created = await createItem(route.destinationSession, route.tier);
-    } catch {
-      // THE NEVER-LOST WRITE-GATE FALLBACK (same contract as class (a)):
-      // a gate-rejected routed destination re-routes human@host rather
-      // than losing the exception. A failure of THIS create is a real
-      // storage error and propagates to the caller's non-fatal handling.
-      created = await createItem(fallbackSeat, "human-gate");
+    } catch (error) {
+      if (!(error instanceof QueueRepositoryError) || error.code !== "unknown_destination_rig" || route.humanRouted) throw error;
+      // An unavailable agent rig may use the registered human fallback.
+      // Other admission/storage failures retain their original diagnosis.
+      created = await createItem(workflowHumanDestination(deps.humanFallbackSeat), "human-gate");
     }
     log(
       `workflow exception: stuck_overdue item ${created.qitemId} created for instance ${e.instanceId} (step ${e.stepId ?? "?"}, ${route.position})`,

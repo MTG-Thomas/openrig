@@ -102,6 +102,7 @@ describe("FR-3: keepalive auto-arm in-txn + disarm", () => {
     queueRepo.attachOutbox(new OutboxHandler(db));
     watchdogRepo = new WatchdogJobsRepository(db);
     runtime = new WorkflowRuntime({
+      exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" },
       db,
       eventBus: bus,
       queueRepo,
@@ -278,6 +279,7 @@ describe("FR-3/FR-2: the deadline-gated keepalive policy behavior", () => {
     queueRepo.attachOutbox(new OutboxHandler(db));
     watchdogRepo = new WatchdogJobsRepository(db);
     runtime = new WorkflowRuntime({
+      exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" },
       db,
       eventBus: bus,
       queueRepo,

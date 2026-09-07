@@ -251,7 +251,7 @@ describe("FAC-1 C3: the six owner-resolution call sites on a bound rig", () => {
     const rigA = rigRepo.createRig("factory-a");
     rigAId = rigA.id;
     tmp = mkdtempSync(join(tmpdir(), "wf-fac1-"));
-    runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo });
+    runtime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo });
   });
 
   afterEach(() => {

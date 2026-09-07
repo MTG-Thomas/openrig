@@ -207,7 +207,7 @@ describe("OPR.0.4.6.WF2 — spec language", () => {
     // close needs a SAME-DB intent store to make its wake durable.
     queueRepo.attachOutbox(new OutboxHandler(db));
     tmp = mkdtempSync(join(tmpdir(), "wf2-lang-"));
-    runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo });
+    runtime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo });
   });
 
   afterEach(() => {

@@ -126,7 +126,7 @@ describe("WorkflowProjector + WorkflowRuntime (PL-004 Phase D; transactional-scr
     writeFileSync(specPath, SPEC);
     permissiveSpecPath = join(tmp, "permissive-spec.yaml");
     writeFileSync(permissiveSpecPath, PERMISSIVE_SPEC);
-    runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo });
+    runtime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo });
   });
 
   afterEach(() => {
@@ -342,7 +342,7 @@ describe("WorkflowProjector + WorkflowRuntime (PL-004 Phase D; transactional-scr
     // P34: the W1 seam is fail-closed (MF2) — a nudge-intended terminal
     // close needs a SAME-DB intent store to make its wake durable.
     failingRepo.attachOutbox(new OutboxHandler(db));
-    const failingRuntime = new WorkflowRuntime({ db, eventBus: bus, queueRepo: failingRepo });
+    const failingRuntime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo: failingRepo });
     const trailCountBefore = failingRuntime.trailLog.countForInstance(inst.instance.instanceId);
     const queueCountBefore = db.prepare(`SELECT COUNT(*) AS n FROM queue_items`).get() as { n: number };
 

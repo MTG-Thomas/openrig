@@ -20,6 +20,7 @@ import {
   WorkflowInstanceError,
 } from "./workflow-instance-store.js";
 import { resolveExceptionRoute, type ExceptionRoute } from "./workflow-exception-router.js";
+import type { WorkflowHumanDestination } from "./workflow-human-destination.js";
 import { classifyGateTrip, workflowExceptionTags } from "./workflow-exception.js";
 import { newQitemId } from "./queue-repository.js";
 import type { WorkflowExceptionClass } from "./workflow-exception.js";
@@ -82,11 +83,11 @@ export interface WorkflowRuntimeDeps {
    * OPR.0.4.6.WF5 FR-2: the maturity-dial inputs (injected at startup —
    * the projector never reads config itself). hostDefault is read LIVE
    * per exception; absent = the orchestrator-first engine default with
-   * the human@host never-lost fallback.
+   * registered-human selection when no agent route resolves.
    */
   exceptionDial?: {
     hostDefault: () => "orchestrator" | "human_only" | null;
-    humanFallbackSeat: string;
+    humanFallbackSeat: WorkflowHumanDestination;
   };
 }
 
@@ -221,7 +222,7 @@ export class WorkflowRuntime {
    * OPR.0.4.6.WF5 FR-2: resolve the maturity dial for a CACHED spec —
    * the class-(b) detection paths (sweep/keepalive) call this through
    * the startup-injected closure. null = spec not cached (the caller's
-   * never-lost fallback applies). Uses the SAME preferred_targets[0]
+   * registered-human selection applies). Uses the SAME preferred_targets[0]
    * string-pick as step-owner resolution (arch Seam-A uniformity).
    */
   resolveExceptionRouteFor(
@@ -245,7 +246,7 @@ export class WorkflowRuntime {
       resolveRoleTarget: (role) =>
         spec.roles?.[role]?.preferred_targets?.[0] ??
         tryResolveRoleByCapability(roleCtx, role),
-      humanFallbackSeat: this.exceptionDial?.humanFallbackSeat ?? "human@host",
+      humanFallbackSeat: this.exceptionDial?.humanFallbackSeat,
     });
   }
 
@@ -791,7 +792,60 @@ export class WorkflowRuntime {
   }
 
   async project(input: ProjectStepInput): Promise<ProjectStepResult> {
-    return this.projector.project(input);
+    const result = await this.projector.project(input);
+    this.reconcileStuckExceptions(input.instanceId);
+    return result;
+  }
+
+  /** Recheck each recorded overdue packet, never a sibling's verdict. The
+   * decision and closure share a transaction; boot repairs a crash after project. */
+  reconcileStuckExceptions(instanceId?: string): number {
+    let closed = 0;
+    this.eventBus.withNotifyEnvelope((register) => {
+      const rows = this.db.prepare(`SELECT qitem_id, tags FROM queue_items
+        WHERE state IN ('pending','in-progress','blocked') AND json_valid(tags)
+          AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'workflow-exception')
+          AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'exception:stuck_overdue')
+          AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?))`
+      ).all(instanceId ?? null, `instance:${instanceId}`) as Array<{ qitem_id: string; tags: string }>;
+      for (const row of rows) {
+        const tags: unknown = JSON.parse(row.tags);
+        if (!Array.isArray(tags)) continue;
+        const one = (prefix: string): string | undefined => {
+          const values = tags.filter((tag) => typeof tag === "string" && tag.startsWith(prefix));
+          return values.length === 1 ? values[0]!.slice(prefix.length) : undefined;
+        };
+        const id = one("instance:");
+        const packetId = one("occurrence:");
+        if (!id || !packetId) continue;
+        const instance = this.instanceStore.getById(id);
+        const packet = this.queueRepo.getById(packetId);
+        // Unknown or conflicting provenance cannot certify recovery.
+        if (!instance || !packet || one("workflow:") !== instance.workflowName
+          || !packet.tags?.includes(`instance:${id}`)
+          || !packet.tags?.includes(`workflow:${instance.workflowName}`)) continue;
+        if (!["active", "waiting", "completed", "failed", "aborted"].includes(instance.status)) continue;
+        const live = instance.currentFrontier.includes(packetId)
+          && (instance.status === "active" || instance.status === "waiting");
+        if (live) {
+          const anchor = packet.state === "in-progress"
+            ? packet.closureRequiredAt ?? packet.claimedAt ?? packet.tsCreated : packet.tsCreated;
+          if (!Number.isFinite(Date.parse(anchor))) continue;
+          const binding = this.instanceStore.getFrontierBinding(id, packetId);
+          const verdict = evaluateStepDeadline({ ...instance, currentFrontier: [packetId],
+            currentStepId: binding?.stepId ?? instance.currentStepId }, [packet], this.now());
+          if (verdict.state !== "healthy") continue;
+        }
+        const updated = this.queueRepo.updateWithinTransaction({
+          qitemId: row.qitem_id, actorSession: instance.createdBySession,
+          state: "done", closureReason: "no-follow-on",
+          transitionNote: `workflow overdue occurrence resolved: instance ${id}, packet ${packetId}; ${live ? `packet is ${packet.state} and no longer overdue` : "packet is no longer an active frontier obligation"}`,
+        });
+        register(updated.persistedEvent);
+        closed += 1;
+      }
+    });
+    return closed;
   }
 
   inspect(instanceId: string): {

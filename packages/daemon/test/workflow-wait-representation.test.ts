@@ -37,7 +37,7 @@ describe("workflow authored waiting re-presentation", () => {
     queueRepo = new QueueRepository(db, bus, { validateRig: () => true });
     queueRepo.attachOutbox(new OutboxHandler(db));
     watchdogRepo = new WatchdogJobsRepository(db);
-    runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo, watchdogJobsRepo: watchdogRepo });
+    runtime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo, watchdogJobsRepo: watchdogRepo });
     tmp = mkdtempSync(join(tmpdir(), "workflow-authored-wait-"));
     specPath = join(tmp, "workflow.yaml");
     writeFileSync(specPath, AUTHORED_WAIT_SPEC);

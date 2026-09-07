@@ -81,7 +81,7 @@ function buildRuntime(db: Database.Database) {
   // P34: the W1 seam is fail-closed (MF2) — a nudge-intended terminal
   // close needs a SAME-DB intent store to make its wake durable.
   queueRepo.attachOutbox(new OutboxHandler(db));
-  const runtime = new WorkflowRuntime({ db, eventBus: bus, queueRepo });
+  const runtime = new WorkflowRuntime({ exceptionDial: { hostDefault: () => null, humanFallbackSeat: "human@host" }, db, eventBus: bus, queueRepo });
   return { bus, queueRepo, runtime };
 }
 

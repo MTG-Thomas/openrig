@@ -79,9 +79,9 @@ export function roleResolutionContext(
 /**
  * NON-THROWING capability pick (arch Q3 — the exception-routing
  * uniformity extension, bounded): resolve `role` on the bound rig or
- * return null. Exception routing must NEVER fail a close — a null here
- * falls through the router's chain to the human@host never-lost
- * fallback. Each exception item is a fresh decision at its own
+ * return null. A null pick falls through to registered-human selection,
+ * which reports an error if no human can be selected. Each exception
+ * item is a fresh decision at its own
  * detection moment (not a replay concern).
  */
 export function tryResolveRoleByCapability(

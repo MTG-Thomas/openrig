@@ -77,6 +77,7 @@ export interface WorkflowKeepaliveDeps {
    *  injected helper's concern, dedup by occurrence. Failures are
    *  non-fatal to the evaluation. */
   ensureStuckExceptionItem?: import("../workflow-exception-escalation.js").EnsureStuckExceptionItem;
+  reconcileStuckExceptions?: (instanceId: string) => number;
 }
 
 export function makeWorkflowKeepalivePolicy(deps: WorkflowKeepaliveDeps): Policy {
@@ -115,6 +116,7 @@ export function makeWorkflowKeepalivePolicy(deps: WorkflowKeepaliveDeps): Policy
         };
       }
 
+      deps.reconcileStuckExceptions?.(instanceId);
       const eligible = instance.status === "active" || instance.status === "waiting";
       if (!eligible) {
         return {
@@ -214,6 +216,7 @@ export function makeWorkflowKeepalivePolicy(deps: WorkflowKeepaliveDeps): Policy
       // jobs; the operator-job MESSAGE contract below stays pinned and
       // untouched). Dedup by occurrence keeps this idempotent across
       // every keepalive cadence tick.
+      let exceptionItemError: string | undefined;
       if (deps.ensureStuckExceptionItem && verdict.state !== "healthy" && verdict.evidence) {
         try {
           await deps.ensureStuckExceptionItem({
@@ -222,9 +225,9 @@ export function makeWorkflowKeepalivePolicy(deps: WorkflowKeepaliveDeps): Policy
             createdBySession: instance.created_by_session,
             verdict,
           });
-        } catch {
-          // Non-fatal: the nudge below still fires; the sweep/next tick
-          // re-detects (the crash-surviving guarantee).
+        } catch (error) {
+          // Preserve the owner nudge while reporting failed exception admission.
+          exceptionItemError = error instanceof Error ? error.message : String(error);
         }
       }
       const primary = stuck ? stuck.ownerSession : allSessions[0]!;
@@ -250,7 +253,7 @@ export function makeWorkflowKeepalivePolicy(deps: WorkflowKeepaliveDeps): Policy
       return {
         action: "send",
         target: { session: primary },
-        message,
+        message: exceptionItemError ? `${message}\nWorkflow exception item was not admitted: ${exceptionItemError}` : message,
         notes: {
           instanceId: instance.instance_id,
           workflowName: instance.workflow_name,
@@ -258,6 +261,7 @@ export function makeWorkflowKeepalivePolicy(deps: WorkflowKeepaliveDeps): Policy
           frontierLength: frontier.length,
           additionalRoutingTargets: others,
           ...(stuck ? { deadline: { state: verdict.state, ...stuck } } : {}),
+          ...(exceptionItemError ? { exceptionItemError } : {}),
         },
       };
     },
