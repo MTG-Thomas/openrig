@@ -103,7 +103,7 @@ export function daemonCommand(depsOverride?: LifecycleDeps): Command {
   cmd
     .command("start")
     .description("Start the daemon")
-    .addHelpText("after", "\nStartup reserves this local instance before initialization and verifies the spawned child PID on every required listener.\nMissing/mismatched health identity or an exited child cannot publish daemon.json; use a matching CLI/daemon installation.\nA concurrent start fails without spawning another child. Inspect daemon-start.lock for launcher/child PIDs after an interrupted start;\nonly archive an abandoned reservation after proving both processes absent. A failed cleanup retains it and reports the child PID.\n")
+    .addHelpText("after", "\nStartup reserves this local instance before initialization and verifies the spawned child PID on every required listener.\nMissing/mismatched identity or child exit fails startup; failed publication withdraws only this launch's matching state. Use a matching CLI/daemon installation.\nA concurrent start fails without spawning another child. Inspect daemon-start.lock for launcher/child PIDs after an interrupted start;\nonly archive an abandoned reservation after proving both processes absent. A failed cleanup retains it and reports the child PID.\n")
     .option("--port <port>", "Port to listen on")
     .option("--host <host>", "Host to bind on")
     .option("--db <path>", "Database path")

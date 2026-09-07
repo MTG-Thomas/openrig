@@ -673,7 +673,6 @@ async function startOwnedDaemon(opts: StartOptions, deps: LifecycleDeps, lock: D
   const onError = (error: Error): void => {
     childFailure = new Error(`Daemon child failed to spawn: ${error.message}`);
     rejectExit(childFailure);
-    resolveExit();
   };
   const onExit = (code: number | null, signal: string | null): void => {
     childFailure = new Error(`Daemon child ${child.pid ?? "unknown"} exited before startup completed (code ${code}, signal ${signal ?? "none"})`);
@@ -684,10 +683,11 @@ async function startOwnedDaemon(opts: StartOptions, deps: LifecycleDeps, lock: D
   child.once("exit", onExit);
   child.unref();
   const pid = child.pid;
+  const hasExited = (): boolean => child.exitCode != null || child.signalCode != null;
   const assertChild = (): void => {
     if (childFailure) throw childFailure;
     if (!Number.isSafeInteger(pid) || pid! <= 0) throw new Error("Daemon spawn returned no valid child PID");
-    if (child.exitCode != null || child.signalCode != null) throw new Error(`Daemon child ${pid} exited before startup completed`);
+    if (hasExited()) throw new Error(`Daemon child ${pid} exited before startup completed`);
   };
   const healthzUrl = `http://${probeHost}:${port}/healthz`;
   type StartHealth = { pid?: unknown; bind?: { mode: "explicit" | "default"; hosts: string[]; tailscaleDetected: boolean } };
@@ -757,23 +757,33 @@ async function startOwnedDaemon(opts: StartOptions, deps: LifecycleDeps, lock: D
       throw new Error(`${summarizeDaemonStartFailure(healthzUrl, deps.readFile(resolveLifecycleFile(deps, "daemon.log")))}. Last probe: ${lastProbe}`);
     }
     assertChild();
-    if (!deps.isProcessAlive(pid!)) throw new Error(`Daemon child ${pid} is no longer alive; state not published`);
+    if (!deps.isProcessAlive(pid!)) throw new Error(`Daemon child ${pid} liveness could not be confirmed; state not published`);
     const state: DaemonState = { pid: pid!, port, host: probeHost, db, startedAt: new Date().toISOString() };
-    deps.writeFile(STATE_FILE, JSON.stringify(state, null, 2));
-    assertChild();
+    try {
+      deps.writeFile(STATE_FILE, JSON.stringify(state, null, 2));
+      assertChild();
+      // A synchronous writer can outlast the process while exit events remain
+      // undelivered. Recheck physical evidence on the other side of publication.
+      if (!deps.isProcessAlive(pid!)) throw new Error(`Daemon child ${pid} liveness could not be confirmed at state publication; startup not accepted`);
+    } catch (error) {
+      removeMatchingState(deps, STATE_FILE, state);
+      throw error;
+    }
     return state;
   } catch (error) {
     // Only this launch's child may be cleaned up. A retained child also retains
     // the reservation so a retry cannot run another pre-bind initialization.
-    if (pid && child.exitCode == null && child.signalCode == null && deps.isProcessAlive(pid)) {
-      try { deps.kill(pid, "SIGTERM"); } catch { /* confirm exit below */ }
+    // A failed ps is not exit evidence. This is our unreaped child: signal only
+    // that PID, then release exclusion only after its own exit is observed.
+    if (Number.isSafeInteger(pid) && pid! > 0 && !hasExited()) {
+      try { deps.kill(pid!, "SIGTERM"); } catch { /* confirm exit below */ }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const gone = await Promise.race([
           exited.then(() => true),
           new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), DAEMON_STOP_WAIT_MS); }),
         ]);
-        if (!gone || deps.isProcessAlive(pid)) throw new StartupChildPendingError(`${error instanceof Error ? error.message : error}. Child PID ${pid} has not exited; startup reservation retained. Inspect daemon-start.lock and daemon.log before recovery.`);
+        if (!gone) throw new StartupChildPendingError(`${error instanceof Error ? error.message : error}. Child PID ${pid} exit is unconfirmed; startup reservation retained. Inspect daemon-start.lock and daemon.log before recovery.`);
       } finally { if (timer) clearTimeout(timer); }
     }
     throw error;

@@ -98,14 +98,57 @@ describe("child-bound startup", () => {
     await Promise.resolve();
     expect(f.files.has(STATE_FILE)).toBe(false); expect(f.deps.kill).not.toHaveBeenCalled();
   });
-  it("retains the reservation if its unready child cannot be cleaned up", async () => {
+  it("observes owned-child cleanup even when process inspection cannot confirm liveness", async () => {
+    const f = fixture(); f.body.pid = 999;
+    f.deps.isProcessAlive = () => false;
+    const kill = f.deps.kill;
+    f.deps.kill = vi.fn((...args) => {
+      expect(f.lock.release).not.toHaveBeenCalled();
+      return kill(...args);
+    });
+    await expect(startDaemon(opts, f.deps)).rejects.toThrow(/identity mismatch/);
+    expect(f.deps.kill).toHaveBeenCalledWith(12345, "SIGTERM");
+    expect(f.child.exitCode).toBe(0);
+    expect(f.lock.release).toHaveBeenCalledWith(false);
+  });
+  it.each([false, true])("rejects physical death during publication and preserves a replacement owner: %s", async (replacement) => {
+    const f = fixture(); let physicallyAlive = true;
+    f.deps.isProcessAlive = () => physicallyAlive;
+    const write = f.deps.writeFile;
+    const winner = JSON.stringify({ pid: 45678, port: opts.port, host: opts.host, db: opts.db, startedAt: "2026-09-07T00:00:00Z" });
+    f.deps.writeFile = (p, value) => {
+      write(p, value);
+      if (p === STATE_FILE) {
+        physicallyAlive = false; // exitCode/event still undelivered during this turn
+        if (replacement) f.files.set(p, winner);
+      }
+    };
+    await expect(startDaemon(opts, f.deps)).rejects.toThrow(/at state publication/);
+    expect(f.files.get(STATE_FILE)).toBe(replacement ? winner : undefined);
+    for (const [pid] of vi.mocked(f.deps.kill).mock.calls) expect(pid).toBe(12345);
+  });
+  it.each([true, false])("retains the reservation for an unconfirmed child exit when isProcessAlive is %s", async (observedAlive) => {
     vi.useFakeTimers();
     const f = fixture(); f.body.pid = 999; f.deps.kill = vi.fn(() => true);
+    f.deps.isProcessAlive = () => observedAlive;
     const result = startDaemon(opts, f.deps).catch((e: Error) => e);
     await vi.runAllTimersAsync();
     expect((await result as Error).message).toMatch(/reservation retained/);
     expect(f.lock.release).toHaveBeenCalledWith(true);
     expect(f.files.has(STATE_FILE)).toBe(false);
+  });
+  it("does not mistake a child error event for confirmed exit", async () => {
+    vi.useFakeTimers();
+    const f = fixture(); f.body.pid = 999;
+    f.deps.kill = () => {
+      queueMicrotask(() => f.child.emit("error", new Error("signal failed")));
+      return false;
+    };
+    const result = startDaemon(opts, f.deps).catch((e: Error) => e);
+    await vi.runAllTimersAsync();
+    expect((await result as Error).message).toMatch(/exit is unconfirmed/);
+    expect(f.child.exitCode).toBeNull();
+    expect(f.lock.release).toHaveBeenCalledWith(true);
   });
 });
 

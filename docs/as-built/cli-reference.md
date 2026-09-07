@@ -211,6 +211,12 @@ Notes:
   probes cannot publish success. Use a matching CLI/daemon pair; a legacy endpoint
   without PID evidence is insufficient. This local reservation does not serialize
   old binaries or direct execution of the daemon entrypoint.
+- Startup checks physical liveness after the synchronous state writer as well as
+  before it; queued child events alone cannot prove that boundary. If publication
+  fails verification, startup rejects and withdraws only state matching this
+  launch's PID, start time, listener and DB. It never removes a replacement owner.
+- Failed process inspection is uncertainty, not proof that a child exited. Cleanup
+  waits for the owned child's exit evidence; an error event is insufficient.
 - Failed startup signals only its own child and waits boundedly for its exit. If
   cleanup cannot be confirmed, the reservation remains and the error names the PID.
   An interrupted launcher can also leave `daemon-start.lock`. Inspect its recorded
