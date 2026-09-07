@@ -1490,7 +1490,7 @@ function wrapContentLines(content: PaneContentLine[], width: number): PaneConten
 
 function crashCartShell(
   content: PaneContentLine[],
-  led: ReturnType<typeof buildLedgerExplorer>,
+  led: Pick<ReturnType<typeof buildLedgerExplorer>, "note" | "rows">,
   contentTitle: string,
   cols: number,
   rows: number,
@@ -1503,7 +1503,7 @@ function crashCartShell(
   lines.push(pad(`cmd ▸ ${inputLine}▊`, cols));
   lines.push(paneRule(cols, explW, "top", "{ EXPLORER }", contentTitle));
 
-  // The ledger-fed explorer column: the honest marker, then one row per rig (name + seat count).
+  // The explorer's source note, then any discovered rigs (name + seat count).
   const leftRows: string[] = [led.note, "", ...led.rows.map((r) => `${r.label} (${r.seatCount})`)];
   const contentWidth = Math.max(cols - explW - 2, 0);
   if (opts?.wrap) content = wrapContentLines(content, contentWidth);
@@ -1524,7 +1524,7 @@ function crashCartShell(
   lines.push(paneRule(cols, explW, "bottom"));
   lines.push(pad("", cols));
   const scrollHint = contentMaxOffset > 0 ? ` · ↑↓ scroll (${scroll}/${contentMaxOffset})` : "";
-  lines.push(pad(`[crash-cart] daemon down · explorer ${led.note}${scrollHint}`, cols));
+  lines.push(pad(`[crash-cart] ${led.note}${scrollHint}`, cols));
   while (lines.length < rows) lines.push("");
   return {
     lines: lines.slice(0, rows),
@@ -1566,7 +1566,7 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
     return crashCartShell(content, led, "CRASH-CART", cols, rows, inputLine, options.confirm ? { wrap: true } : undefined);
   }
   if (options.daemonState === "unverified" && options.daemonEvidence) {
-    const led = buildLedgerExplorer([]); // no rigs listed when we cannot verify — honest empty ledger
+    const led = { note: "daemon unverified", rows: [] }; // No ledger discovery occurred on this path.
     return crashCartShell(renderUnverifiedView(options.daemonEvidence), led, "DAEMON?", cols, rows, inputLine);
   }
   // PULSE (founder Option-B): a content-pane view inside the NORMAL explorer│

@@ -27,6 +27,8 @@ describe("renderScreen daemon-down — in-shell split (explorer always present)"
     expect(left).toContain("openrig-pm");
     expect(left).toContain("kernel");
     expect(left.toLowerCase()).toContain("ledger"); // honestly marked ledger-sourced
+    expect(left).toContain("daemon down");
+    expect(screen.lines.at(-1)).toContain("ledger-sourced · daemon down");
   });
 
   it("moves the approved cockpit CONTENT into the right pane verbatim (all rails stand)", () => {
@@ -77,6 +79,7 @@ describe("renderScreen — ACTIVE restore takes precedence (mid-run progress fra
     expect(body).toContain("kernel");
     expect(body).toContain("c cancel");
     expect(body).not.toContain("RESTORE EVERYTHING"); // the cockpit is superseded by the active restore
+    expect(screen.lines.at(-1)).toContain("ledger-sourced · daemon down");
   });
 
   it("done: renders the keyboard-walkable triage list in-shell — the exact need is NOT clipped away", () => {
@@ -104,6 +107,7 @@ describe("renderScreen — ACTIVE restore takes precedence (mid-run progress fra
     expect(body).toContain("choose fresh-prime");
     expect(body).toContain("or skip");
     expect(body).toContain("take a snapshot"); // the not_attempted remediation survives too
+    expect(screen.lines.at(-1)).toContain("ledger-sourced · daemon down");
     // and the wrapped continuation is hanging-indented under its row (a second visible line)
     const paneText = screen.lines.map((l) => l.slice(screen.explorerWidth + 1)).join("\n");
     expect(paneText).toMatch(/skip/);
@@ -166,18 +170,30 @@ describe("renderScreen daemon-down — the ⏎ confirm banner renders IN the coc
 });
 
 describe("renderScreen daemon-down — UNVERIFIED in-shell (explorer present, no restore)", () => {
-  const screen = renderScreen(view.get(), snap, {
-    cols: 120,
-    rows: 32,
-    daemonState: "unverified",
-    daemonEvidence: { pidState: "alive (pid 7)", probeResult: "timeout", failedSignal: "healthz timed out" },
-  });
-  const body = screen.lines.join("\n");
-  it("has the explorer split + the cannot-verify content, and offers NO restore", () => {
+  it.each([80, 120, 170])("keeps body, sidebar and footer unverified at %i columns, without claiming a ledger read", (cols) => {
+    const screen = renderScreen(view.get(), snap, {
+      cols,
+      rows: 32,
+      daemonState: "unverified",
+      daemonEvidence: { pidState: "alive (pid 7)", probeResult: "timeout", failedSignal: "healthz timed out" },
+    });
+    const body = screen.lines.join("\n");
+    const sidebar = screen.lines.slice(2, -3).map((line) => line.slice(0, screen.explorerWidth)).join("\n");
     expect(screen.lines.filter((l) => l.charAt(screen.explorerWidth) === "┃").length).toBeGreaterThan(3);
     expect(body).toContain("cannot verify the daemon");
     expect(body).toContain("alive (pid 7)");
     expect(body).not.toContain("RESTORE EVERYTHING");
+    expect(sidebar).toContain("daemon unverified");
+    expect(screen.lines.at(-1)).toContain("daemon unverified");
+    expect(body).not.toContain("daemon down");
+    expect(body).not.toContain("ledger-sourced");
+  });
+
+  it("keeps an up daemon on the ordinary rendering path", () => {
+    const normal = renderScreen(view.get(), snap, { cols: 120, rows: 32 });
+    const up = renderScreen(view.get(), snap, { cols: 120, rows: 32, daemonState: "up" });
+    expect(up).toEqual(normal);
+    expect(up.lines.join("\n")).not.toContain("[crash-cart]");
   });
 });
 
