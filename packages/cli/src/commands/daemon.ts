@@ -215,11 +215,11 @@ export function daemonCommand(depsOverride?: LifecycleDeps): Command {
   cmd
     .command("stop")
     .description("Stop the daemon (10s shutdown budget; 12s process wait; incomplete drain exits nonzero)")
-    .addHelpText("after", "\nSends one SIGTERM and verifies the original PID and listener. Repeated signals join shutdown.\nA missing/stale receipt is unverified; failed or timed-out drain exits nonzero even after the PID exits.\nInspect OPENRIG_HOME/daemon-shutdown.json and daemon.log for the phase and outcome.\nThe bound covers asynchronous shutdown; an event-loop wedge still requires operator recovery.\n")
+    .addHelpText("after", "\nSends at most one SIGTERM to a live target and verifies the original PID and listener. Repeated signals join shutdown.\nFor a recorded target, missing/stale receipts and incomplete drains exit nonzero, including retries.\nTarget state is retained until a matching clean receipt; status reads preserve unverified state.\nNo target is a distinct no-op, never clean-drain certification; unbound incomplete evidence stays unverified.\nInspect OPENRIG_HOME/daemon-shutdown.json and daemon.log for the phase and outcome.\nThe bound covers asynchronous shutdown; an event-loop wedge still requires operator recovery.\n")
     .action(async () => {
       try {
-        await stopDaemon(getDeps());
-        console.log("Daemon stopped");
+        const outcome = await stopDaemon(getDeps());
+        console.log(outcome === "stopped" ? "Daemon stopped" : "No daemon target recorded; listener refused. Nothing to stop; prior drain not certified.");
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
@@ -260,7 +260,7 @@ export function daemonCommand(depsOverride?: LifecycleDeps): Command {
           console.log("Daemon stopped");
           break;
         case "stale":
-          console.log("Daemon stale (cleaned up)");
+          console.log("Daemon PID is absent (stale state)");
           break;
         case "unverified":
           // 1ae863d2 — C3 semantics: we could NOT confirm up or down; never claim stopped.

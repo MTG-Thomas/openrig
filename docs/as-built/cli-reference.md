@@ -40,7 +40,8 @@ control. See [the first-use journey](../reference/getting-started.md).
 
 ## Daemon shutdown
 
-`rig daemon stop` sends one SIGTERM to the daemon identified by its local state.
+`rig daemon stop` sends at most one SIGTERM to a live daemon identified by its
+local state.
 An explicit `OPENRIG_URL` that disagrees with that target refuses before signaling.
 The daemon has one referenced **10-second** budget covering asynchronous service
 shutdown, connections and recorder drain; repeated SIGINT/SIGTERM joins that stop.
@@ -51,9 +52,17 @@ listener and an unavailable probe are different outcomes.
 `$OPENRIG_HOME/daemon-shutdown.json` records the PID, shutdown start/completion,
 phase, failures and `clean|failed|timed-out` outcome. Only successful drains mark
 the lifecycle record clean. A failed/timed-out drain returns nonzero, including
-after the process exits; missing or stale receipt evidence is unverified and also
-returns nonzero. Older daemons without the receipt can therefore be proven stopped
-without their graceful drain being certified. Inspect the receipt and `daemon.log`;
+after the process exits. For a recorded target, missing or stale receipt evidence
+is unverified and also returns nonzero. Failed/unverified stops retain target
+state for retries; status reads only clean it after a matching clean receipt.
+An already-exited target uses the same receipt judgment without another signal.
+With no recorded target and a refused listener, the CLI reports a distinct
+no-target no-op, not a clean-drain verdict. Unbound incomplete or unreadable
+local shutdown evidence remains nonzero/unverified rather than being attributed
+to an unrelated listener.
+
+Older daemons without the receipt can therefore be proven stopped without their
+graceful drain being certified. Inspect the receipt and `daemon.log`;
 do not infer that pending external work completed or was rolled back, or retry it
 blindly. The bound covers asynchronous waits, not a synchronous event-loop wedge.
 

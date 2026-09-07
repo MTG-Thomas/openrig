@@ -59,7 +59,7 @@ export interface DaemonStatus {
 }
 
 export interface GetDaemonStatusOptions {
-  /** Preserve stale daemon state for observational callers. Lifecycle callers clean it by default. */
+  /** Observers may disable cleanup; only a matching clean shutdown permits removal. */
   cleanupStaleState?: boolean;
 }
 
@@ -343,7 +343,7 @@ function readState(deps: LifecycleDeps): DaemonState | null {
     return JSON.parse(raw) as DaemonState;
   } catch {
     // Malformed daemon.json — treat as no state
-    console.error("Warning: malformed daemon.json, treating as stopped");
+    console.error("Warning: malformed daemon.json; target identity unavailable");
     return null;
   }
 }
@@ -721,7 +721,34 @@ export async function startDaemon(opts: StartOptions, deps: LifecycleDeps): Prom
   return state;
 }
 
-export async function stopDaemon(deps: LifecycleDeps): Promise<void> {
+function readShutdownReceipt(deps: LifecycleDeps, stateFile: string) {
+  const receiptPath = path.join(path.dirname(stateFile), DAEMON_SHUTDOWN_RECEIPT);
+  const raw = deps.readFile(receiptPath);
+  let receipt: DaemonShutdownReceipt | undefined;
+  try { receipt = JSON.parse(raw ?? "null") ?? undefined; } catch { /* unavailable */ }
+  if (receipt?.schema !== "openrig.daemon-shutdown/v1" || !Number.isSafeInteger(receipt.pid) || receipt.pid <= 0
+    || !Number.isFinite(Date.parse(receipt.startedAt)) || !(Date.parse(receipt.completedAt) >= Date.parse(receipt.startedAt))
+    || !(Date.parse(receipt.completedAt) <= Date.now()) || typeof receipt.phase !== "string"
+    || !Array.isArray(receipt.failures) || !["clean", "failed", "timed-out"].includes(receipt.outcome)) receipt = undefined;
+  return { receipt, present: raw !== null || deps.exists(receiptPath), receiptPath };
+}
+
+function receiptMatchesState(receipt: DaemonShutdownReceipt | undefined, state: DaemonState, notBefore = Date.parse(state.startedAt)): boolean {
+  return receipt?.pid === state.pid && Date.parse(receipt.startedAt) >= notBefore;
+}
+
+function isCleanShutdown(receipt: DaemonShutdownReceipt | undefined): boolean {
+  return receipt?.outcome === "clean" && receipt.phase === "complete" && receipt.failures.length === 0;
+}
+
+function removeMatchingState(deps: LifecycleDeps, stateFile: string, state: DaemonState): void {
+  // A concurrent start/rebind must not have its state removed by an old stop/status.
+  const current = readState(deps);
+  if (current?.pid === state.pid && current.startedAt === state.startedAt && current.port === state.port
+    && current.host === state.host && current.db === state.db) deps.removeFile(stateFile);
+}
+
+export async function stopDaemon(deps: LifecycleDeps): Promise<"stopped" | "no-target"> {
   const state = readState(deps);
   const configured = resolveConfiguredDaemonTarget();
   const explicitUrl = readOpenRigEnv("OPENRIG_URL", "RIGGED_URL");
@@ -746,35 +773,33 @@ export async function stopDaemon(deps: LifecycleDeps): Promise<void> {
       throw new Error(`Daemon state is missing — cannot stop safely. Checked ${check}; listener ${effect}.` +
         (sibling ? ` Resolved home ${sibling.resolvedHome}; live sibling ${sibling.siblingHome}.` : ""));
     }
-    return;
+    const stateFile = resolveLifecycleFile(deps, "daemon.json");
+    if (deps.exists(stateFile)) {
+      throw new Error(`Daemon target state is unreadable; drain completion unverified. Checked ${check}; listener refused; no signal sent. Inspect ${stateFile}.`);
+    }
+    const prior = readShutdownReceipt(deps, stateFile);
+    if (prior.present && !isCleanShutdown(prior.receipt)) {
+      throw new Error(`Drain completion unverified: local shutdown evidence exists but no target state is recorded; cannot attribute it to ${target}. Checked ${check}; listener refused. Inspect ${prior.receiptPath}.`);
+    }
+    // No target is not a clean-drain verdict, including after an earlier clean stop.
+    return "no-target";
   }
   const stateFile = resolveLifecycleFile(deps, "daemon.json");
-  const removeMatchingState = () => {
-    // A concurrent start/rebind must not have its state removed by this stop.
-    const current = readState(deps);
-    if (current?.pid === state.pid && current.startedAt === state.startedAt && current.port === state.port) {
-      deps.removeFile(stateFile);
-    }
-  };
 
   const pidState = await checkPid(state, deps);
-  if (pidState === "dead") {
-    removeMatchingState();
-    const effect = await listener();
-    if (effect !== "refused") throw new Error(`Daemon PID ${state.pid} is absent; checked ${check}; listener ${effect}. Stop is unverified.`);
-    return;
-  }
   if (pidState === "not_openrig") {
-    removeMatchingState();
-    throw new Error(`Cannot stop safely: PID ${state.pid} is present but identity is not confirmed at ${check}; no signal sent, stale state removed.`);
+    throw new Error(`Cannot stop safely: PID ${state.pid} is present but identity is not confirmed at ${check}; no signal sent, state preserved.`);
   }
 
-  const requestedAt = Date.now();
-  deps.kill(state.pid, "SIGTERM");
-  // One signal. The daemon owns its bound; allow its entire budget plus exit slack.
-  const deadline = Date.now() + DAEMON_STOP_WAIT_MS;
-  while (deps.isProcessAlive(state.pid) && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 100));
+  let notBefore = Date.parse(state.startedAt);
+  if (pidState !== "dead") {
+    notBefore = Date.now();
+    deps.kill(state.pid, "SIGTERM");
+    // One signal. An already-exited target goes straight to the same judgment.
+    const deadline = Date.now() + DAEMON_STOP_WAIT_MS;
+    while (deps.isProcessAlive(state.pid) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
   const present = deps.isProcessAlive(state.pid);
   const effect = await listener();
@@ -783,20 +808,17 @@ export async function stopDaemon(deps: LifecycleDeps): Promise<void> {
     throw new Error(`Daemon did not exit after SIGTERM within ${DAEMON_STOP_WAIT_MS}ms; ${observation}` +
       (effect === "responding" ? " (still listening)" : "") + "; state file preserved.");
   }
-  removeMatchingState();
-  if (effect !== "refused") throw new Error(`Daemon stop verification is unverified: ${observation}.`);
+  if (effect !== "refused") throw new Error(`Daemon stop verification is unverified: ${observation}; state preserved.`);
 
-  let receipt: DaemonShutdownReceipt | undefined;
-  try { receipt = JSON.parse(deps.readFile(path.join(path.dirname(stateFile), DAEMON_SHUTDOWN_RECEIPT)) ?? "null") ?? undefined; } catch { /* unavailable */ }
-  if (receipt?.schema !== "openrig.daemon-shutdown/v1" || receipt.pid !== state.pid
-    || !(Date.parse(receipt.startedAt) >= requestedAt) || !(Date.parse(receipt.completedAt) >= Date.parse(receipt.startedAt))
-    || !(Date.parse(receipt.completedAt) <= Date.now()) || typeof receipt.phase !== "string"
-    || !Array.isArray(receipt.failures) || !["clean", "failed", "timed-out"].includes(receipt.outcome)) {
-    throw new Error(`Daemon process stopped; ${observation}; drain completion unverified (no matching shutdown receipt). Inspect ${path.join(path.dirname(stateFile), "daemon.log")}.`);
+  const { receipt, receiptPath } = readShutdownReceipt(deps, stateFile);
+  if (!receiptMatchesState(receipt, state, notBefore)) {
+    throw new Error(`Daemon process stopped; ${observation}; drain completion unverified (no matching shutdown receipt); state preserved. Inspect ${path.join(path.dirname(stateFile), "daemon.log")}.`);
   }
-  if (receipt.outcome !== "clean" || receipt.failures.length || receipt.phase !== "complete") {
-    throw new Error(`Daemon stopped with incomplete shutdown: ${receipt.outcome}; phase=${receipt.phase}; ${observation}. Pending effects are unverified; inspect ${path.join(path.dirname(stateFile), DAEMON_SHUTDOWN_RECEIPT)}.`);
+  if (!isCleanShutdown(receipt)) {
+    throw new Error(`Daemon stopped with incomplete shutdown: ${receipt!.outcome}; phase=${receipt!.phase}; ${observation}. Pending effects are unverified; state preserved; inspect ${receiptPath}.`);
   }
+  removeMatchingState(deps, stateFile, state);
+  return "stopped";
 }
 
 /** RULING 1ae863d2 — positive-down evidence classifier (lockstep with the daemon's
@@ -887,9 +909,11 @@ export async function getDaemonStatus(
   }
 
   if (!deps.isProcessAlive(state.pid)) {
-    // Process dead — stale state
-    if (options.cleanupStaleState !== false) {
-      deps.removeFile(resolveLifecycleFile(deps, "daemon.json"));
+    // A status read must not erase the identity needed to judge a failed stop.
+    const stateFile = resolveLifecycleFile(deps, "daemon.json");
+    const { receipt } = readShutdownReceipt(deps, stateFile);
+    if (options.cleanupStaleState !== false && receiptMatchesState(receipt, state) && isCleanShutdown(receipt)) {
+      removeMatchingState(deps, stateFile, state);
     }
     return { state: "stale" };
   }

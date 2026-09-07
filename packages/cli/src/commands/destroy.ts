@@ -70,7 +70,7 @@ function resolveRuntimeConfig(configStore: Pick<ConfigStore, "resolve">): Resolv
 function realDestroyDeps(): DestroyDeps {
   const lifecycleDeps = realDeps();
   return {
-    stopDaemon: async () => stopDaemon(lifecycleDeps),
+    stopDaemon: async () => { await stopDaemon(lifecycleDeps); },
     inspectListener: async (host: string, port: number): Promise<ListenerInspection> => {
       try {
         const res = await fetch(`http://${host}:${port}/healthz`);

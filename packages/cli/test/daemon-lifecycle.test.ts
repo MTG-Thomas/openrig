@@ -228,7 +228,7 @@ describe("Daemon Lifecycle", () => {
     });
 
     // Should not throw
-    await expect(stopDaemon(deps)).resolves.toBeUndefined();
+    await expect(stopDaemon(deps)).resolves.toBe("no-target");
   });
 
   it("stop: recovered running daemon without daemon.json -> throws honest error", async () => {
@@ -365,8 +365,8 @@ describe("Daemon Lifecycle", () => {
     }
   });
 
-  // Test 9: status stale (daemon.json exists, process dead) -> reports stale, cleans up
-  it("status: stale (daemon.json exists, pid dead) -> { state: 'stale' }, cleans up", async () => {
+  // A status read must preserve target identity when its shutdown is unverified.
+  it("status: stale with no shutdown receipt -> preserves unverified target", async () => {
     const state: DaemonState = { pid: 888, port: 7433, db: "x.db", startedAt: "2026-01-01T00:00:00Z" };
     const deps = mockDeps({
       exists: vi.fn((p: string) => p === STATE_FILE),
@@ -379,7 +379,7 @@ describe("Daemon Lifecycle", () => {
 
     const status = await getDaemonStatus(deps);
     expect(status.state).toBe("stale");
-    expect(deps.removeFile).toHaveBeenCalledWith(STATE_FILE);
+    expect(deps.removeFile).not.toHaveBeenCalled();
   });
 
   // Test 10: start --port flag stored in daemon.json and forwarded to env
@@ -775,8 +775,8 @@ describe("Daemon Lifecycle", () => {
     vi.useRealTimers();
   });
 
-  // Test 20: stop with stale PID (alive but not rig) -> cleans up state, no SIGTERM
-  it("stop: stale PID (alive but not rig) -> removes state, does not kill", async () => {
+  // A reused PID must receive no signal and must not erase unresolved stop identity.
+  it("stop: stale PID (alive but not rig) -> preserves state, does not kill", async () => {
     const state: DaemonState = { pid: 999, port: 7433, db: "x.db", startedAt: "2026-01-01T00:00:00Z" };
     const deps = mockDeps({
       exists: vi.fn((p: string) => p === STATE_FILE),
@@ -790,7 +790,7 @@ describe("Daemon Lifecycle", () => {
 
     await expect(stopDaemon(deps)).rejects.toThrow(/identity is not confirmed/);
     expect(deps.kill).not.toHaveBeenCalled();
-    expect(deps.removeFile).toHaveBeenCalledWith(STATE_FILE);
+    expect(deps.removeFile).not.toHaveBeenCalled();
   });
 
   it("stop: hanging healthz probe still issues SIGTERM and reports the unavailable final probe", async () => {
@@ -813,7 +813,7 @@ describe("Daemon Lifecycle", () => {
     await stopPromise;
 
     expect(deps.kill).toHaveBeenCalledWith(999, "SIGTERM");
-    expect(deps.removeFile).toHaveBeenCalledWith(STATE_FILE);
+    expect(deps.removeFile).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 
