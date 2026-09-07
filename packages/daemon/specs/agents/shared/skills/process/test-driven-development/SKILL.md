@@ -4,8 +4,8 @@ description: Use when implementing any feature or bugfix, before writing impleme
 metadata:
   openrig:
     vendored_from: "Obra Superpowers (https://github.com/obra/superpowers)"
-    vendoring_pattern: vendored-as-is
-    last_upstream_check: "2026-05-13 (diff against plugin source pulled 2026-05-11 = identical)"
+    vendoring_pattern: modify-the-file
+    last_upstream_check: "2026-05-13 (historical upstream comparison; local scope and preservation adaptations made since)"
 ---
 
 # Test-Driven Development (TDD)
@@ -20,18 +20,22 @@ Write the test first. Watch it fail. Write minimal code to pass.
 
 ## When to Use
 
-**Always:**
+**Use test-first for selected behavior where regression risk warrants it:**
 - New features
 - Bug fixes
 - Refactoring
 - Behavior changes
 
-**Exceptions (ask your human partner):**
+**Choose proportionate verification for work such as:**
 - Throwaway prototypes
 - Generated code
 - Configuration files
 
-Thinking "skip TDD just this once"? Stop. That's rationalization.
+Resolve the task's selected project/mission/slice procedure first. A required
+TDD step remains required within that scope; changing it needs the authority
+named by that selection. Outside it, choose verification that can detect the
+failure without adding a human approval ritual. The procedure below describes
+TDD when selected, not a completion gate for every kind of work.
 
 **Chunk size follows the outcome.** Keep red → green → refactor for the behavior
 being changed and build a coherent chunk. TDD does not require two people,
@@ -40,21 +44,17 @@ project/mission/slice component or wave selection. An explicitly selected gate
 still applies; an unselected role cannot add one.
 
 
-## The Iron Law
+## Test-First Contract for Selected Behavior
 
 ```
-NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST
+Selected TDD behavior: observe the expected failure before implementing the fix.
 ```
 
-Write code before the test? Delete it. Start over.
-
-**No exceptions:**
-- Don't keep it as "reference"
-- Don't "adapt" it while writing tests
-- Don't look at it
-- Delete means delete
-
-Implement fresh from tests. Period.
+Already wrote the implementation? Preserve existing and others' bytes. Establish
+the failing baseline in an isolated copy or by reversibly setting aside only
+your owned change, then implement from the behavioral test. This skill grants
+no authority to delete code. If a failing baseline cannot be demonstrated,
+record that limit and follow the selected procedure; do not call tests-after TDD.
 
 ## Red-Green-Refactor
 
@@ -124,7 +124,7 @@ Vague name, tests mock not code
 
 ### Verify RED - Watch It Fail
 
-**MANDATORY. Never skip.**
+**Required to establish RED in the selected TDD cycle.**
 
 ```bash
 npm test path/to/test.test.ts
@@ -179,7 +179,7 @@ Don't add features, refactor other code, or "improve" beyond the test.
 
 ### Verify GREEN - Watch It Pass
 
-**MANDATORY.**
+**Required to establish GREEN in the selected TDD cycle.**
 
 ```bash
 npm test path/to/test.test.ts
@@ -237,13 +237,11 @@ Manual testing is ad-hoc. You think you tested everything but:
 
 Automated tests are systematic. They run the same way every time.
 
-**"Deleting X hours of work is wasteful"**
+**"I already spent X hours on the implementation"**
 
-Sunk cost fallacy. The time is already gone. Your choice now:
-- Delete and rewrite with TDD (X more hours, high confidence)
-- Keep it and add tests after (30 min, low confidence, likely bugs)
-
-The "waste" is keeping code you can't trust. Working code without real tests is technical debt.
+Time spent does not prove behavior. Preserve the work and demonstrate that the
+test detects the missing behavior on a baseline without the owned change.
+Then verify the implementation against it. Report the actual sequence honestly.
 
 **"TDD is dogmatic, being pragmatic means adapting"**
 
@@ -267,21 +265,24 @@ Tests-first force edge case discovery before implementing. Tests-after verify yo
 
 ## Common Rationalizations
 
+These challenges apply within selected TDD work, not to an authorized choice
+of another verification method.
+
 | Excuse | Reality |
 |--------|---------|
-| "Too simple to test" | Simple code breaks. Test takes 30 seconds. |
+| "Too simple to test" | Simplicity alone does not waive a selected behavioral check. |
 | "I'll test after" | Tests passing immediately prove nothing. |
 | "Tests after achieve same goals" | Tests-after = "what does this do?" Tests-first = "what should this do?" |
 | "Already manually tested" | Ad-hoc ≠ systematic. No record, can't re-run. |
-| "Deleting X hours is wasteful" | Sunk cost fallacy. Keeping unverified code is technical debt. |
-| "Keep as reference, write tests first" | You'll adapt it. That's testing after. Delete means delete. |
-| "Need to explore first" | Fine. Throw away exploration, start with TDD. |
+| "Already spent X hours" | Time spent is not evidence; preserve the work and prove the failing baseline. |
+| "Keep as reference, write tests first" | Tests derived from the implementation risk repeating its assumptions; use the required behavior and a failing baseline. |
+| "Need to explore first" | Keep exploration separate from the implementation and begin the selected TDD cycle when the behavior is understood. |
 | "Test hard = design unclear" | Listen to test. Hard to test = hard to use. |
 | "TDD will slow me down" | TDD faster than debugging. Pragmatic = test-first. |
 | "Manual test faster" | Manual doesn't prove edge cases. You'll re-test every change. |
 | "Existing code has no tests" | You're improving it. Add tests for existing code. |
 
-## Red Flags - STOP and Start Over
+## Red Flags in Selected TDD Work
 
 - Code before test
 - Test after implementation
@@ -293,11 +294,13 @@ Tests-first force edge case discovery before implementing. Tests-after verify yo
 - "Tests after achieve the same purpose"
 - "It's about spirit not ritual"
 - "Keep as reference" or "adapt existing code"
-- "Already spent X hours, deleting is wasteful"
+- "Already spent X hours, so verification can wait"
 - "TDD is dogmatic, I'm being pragmatic"
 - "This is different because..."
 
-**All of these mean: Delete code. Start over with TDD.**
+Check whether the claimed RED → GREEN sequence actually happened. Repair the
+missing evidence using the preservation rule above; these signals never
+authorize deleting existing work.
 
 ## Example: Bug Fix
 
@@ -338,9 +341,9 @@ Extract validation for multiple fields if needed.
 
 ## Verification Checklist
 
-Before marking work complete:
+Before claiming the selected TDD work complete:
 
-- [ ] Every new function/method has a test
+- [ ] Tests cover the selected behavioral outcomes
 - [ ] Watched each test fail before implementing
 - [ ] Each test failed for expected reason (feature missing, not typo)
 - [ ] Wrote minimal code to pass each test
@@ -349,22 +352,25 @@ Before marking work complete:
 - [ ] Tests use real code (mocks only if unavoidable)
 - [ ] Edge cases and errors covered
 
-Can't check all boxes? You skipped TDD. Start over.
+An unmet selected check remains visible. Address it or obtain the disposition
+required by the selected procedure; do not turn this checklist into a gate on
+unselected work or erase code to make the history look test-first.
 
 ## When Stuck
 
 | Problem | Solution |
 |---------|----------|
-| Don't know how to test | Write wished-for API. Write assertion first. Ask your human partner. |
+| Don't know how to test | Write the desired API and assertion first. Consult the relevant peer or work owner if the behavior is unclear. |
 | Test too complicated | Design too complicated. Simplify interface. |
 | Must mock everything | Code too coupled. Use dependency injection. |
 | Test setup huge | Extract helpers. Still complex? Simplify design. |
 
 ## Debugging Integration
 
-Bug found? Write failing test reproducing it. Follow TDD cycle. Test proves fix and prevents regression.
+For a bug in selected TDD scope, write a failing test reproducing it. Follow the
+TDD cycle to demonstrate the fix and prevent regression.
 
-Never fix bugs without a test.
+Outside that scope, choose a proportionate regression check and retain its evidence.
 
 ## Testing Anti-Patterns
 
@@ -376,8 +382,9 @@ When adding mocks or test utilities, read @testing-anti-patterns.md to avoid com
 ## Final Rule
 
 ```
-Production code → test exists and failed first
-Otherwise → not TDD
+Selected TDD behavior → test exists and failed first
+Otherwise → do not claim a test-first sequence
 ```
 
-No exceptions without your human partner's permission.
+Honor explicitly selected gates and their decision owner. This skill adds no
+universal human permission step, deletion authority or gate on unselected work.

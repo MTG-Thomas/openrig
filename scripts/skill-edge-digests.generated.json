@@ -48,7 +48,7 @@
       "process/systematic-debugging/defense-in-depth.md": "1e175fb86fc357e58c6aebf5441e481e1b7868b4380c0456b63a17eefbd18ba7",
       "process/systematic-debugging/find-polluter.sh": "a9b088099dde5a07e303de5ecf07604f2b9b608770125b481c8db52b85227c51",
       "process/systematic-debugging/root-cause-tracing.md": "a81bee9448794d261b4aca8487c595d11ff4bd4e10a5f96bca1117dd32527050",
-      "process/test-driven-development/SKILL.md": "a8ad3479224a979568c20ec09e6ae19ab68bedf6df74bb9dde4a72c02da2eb24",
+      "process/test-driven-development/SKILL.md": "51f65d2bc71dd6fc84640bf113acf287f4e003ef325ed91cb112fce59149a298",
       "process/test-driven-development/testing-anti-patterns.md": "bde453bc258f06543987477c837939afaa774ea2acbd9f308d702fc452bc4283",
       "process/verification-before-completion/SKILL.md": "0b8cea0bb82a8ab0f015afaf84c87796e2c94eee3a83d4fa3d4461d0917950bd"
     },
@@ -79,7 +79,7 @@
       "openrig-operating-model/templates/SOP.md": "1eaf0daf4f9bbf0715e6a5aaf0f29f030af5fe8b8a10232488ee97c507afa6dc",
       "openrig-operating-model/templates/SPEC.md": "f126536daa59cea3f1cfb0898d83c7cdf99f6392f6f155ea64fe55187dd0f5f1",
       "openrig-skills/SKILL.md": "af08e74804de4f72d8ca85536f4294c5ab6050bfda7761b05e0747622ae17cca",
-      "openrig-user/SKILL.md": "147be6d97427affe2c4c495a5e3302d341542f0f42d7ebb018dbd0a879b88644",
+      "openrig-user/SKILL.md": "ed43062826294ad6879c125197b7d5752396372ac80b25a2f36e89afd617ae33",
       "orienting-to-an-inherited-seat/CHANGELOG.md": "4d0970e75e5c15b00a48d6a7150376d646257777264fd1b9a191165a8d5a6e84",
       "orienting-to-an-inherited-seat/SKILL.md": "4d2bb1f0dd522b0b956bf2191ce2121c36590936e217121f781525f77f8229a9",
       "queue-handoff/SKILL.md": "118942b0b67d5b0a0c522e12b2e1579ee7610dee278944e653f112853c269a99",
@@ -142,7 +142,7 @@
       "process/systematic-debugging/defense-in-depth.md": "1e175fb86fc357e58c6aebf5441e481e1b7868b4380c0456b63a17eefbd18ba7",
       "process/systematic-debugging/find-polluter.sh": "a9b088099dde5a07e303de5ecf07604f2b9b608770125b481c8db52b85227c51",
       "process/systematic-debugging/root-cause-tracing.md": "a81bee9448794d261b4aca8487c595d11ff4bd4e10a5f96bca1117dd32527050",
-      "process/test-driven-development/SKILL.md": "a8ad3479224a979568c20ec09e6ae19ab68bedf6df74bb9dde4a72c02da2eb24",
+      "process/test-driven-development/SKILL.md": "51f65d2bc71dd6fc84640bf113acf287f4e003ef325ed91cb112fce59149a298",
       "process/test-driven-development/testing-anti-patterns.md": "bde453bc258f06543987477c837939afaa774ea2acbd9f308d702fc452bc4283",
       "process/verification-before-completion/SKILL.md": "0b8cea0bb82a8ab0f015afaf84c87796e2c94eee3a83d4fa3d4461d0917950bd"
     }

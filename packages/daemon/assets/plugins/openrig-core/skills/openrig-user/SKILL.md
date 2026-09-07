@@ -286,7 +286,7 @@ OpenRig sets only a **minimal usability floor** on your harness permissions and 
 
 - **POLICY MODE** — pick a built-in policy and have it applied:
   - **Locked** — deny-by-default whitelist; untrusted rigs/work.
-  - **Standard** ⭐ (recommended) — the normal software-factory posture; dev incl. push + PR, destructive actions ask.
+  - **Standard** ⭐ (recommended) — routine development including push is allowed; PR creation, publication, merge/release, force-push and destructive actions ask.
   - **Open** — allow-by-default; everything except explicitly-destructive, which ask.
 
   The built-in definitions ship as read-only policy spec files (Locked / Standard / Open); applying your pick is the job of the **`applying-a-permission-policy`** skill — it translates the chosen spec into your live harness config (Claude `settings.json` / Codex `config.toml`), interactively, showing the diff before it writes.
@@ -762,7 +762,7 @@ rig send <session> "message" --json
 - `--raw` — send exact text/keystrokes without the From/To messaging envelope (still guarded against interactive prompts).
 - `--dangerously-interact --reason "<why>"` — the ONLY override of the prompt/permission guard: deliberately drive an interactive prompt/permission block (implies `--raw`, requires `--reason`, audit-logged).
 - `--host <id>` — send on a remote host declared in `~/.openrig/hosts.yaml` (ssh hosts shell out; http hosts go CLI-direct to the remote daemon).
-- `--from <session>` — originating session for the envelope sender/actor (provenance; defaults to `$OPENRIG_SESSION_NAME`, and is plumbed through cross-host sends so the remote envelope names the origin, not the relay).
+- `--from <session>` — deprecated and ignored; it does not select the sender. Sender identity comes from the current seat and transport provenance; cross-host envelopes use the durable local origin, not the supplied flag or a relay identity.
 - `--context <ref>` **(0.5.0)** — attach a composed context pack/piece by ref (see "Context packs and paced delivery"). Small piece → `send --context`; a real pack → `rig walk`. The noun `rig context` composes the ref; the verb delivers it.
 
 > **Durable work goes to the QUEUE, not `send`.** `rig send` is an *ephemeral* message to a pane — it can be missed, and its delivery status is pane-render, not receipt. If you are **assigning work, or the message is important enough that losing it would be a real bummer**, use `rig queue` (below): it's durable, owned, tracked, and survives compaction and restart. Reach for `send` for a quick conversational nudge; reach for the **queue** for anything that must not get lost. Do not default to `send` for work — that's the most common mistake.
