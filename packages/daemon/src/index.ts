@@ -1,4 +1,6 @@
 import { serve, type ServerType } from "@hono/node-server";
+import path from "node:path";
+import { createDaemonShutdown, DAEMON_SHUTDOWN_RECEIPT } from "./daemon-shutdown.js";
 import { readOpenRigEnv, OPENRIG_HOME } from "./openrig-compat.js";
 import { makeOperatorDeliveryEngine } from "./domain/gateway/operator-delivery-engine.js";
 import { resolveDaemonDbPath } from "./daemon-db-path.js";
@@ -366,93 +368,38 @@ export async function startServer(port?: number) {
   // exit so any in-flight policy evaluation completes (or is awaited).
   // Multi-bind: close every serve() instance in parallel.
   deps.healthDiagnosis?.start();
-  const shutdown = async (sig: string) => {
-    await deps.healthDiagnosis?.stop();
-    console.log(`OpenRig daemon received ${sig}; shutting down`);
-    try {
-      await deps.watchdogScheduler?.stop();
-    } catch (err) {
-      console.error("[watchdog] shutdown error", err);
-    }
-    try {
-      deps.seatActivityService?.stop();
-      deps.seatStructuralActivityService?.stop();
-    } catch (err) {
-      console.error("[seat-activity] shutdown error", err);
-    }
-    try {
-      deps.seatIdentityReconciler?.stop();
-    } catch (err) {
-      console.error("[seat-identity] shutdown error", err);
-    }
-    try {
-      deps.periodicSnapshotScheduler?.stop();
-    } catch (err) {
-      console.error("[periodic-snapshot] shutdown error", err);
-    }
-    // S10 — stop the in-daemon gateway subsystem (durable buffer keeps un-Acked
-    // decisions; they replay on the next boot's activation).
-    try {
-      deps.gatewaySubsystem?.stop();
-    } catch (err) {
-      console.error("[gateway] shutdown error", err);
-    }
-    try {
-      if (retentionTimer) clearInterval(retentionTimer);
-      if (stuckSweepTimer) clearInterval(stuckSweepTimer);
-      if (wakeLadderScheduler) {
-        try {
-          await wakeLadderScheduler.stop();
-        } catch (err) {
-          console.error("[wake-ladder] shutdown error", err);
+  const shutdown = createDaemonShutdown({
+    receiptPath: path.join(OPENRIG_HOME, DAEMON_SHUTDOWN_RECEIPT),
+    phases: [
+      ["timers", () => {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        if (retentionTimer) clearInterval(retentionTimer);
+        if (stuckSweepTimer) clearInterval(stuckSweepTimer);
+      }],
+      ["health-diagnosis", () => deps.healthDiagnosis?.stop()],
+      ["watchdog", () => deps.watchdogScheduler?.stop()],
+      ["seat-activity", () => deps.seatActivityService?.stop()],
+      ["seat-structural-activity", () => deps.seatStructuralActivityService?.stop()],
+      ["seat-identity", () => deps.seatIdentityReconciler?.stop()],
+      ["periodic-snapshot", () => deps.periodicSnapshotScheduler?.stop()],
+      ["gateway", () => deps.gatewaySubsystem?.stop()],
+      ["wake-ladder", () => wakeLadderScheduler?.stop()],
+      ["event-loop-monitor", () => eventLoopMonitor.stop()],
+      ["connections", () => Promise.all(servers.map((srv) => new Promise<void>((resolve, reject) => {
+        srv.close((error) => error ? reject(error) : resolve());
+      })))],
+      ["recorder", async () => {
+        if (await drainSlowOpRecorderOnShutdown(deps.slowOpRecorder) !== 0) {
+          throw new Error("slow-operation recorder drain incomplete; records may be lost");
         }
-      }
-    } catch (err) {
-      console.error("[queue-retention] shutdown error", err);
-    }
-    // P7 write-order pin: stop the heartbeat timer BEFORE the stop-write, so no
-    // stray tick can advance last-seen after stopped_at (the store also guards
-    // not-stopped as belt-and-suspenders).
-    try {
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
-    } catch (err) {
-      console.error("[lifecycle-heartbeat] shutdown error", err);
-    }
-    // P7 — the clean-shutdown mark for THIS epoch, AFTER the timer is stopped. A
-    // failed stop-write surfaces as no-clean-shutdown (render sees no stopped_at),
-    // never a false clean.
-    try {
-      deps.daemonLifecycleStore.recordStop(deps.daemonBootEpoch, new Date().toISOString());
-    } catch (err) {
-      console.error("[lifecycle-stop] stop-write failed — no clean shutdown recorded", err);
-    }
-    try {
-      // OPR.0.4.3.21 — disable the event-loop histogram + clear its tick interval.
-      eventLoopMonitor.stop();
-    } catch (err) {
-      console.error("[event-loop-monitor] shutdown error", err);
-    }
-    await Promise.all(
-      servers.map(
-        (srv) =>
-          new Promise<void>((resolve) => {
-            try {
-              srv.close(() => resolve());
-            } catch {
-              resolve();
-            }
-          }),
-      ),
-    );
-    // OPR.0.4.3.21 (51elv2) — drain the slow-operation recorder AFTER services
-    // and HTTP servers have stopped, but before exit. A clean drain keeps exit
-    // 0; a timeout / rejection / terminal recorder failure is logged and exits
-    // nonzero so a lost drain never masquerades as a clean shutdown.
-    const slowOpExitCode = await drainSlowOpRecorderOnShutdown(deps.slowOpRecorder);
-    process.exit(slowOpExitCode);
-  };
-  process.once("SIGINT", () => void shutdown("SIGINT"));
-  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+      }],
+    ],
+    // A service failure, open connection, or lost recorder drain is never clean.
+    markClean: () => deps.daemonLifecycleStore.recordStop(deps.daemonBootEpoch, new Date().toISOString()),
+  });
+  // Repeated signals join the first shutdown instead of bypassing its evidence.
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 
   // Backward-compatible single-server return (callers that just need a
   // handle reference; multi-bind shutdown is wired via signal handlers).

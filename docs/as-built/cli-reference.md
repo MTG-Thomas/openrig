@@ -38,6 +38,25 @@ The kernel view uses TUI instance `kernel`; standalone uses its ordinary
 instance. `rig tui commands --json` exposes the command registry for agent
 control. See [the first-use journey](../reference/getting-started.md).
 
+## Daemon shutdown
+
+`rig daemon stop` sends one SIGTERM to the daemon identified by its local state.
+An explicit `OPENRIG_URL` that disagrees with that target refuses before signaling.
+The daemon has one referenced **10-second** budget covering asynchronous service
+shutdown, connections and recorder drain; repeated SIGINT/SIGTERM joins that stop.
+The CLI allows **12 seconds** for process exit, then verifies the original PID and
+listener even if `daemon.json` was removed. A refused listener, a responding
+listener and an unavailable probe are different outcomes.
+
+`$OPENRIG_HOME/daemon-shutdown.json` records the PID, shutdown start/completion,
+phase, failures and `clean|failed|timed-out` outcome. Only successful drains mark
+the lifecycle record clean. A failed/timed-out drain returns nonzero, including
+after the process exits; missing or stale receipt evidence is unverified and also
+returns nonzero. Older daemons without the receipt can therefore be proven stopped
+without their graceful drain being certified. Inspect the receipt and `daemon.log`;
+do not infer that pending external work completed or was rolled back, or retry it
+blindly. The bound covers asynchronous waits, not a synchronous event-loop wedge.
+
 ## Human delivery
 
 `rig gateway human list --json` discovers registered `<entityId>@external`

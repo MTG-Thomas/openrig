@@ -5,6 +5,10 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
+    "./daemon-shutdown": {
+      "types": "./dist/daemon-shutdown.d.ts",
+      "import": "./dist/daemon-shutdown.js"
+    },
     "./crash-cart": {
       "types": "./dist/crash-cart-surface.d.ts",
       "import": "./dist/crash-cart-surface.js"

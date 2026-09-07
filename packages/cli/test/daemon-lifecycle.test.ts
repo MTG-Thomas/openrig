@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import path from "node:path";
 import type { ChildProcess } from "node:child_process";
 import {
@@ -19,6 +19,13 @@ import {
   type LifecycleDeps,
   type DaemonState,
 } from "../src/daemon-lifecycle.js";
+
+afterEach(() => vi.useRealTimers());
+
+function cleanReceipt(pid: number): string {
+  const now = new Date().toISOString();
+  return JSON.stringify({ schema: "openrig.daemon-shutdown/v1", pid, startedAt: now, completedAt: now, outcome: "clean", phase: "complete", failures: [] });
+}
 
 function neverFetch(): Promise<{ ok: boolean }> {
   return new Promise(() => {});
@@ -199,8 +206,9 @@ describe("Daemon Lifecycle", () => {
       exists: vi.fn((p: string) => p === STATE_FILE),
       readFile: vi.fn((p: string) => {
         if (p === STATE_FILE) return JSON.stringify(state);
-        return null;
+        return p.endsWith("daemon-shutdown.json") ? cleanReceipt(555) : null;
       }),
+      fetch: vi.fn().mockResolvedValueOnce({ ok: true }).mockRejectedValue(new Error("refused")),
       isProcessAlive: vi.fn()
         .mockReturnValueOnce(true)   // first check: alive
         .mockReturnValueOnce(false), // after kill: dead
@@ -543,7 +551,8 @@ describe("Daemon Lifecycle", () => {
       expect(out.join("\n")).not.toContain("Daemon stopped");
       expect(err.join("\n")).toContain("http://127.0.0.1:7555");
       expect(err.join("\n")).toMatch(/healthz|health check/i);
-      expect(err.join("\n")).toMatch(/still listening|still running/i);
+      expect(err.join("\n")).toMatch(/does not match.*no signal sent/i);
+      expect(deps.kill).not.toHaveBeenCalled();
     } finally {
       console.log = origLog;
       console.error = origErr;
@@ -602,13 +611,13 @@ describe("Daemon Lifecycle", () => {
     const savedExitCode = process.exitCode;
     process.env.OPENRIG_URL = "http://127.0.0.1:7555";
     process.exitCode = undefined;
-    const state: DaemonState = { pid: 555, port: 7433, db: "openrig.sqlite", startedAt: "2026-01-01T00:00:00Z" };
+    const state: DaemonState = { pid: 555, port: 7555, db: "openrig.sqlite", startedAt: "2026-01-01T00:00:00Z" };
     const fetch = vi.fn()
       .mockResolvedValueOnce({ ok: true })
       .mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
     const deps = mockDeps({
       exists: vi.fn((p: string) => p === STATE_FILE),
-      readFile: vi.fn((p: string) => p === STATE_FILE ? JSON.stringify(state) : null),
+      readFile: vi.fn((p: string) => p === STATE_FILE ? JSON.stringify(state) : p.endsWith("daemon-shutdown.json") ? cleanReceipt(555) : null),
       isProcessAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
       fetch,
     });
@@ -779,12 +788,12 @@ describe("Daemon Lifecycle", () => {
       fetch: vi.fn(async () => { throw new Error("connection refused"); }),
     });
 
-    await stopDaemon(deps);
+    await expect(stopDaemon(deps)).rejects.toThrow(/identity is not confirmed/);
     expect(deps.kill).not.toHaveBeenCalled();
     expect(deps.removeFile).toHaveBeenCalledWith(STATE_FILE);
   });
 
-  it("stop: hanging healthz probe still issues SIGTERM and completes boundedly", async () => {
+  it("stop: hanging healthz probe still issues SIGTERM and reports the unavailable final probe", async () => {
     vi.useFakeTimers();
     const state: DaemonState = { pid: 999, port: 7433, db: "x.db", startedAt: "2026-01-01T00:00:00Z" };
     const deps = mockDeps({
@@ -799,7 +808,7 @@ describe("Daemon Lifecycle", () => {
       fetch: vi.fn(() => neverFetch()),
     });
 
-    const stopPromise = stopDaemon(deps);
+    const stopPromise = expect(stopDaemon(deps)).rejects.toThrow(/unverified.*listener unavailable/i);
     await vi.runAllTimersAsync();
     await stopPromise;
 
@@ -861,13 +870,13 @@ describe("Daemon Lifecycle", () => {
       exists: vi.fn((p: string) => p === STATE_FILE),
       readFile: vi.fn((p: string) => {
         if (p === STATE_FILE) return JSON.stringify(state);
-        return null;
+        return p.endsWith("daemon-shutdown.json") ? cleanReceipt(999) : null;
       }),
       isProcessAlive: vi.fn()
         .mockReturnValueOnce(true)  // checkPid: alive
         .mockReturnValueOnce(false), // after kill: dead
       // healthz responds (non-ok) → still rig
-      fetch: vi.fn(async () => ({ ok: false })),
+      fetch: vi.fn().mockResolvedValueOnce({ ok: false }).mockRejectedValue(new Error("refused")),
     });
 
     await stopDaemon(deps);

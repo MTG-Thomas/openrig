@@ -1,6 +1,7 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import type { ChildProcess } from "node:child_process";
+import { DAEMON_STOP_WAIT_MS, DAEMON_SHUTDOWN_RECEIPT, type DaemonShutdownReceipt } from "@openrig/daemon/daemon-shutdown";
 import { ConfigStore } from "./config-store.js";
 import { OPENRIG_HOME, LEGACY_RIGGED_HOME, readOpenRigEnv } from "./openrig-compat.js";
 import {
@@ -722,53 +723,79 @@ export async function startDaemon(opts: StartOptions, deps: LifecycleDeps): Prom
 
 export async function stopDaemon(deps: LifecycleDeps): Promise<void> {
   const state = readState(deps);
-  if (!state) {
-    const configured = resolveConfiguredDaemonTarget();
-    let recoveredRunning = false;
+  const configured = resolveConfiguredDaemonTarget();
+  const explicitUrl = readOpenRigEnv("OPENRIG_URL", "RIGGED_URL");
+  const stateUrl = state ? `http://${state.host ?? DEFAULT_HOST}:${state.port}` : undefined;
+  const target = stateUrl ?? explicitUrl?.replace(/\/+$/, "") ?? `http://${configured.host}:${configured.port}`;
+  if (stateUrl && explicitUrl && new URL(explicitUrl).origin !== new URL(stateUrl).origin) {
+    throw new Error(`Cannot stop safely: addressed ${explicitUrl}/healthz does not match local PID ${state!.pid} at ${stateUrl}/healthz; no signal sent.`);
+  }
+  const check = `${target}/healthz`;
+  const listener = async (): Promise<"responding" | "refused" | "unavailable"> => {
     try {
-      await fetchDaemonProbe(deps, `http://${configured.host}:${configured.port}/healthz`, HEALTHZ_PROBE_TIMEOUT_MS);
-      recoveredRunning = true;
-    } catch (err) {
-      if (err instanceof HealthProbeTimeoutError) {
-        throw new Error(`Daemon state is missing and port ${configured.port} is unresponsive — cannot stop safely.`);
-      }
+      await fetchDaemonProbe(deps, check, HEALTHZ_PROBE_TIMEOUT_MS);
+      return "responding";
+    } catch (error) {
+      return isRefusedError(error) ? "refused" : "unavailable";
     }
-    if (recoveredRunning) {
-      throw new Error(`Daemon is running on port ${configured.port}, but daemon state is missing — cannot stop safely.`);
+  };
+  if (!state) {
+    const effect = await listener();
+    const sibling = findSiblingHome(deps);
+    if (effect !== "refused" || sibling) {
+      throw new Error(`Daemon state is missing — cannot stop safely. Checked ${check}; listener ${effect}.` +
+        (sibling ? ` Resolved home ${sibling.resolvedHome}; live sibling ${sibling.siblingHome}.` : ""));
     }
     return;
   }
   const stateFile = resolveLifecycleFile(deps, "daemon.json");
+  const removeMatchingState = () => {
+    // A concurrent start/rebind must not have its state removed by this stop.
+    const current = readState(deps);
+    if (current?.pid === state.pid && current.startedAt === state.startedAt && current.port === state.port) {
+      deps.removeFile(stateFile);
+    }
+  };
 
   const pidState = await checkPid(state, deps);
   if (pidState === "dead") {
-    // Already dead — clean up stale state
-    deps.removeFile(stateFile);
+    removeMatchingState();
+    const effect = await listener();
+    if (effect !== "refused") throw new Error(`Daemon PID ${state.pid} is absent; checked ${check}; listener ${effect}. Stop is unverified.`);
     return;
   }
   if (pidState === "not_openrig") {
-    // PID alive but not our daemon (reused PID) — clean up state, don't kill
-    deps.removeFile(stateFile);
-    return;
+    removeMatchingState();
+    throw new Error(`Cannot stop safely: PID ${state.pid} is present but identity is not confirmed at ${check}; no signal sent, stale state removed.`);
   }
 
-  // pidState === "openrig" or "unresponsive" — safe to SIGTERM
+  const requestedAt = Date.now();
   deps.kill(state.pid, "SIGTERM");
-
-  // Wait briefly for process to exit
-  let exited = false;
-  for (let i = 0; i < 20; i++) {
-    if (!deps.isProcessAlive(state.pid)) {
-      exited = true;
-      break;
-    }
+  // One signal. The daemon owns its bound; allow its entire budget plus exit slack.
+  const deadline = Date.now() + DAEMON_STOP_WAIT_MS;
+  while (deps.isProcessAlive(state.pid) && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 100));
   }
+  const present = deps.isProcessAlive(state.pid);
+  const effect = await listener();
+  const observation = `targeted ${target}; checked ${check}; PID ${state.pid} ${present ? "present" : "absent"}; listener ${effect}`;
+  if (present) {
+    throw new Error(`Daemon did not exit after SIGTERM within ${DAEMON_STOP_WAIT_MS}ms; ${observation}` +
+      (effect === "responding" ? " (still listening)" : "") + "; state file preserved.");
+  }
+  removeMatchingState();
+  if (effect !== "refused") throw new Error(`Daemon stop verification is unverified: ${observation}.`);
 
-  if (exited) {
-    deps.removeFile(stateFile);
-  } else {
-    throw new Error(`Daemon (pid ${state.pid}) did not exit after SIGTERM — state file preserved`);
+  let receipt: DaemonShutdownReceipt | undefined;
+  try { receipt = JSON.parse(deps.readFile(path.join(path.dirname(stateFile), DAEMON_SHUTDOWN_RECEIPT)) ?? "null") ?? undefined; } catch { /* unavailable */ }
+  if (receipt?.schema !== "openrig.daemon-shutdown/v1" || receipt.pid !== state.pid
+    || !(Date.parse(receipt.startedAt) >= requestedAt) || !(Date.parse(receipt.completedAt) >= Date.parse(receipt.startedAt))
+    || !(Date.parse(receipt.completedAt) <= Date.now()) || typeof receipt.phase !== "string"
+    || !Array.isArray(receipt.failures) || !["clean", "failed", "timed-out"].includes(receipt.outcome)) {
+    throw new Error(`Daemon process stopped; ${observation}; drain completion unverified (no matching shutdown receipt). Inspect ${path.join(path.dirname(stateFile), "daemon.log")}.`);
+  }
+  if (receipt.outcome !== "clean" || receipt.failures.length || receipt.phase !== "complete") {
+    throw new Error(`Daemon stopped with incomplete shutdown: ${receipt.outcome}; phase=${receipt.phase}; ${observation}. Pending effects are unverified; inspect ${path.join(path.dirname(stateFile), DAEMON_SHUTDOWN_RECEIPT)}.`);
   }
 }
 

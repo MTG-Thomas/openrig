@@ -6,7 +6,6 @@ import {
   startDaemon,
   stopDaemon,
   getDaemonStatus,
-  getDaemonUrl,
   readLogs,
   tailLogs,
   type LifecycleDeps,
@@ -215,29 +214,11 @@ export function daemonCommand(depsOverride?: LifecycleDeps): Command {
 
   cmd
     .command("stop")
-    .description("Stop the daemon")
+    .description("Stop the daemon (10s shutdown budget; 12s process wait; incomplete drain exits nonzero)")
+    .addHelpText("after", "\nSends one SIGTERM and verifies the original PID and listener. Repeated signals join shutdown.\nA missing/stale receipt is unverified; failed or timed-out drain exits nonzero even after the PID exits.\nInspect OPENRIG_HOME/daemon-shutdown.json and daemon.log for the phase and outcome.\nThe bound covers asynchronous shutdown; an event-loop wedge still requires operator recovery.\n")
     .action(async () => {
       try {
-        const deps = getDeps();
-        let stopError: unknown;
-        try {
-          await stopDaemon(deps);
-        } catch (err) {
-          stopError = err;
-        }
-        const status = await getDaemonStatus(deps);
-        if (status.state !== "stopped" && status.state !== "stale") {
-          const configuredTarget = process.env.OPENRIG_URL || process.env.RIGGED_URL;
-          const target = configuredTarget?.replace(/\/+$/, "")
-            ?? (status.port !== undefined ? getDaemonUrl(status) : "the daemon selected by the active OpenRig configuration");
-          const check = `${target}/healthz`;
-          const stopCause = stopError instanceof Error ? ` Stop request reported: ${stopError.message}` : "";
-          if (status.state === "running") {
-            throw new Error(`Daemon stop verification failed: targeted ${target}; checked ${check}; the daemon is still listening.${stopCause}`);
-          }
-          throw new Error(`Daemon stop verification was inconclusive: targeted ${target}; checked ${check}; verified-down evidence was not observed (state=${status.state}).${stopCause}`);
-        }
-        if (stopError) throw stopError;
+        await stopDaemon(getDeps());
         console.log("Daemon stopped");
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
