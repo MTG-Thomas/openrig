@@ -70,7 +70,7 @@ export function workflowDetail(execution: ExecutionViewSnap, key: string, width:
     const steps = rows(instance.steps);
     const obligations = rows(instance.boundary_obligations);
     const hasBoundary = obligations.some((o) => o.stepId === "release-boundary");
-    lines.push(sectionRule(hasBoundary ? "Release ceremony and post-release housekeeping" : "Obligations", width), { text: "  Receipt recorded means attributed evidence exists; it does not establish acceptance." });
+    lines.push(sectionRule(hasBoundary ? "Release ceremony and post-release housekeeping" : "Obligations", width), { text: "  Receipt recorded means an attributed evidence reference was recorded; it does not establish acceptance." });
     for (const obligation of obligations) {
       const label = obligation.stepId === "release-boundary" ? "Post-release housekeeping · release boundary" : obligation.stepId === "activate-successor" ? "Optional successor · activate successor" : words(obligation.stepId);
       lines.push({ text: `  ${label} · ${obligation.required ? "required" : "extension"} · ${text(obligation.state)} · receipt ${text(obligation.receiptState)}` });

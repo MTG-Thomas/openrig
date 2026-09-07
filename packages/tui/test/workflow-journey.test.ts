@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse, stringify } from "yaml";
@@ -68,7 +68,7 @@ describe("connected workflow journey", () => {
     view.dispatch(parseCommand(`workflow ${run.instance.instanceId}`));
     let detail = workflowDetail(snap.execution!, `workflow:${run.instance.instanceId}`, 90)!.map((l) => l.text).join("\n");
     expect(detail).toContain("receipt missing");
-    expect(detail).toContain("does not establish acceptance");
+    expect(detail.replace(/\s+/g, " ")).toContain("does not establish acceptance");
     expect(detail).toContain("Post-release housekeeping");
     expect(detail).toContain("No successor activation step is bound");
     expect(detail).toContain("project-profile");
@@ -107,6 +107,8 @@ describe("connected workflow journey", () => {
     expect(detail).toContain("No current work packet · workflow completed");
     expect(detail).not.toContain("receipt missing");
     expect(detail).toContain("proof/release-boundary.md");
+    expect(existsSync(join(f.missionPath, "proof", "release-boundary.md"))).toBe(false);
+    expect(detail.replace(/\s+/g, " ")).toContain("Receipt recorded means an attributed evidence reference was recorded; it does not establish acceptance.");
     expect(detail).toContain("orch@example");
     for (const cols of [60, 84, 120]) {
       const screen = renderScreen(view.get(), snap, { cols, rows: 24 });
