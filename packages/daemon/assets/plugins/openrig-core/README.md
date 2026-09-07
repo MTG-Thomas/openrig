@@ -27,11 +27,30 @@ All other skills are cross-runtime by design.
 
 ## Distribution
 
-**At v0 (today):** the vendored copy inside the OpenRig npm package is the source of truth. When you install `@openrig/cli` (or run the daemon), `openrig-core/` is copied to `~/.openrig/plugins/openrig-core/` on first run. This is the offline-safe baseline and is always available.
+The npm package includes an offline baseline under the daemon's
+`assets/plugins/openrig-core/`. The daemon resolves local plugin authority before
+attempting a network fetch, using the configured OpenRig home (normally
+`~/.openrig/plugins/openrig-core/` for the installed copy):
 
-**Auto-fetch from GitHub at v0:** the OpenRig daemon probes `github.com/mvschwarz/openrig-plugins/releases/latest/download/openrig-core.tar.gz` on launch with a 5s timeout. **At v0 the success path only logs the response and does NOT extract a tarball, compare versions, or update the local copy** — extraction + version-compare + update are scoped to a later marketplace-consumption phase (mission slice 3.6). 404 (the expected normal-state response while the GitHub repo is empty), network errors, and timeouts are all tolerated silently with the vendored copy remaining authoritative.
+| Installed state | Local vendoring behavior |
+| --- | --- |
+| Absent | Seed the bundled plugin. |
+| Older manifest version | Advance files from the newer bundled version. |
+| Equal manifest version | Preserve installed content; executable modes may be reconciled on byte-identical files. |
+| Newer manifest version | Preserve the installed copy. |
 
-**Future (slice 3.6, marketplace-consumption phase):** when the GitHub releases workflow is set up and authorization to publish lands, the daemon will start extracting fetched tarballs + comparing versions + updating the local copy as the "hot update" path that skips OpenRig CLI version bumps.
+Version authority comes from the plugin manifests. An existing directory without
+a manifest is left unchanged; invalid or disagreeing manifest versions are
+reported rather than guessed. Updating the CLI therefore does not unconditionally
+overwrite an equal/newer or independently managed plugin copy.
+
+After local resolution, the daemon attempts the GitHub release endpoint for
+`openrig-core.tar.gz` with a five-second timeout. This path currently fetches and
+logs the response only: it does not extract the archive, compare its version, or
+install its content. Fetch failures, including 404 and network errors, leave the
+resolved local copy in place. A successful fetch also leaves it unchanged.
+This describes the fetch implementation, not a claim that a release artifact is
+currently available at the external repository.
 
 You can also install directly via Claude Code or Codex's own plugin commands if you prefer to manage plugins outside OpenRig.
 
