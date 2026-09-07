@@ -63,9 +63,10 @@ unseen — which makes messages the one delivery channel that never gets skipped
   consequential delivery gets an effect check at the far end rather than a blind retry. A
   producer-link advisory reading `no_activity_signal` means activity could not be determined;
   confirm by effect, never relaunch on it.
-- **`rig send --raw`** / **`--dangerously-interact --reason "<why>"`** — a seat is frozen on an
-  interactive prompt or a permission block. Normal `send` *refuses* to answer a prompt on purpose;
-  this is the deliberate override, and it is how you unblock a peer who cannot unblock itself.
+- **`rig send --raw`** — send exact text or keystrokes without the From/To envelope;
+  the interactive-prompt guard still applies. To deliberately drive an interactive prompt,
+  **`--dangerously-interact --reason "<why>"`** is the explicit override and implies raw text.
+  Inspect the prompt and establish authority for its effect before using that override.
 - **`rig broadcast`** — one fact to everyone at once, rather than relaying it N times and getting
   the wording wrong on the fourth. **Blast radius is real** — on a large rig this lands in every
   seat's turn.
@@ -267,9 +268,9 @@ because someone lost work once.
   managed seat with the `context-usage-threshold` watchdog above so continuity is arranged while
   the seat can still act.
 - **`rig handover <seat>`** — replace the **occupant** of a seat while the seat, its name, its
-  edges and its inbound work stay exactly where they are. **`rig seat handover` is the PLANNING
-  half** — it shows you what would happen; the top-level verb performs it. Two commands, similar
-  names, different blast radius.
+  edges and its inbound work stay exactly where they are. **`rig seat handover` uses the same
+  effectful handover path.** Both forms perform the operation by default; pass `--dry-run`
+  to plan without changing the seat. Check the selected source and continuity evidence first.
 - **`rig seat clear-attention` / `set-resume-token`** — clear a stale attention flag, or repair a
   lost resume handle so restore works next time.
 - **`rig seat set-model` / `stop` / `clean`** — persist the model for later managed resumes, stop

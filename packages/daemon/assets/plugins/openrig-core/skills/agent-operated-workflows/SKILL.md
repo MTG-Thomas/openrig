@@ -75,5 +75,7 @@ knowledge.
 A capability composition is a reusable recipe; this is the execution architecture that operates
 capabilities toward an outcome. Promote a proven workflow to the composition shelf only after use.
 
-**Reference implementation:** Release 0.5.9 Slice 05 is the first **Agent-Operated Migration**. Its
-runbook and helpers remain there; this skill carries the reusable contract, not a duplicate procedure.
+**Public example:** load `skills/core/openrig-upgrade/SKILL.md` with
+`rig context get` for the upgrade runbook. Its adjacent `scripts/` directory
+contains the bounded inspection, backup, plugin-refresh and migration helpers.
+Follow that runbook for the procedure; this skill carries the reusable contract.

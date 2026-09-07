@@ -39,7 +39,7 @@ Rate these dimensions (0-10):
 Read all available docs in the feature folder:
 - **validation.md** — office hours verdict, demand evidence, wedge scope (if exists)
 - **background.md** — customer drivers, competitive context (if exists)
-- **requirements.md** — the main document to review
+- **SPEC.md** — the main document to review
 - **supporting/** — mockups, data files, visual references
 
 ### Step 2: Run All Three Reviews
@@ -50,7 +50,7 @@ Read all available docs in the feature folder:
 ## Plan Review: [Feature Name]
 
 **Date**: [date]
-**Reviewed**: [requirements.md path]
+**Reviewed**: [SPEC.md path]
 
 ### Strategy Assessment
 **Score: [1-10]**

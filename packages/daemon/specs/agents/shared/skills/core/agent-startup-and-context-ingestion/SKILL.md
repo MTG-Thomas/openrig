@@ -24,8 +24,7 @@ metadata:
 
 How an agent becomes useful after launch: **AGENTS.md overlays, role
 files, skills, rig specs, workflow specs, startup checklists, refocus
-messages**, and any future "rig context" command or skill-librarian
-surface.
+messages**, and the current `rig context` retrieval and profile surface.
 
 It is the current concrete startup path inside the broader
 context-engineering-and-retrieval primitive. Startup gets a seat into
@@ -91,14 +90,16 @@ reentry case, distinct from reusable Agent Starters / priming packs):
 
 ## Memory surfaces consumed at startup
 
-Per the externalized-memory-surfaces convention's 13-row inventory:
+Inventory the selected startup inputs: AGENTS/role/CULTURE overlays, replay
+context, and any declared restore packet or starter. Record where each comes
+from, whether it is current, and why this task needs it. An available skill or
+old packet does not select the work.
 
-- **Row 7** — AGENTS/role/CULTURE/startup overlays (primary)
-- **Row 3** — startup replay context (primary)
-- **Row 12** — restore/reentry packets and Agent Starters (cross-runtime startup path)
-
-The umbrella's authority-rank + permission-posture columns govern which
-surfaces a startup ingestion path can write vs only read.
+Use the task-scoped startup path above to resolve current authority. Permission
+to read an input is not permission to rewrite its source; writes follow the
+active project/rig policy and assignment. Load
+`skills/openrig-operating-model/SKILL.md` with `rig context get` when deciding
+where durable context belongs.
 
 ## Startup files vs skills (the distinction)
 
@@ -123,5 +124,5 @@ culture / pod / member / operator) handles the layering.
 - `session-compaction-and-restore` skill — restore-time startup ingestion
 - `agent-starters` skill — reusable starter manifests that compose startup context
 - `composable-priming-packs` skill — manifests that produce primed sessions
-- `externalized-memory-surfaces` skill — umbrella convention for memory surfaces this primitive consumes
+- `openrig-operating-model` skill — placement and authority of durable context
 - `openrig/docs/reference/agent-startup-guide.md` (product reference doc; not a skill) — the 7-layer additive startup model + delivery hints

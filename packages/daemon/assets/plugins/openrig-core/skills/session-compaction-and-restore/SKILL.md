@@ -139,20 +139,18 @@ transcript > touched-files > `restore-summary.json`.**
 
 ## Memory surfaces consumed at restore time
 
-This primitive consumes multiple externalized memory surfaces. Per the
-externalized-memory-surfaces convention's 13-row first inventory pass,
-the primary rows for restore are:
+A restore may consume transcripts, durable messages, startup context,
+checkpoints and a restore packet. Inventory the surfaces actually present for
+this seat, with their source, freshness and purpose. Do not infer that a named
+surface exists or grants write authority.
 
-| Row | Surface |
-|---|---|
-| 1 | Transcripts |
-| 2 | Durable chat |
-| 3 | Startup replay context |
-| 5 | Checkpoints |
-| 12 | Restore/reentry packets and Agent Starters |
-
-The umbrella's authority-rank + permission-posture columns govern which
-surfaces a restore path can write vs only read.
+The active project/rig policy and task authorization determine what may be
+written. Treat provider-owned conversation records as evidence to read through
+supported tooling. For placement and durable context, load
+`skills/openrig-operating-model/SKILL.md` with `rig context get`; for the
+selected startup path, use `skills/core/agent-startup-and-context-ingestion/SKILL.md`.
+A packet or marker proves retained/delivered evidence, not successful provider
+restoration; measure the resumed seat against the proof standard above.
 
 ## See also
 
@@ -160,4 +158,4 @@ surfaces a restore path can write vs only read.
 - `mental-model-ha` skill — HA-pair compaction recovery (different scenario; sister primitive)
 - `session-source-fork` skill — `fork` mode for native-runtime-continuity-based restoration
 - `seat-continuity-and-handover` skill — occupant-creation primitives (resume/fork/rebuild/fresh) that this primitive instantiates
-- `externalized-memory-surfaces` skill — umbrella convention listing all surfaces this primitive consumes
+- `openrig-operating-model` skill — placement and authority of durable context

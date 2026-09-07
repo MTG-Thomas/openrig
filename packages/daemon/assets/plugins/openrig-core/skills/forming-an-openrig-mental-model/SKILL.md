@@ -84,14 +84,14 @@ you should know which pillar you're operating in:
 
 | Pillar | What it is | Where it lives |
 |---|---|---|
-| **Ontology** | What exists. Curated knowledge — facts, code maps, as-built docs. | Corpus (planned future system). Today: substrate prose docs. |
+| **Ontology** | What exists. Curated knowledge — facts, code maps, as-built docs. | Shipped public context packs plus project-authored docs; discover with `rig context list`. |
 | **Epistemology** | Why an agent believes what it believes — reasoning, instincts, decisions. | Transcripts (auto-captured). Session logs. ADRs. |
 | **Topology** | How agents are connected — pods, edges, communication paths. | OpenRig itself. RigSpec YAML. |
 
-OpenRig **manages the topology pillar**. The other two are filled by Corpus
-(future) and transcripts (now). Most of your work probably touches multiple
-pillars; knowing which one you're operating in helps you reach for the right
-artifacts.
+OpenRig manages topology and exposes public context through `rig context`.
+Project-authored sources supply project-specific knowledge; transcripts retain
+recorded work. These sources already coexist. Discover the configured library
+and selected task context rather than assuming a particular private corpus.
 
 ---
 
@@ -174,14 +174,15 @@ cost when you reach for one.
 | Home | Purpose |
 |---|---|
 | `<rig-cwd>/.claude/skills/`, `<rig-cwd>/.agents/skills/` | Where the harness actually loads from. Populated by `rig up`. |
-| `~/.claude/skills/`, `~/.agents/skills/` | Your personal / user-installed global skills, loaded by the harness itself (independent of OpenRig). NOT where OpenRig's own bootstrap skills live — those ship in the product (below) and project into the cwd `.claude/skills/` at `rig up`. |
+| `~/.claude/skills/`, `~/.agents/skills/` | User-level harness skill directories. Inspect the current projection and harness configuration to determine which skills are installed and where they came from. |
 | `openrig/packages/daemon/{specs/agents/shared/skills,assets/plugins/*/skills}/` | Product skills that ship with OpenRig — the spec pool + the bundled plugin assets (openrig-user, openrig-operator, openrig-architect, forming-an-openrig-mental-model, queue-handoff, claude-compaction-restore, …). |
-| `~/.openrig/skills/` | Future runtime install home for OpenRig-shipped skills. |
 | the skills authoring workspace | Skill authoring source (not runtime-loaded). |
 
-The harness only sees the first two. Other locations are authoring,
-shipping, and source-of-truth — they reach the harness via projection or
-NPM install, not directly.
+The product already discovers its installed shared skill pool and serves
+packaged context through `rig context list/get`. Discovery and retrieval do
+not prove that every skill was projected into every harness. Inspect the
+selected profile and actual runtime directories; do not assume a universal
+home/bootstrap installation from this table.
 
 ---
 

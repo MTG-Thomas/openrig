@@ -13,7 +13,7 @@ A single `executive-summary.md` file in the feature folder. 600-800 words exclud
 
 Before writing, silently gather all context from the feature folder:
 
-1. **requirements.md** — acceptance criteria, business rules, scope, user stories
+1. **SPEC.md** — acceptance criteria, business rules, scope, user stories
 2. **background.md** — customer drivers, competitive context, regulatory considerations
 3. **validation.md** — demand evidence, status quo, desperate user, narrowest wedge
 4. **supporting/mockup-ascii.md** — visual mockups (pull 2-3 key screens)

@@ -27,7 +27,7 @@ Self-contained HTML files that look like the real app. Portable, no dependencies
 Rules:
 - Match the application's existing styling exactly
 - Use real data from the codebase
-- Only show what's in requirements.md
+- Only show what's in SPEC.md
 - Self-contained single HTML file
 - Screen switcher nav to toggle between screens via JavaScript
 - Keep under 1,000 lines
@@ -46,7 +46,7 @@ Rules:
 ### Step 1: Understand What to Mockup
 
 Read feature folder docs first:
-- **requirements.md** — acceptance criteria define what screens are needed
+- **SPEC.md** — acceptance criteria define what screens are needed
 - **validation.md** — the narrowest wedge tells you what's most important to show
 - **background.md** — customer drivers and competitive context inform what to emphasize
 
@@ -70,7 +70,7 @@ Then ask the PM about fidelity level and specific screens.
 ## Guidelines
 
 - **Use real data.** Real names, real ranges, real hierarchies.
-- **Only show what's in requirements.md.** Don't add features beyond the requirement.
+- **Only show what's in SPEC.md.** Don't add features beyond the requirement.
 - **Less is more.** 3-5 screens beats 10.
 - **Match the app exactly.** Read existing code and match styling patterns.
 - **Tell the PM what's real vs mocked.**

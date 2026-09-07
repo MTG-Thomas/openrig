@@ -23,7 +23,7 @@ Before starting the conversation, silently gather context:
 
 1. **Check for validation.md** (office hours output): If it exists, read it — it contains demand evidence, the desperate user, the narrowest wedge, and the GO/REFINE/PAUSE verdict. Use it to skip questions the PM already answered.
 2. **Check for background.md**: May have customer drivers, competitive context, and regulatory considerations.
-3. **Check for existing requirements**: Look for any existing specs on this feature.
+3. **Check for existing requirements**: Use the selected slice's `SPEC.md`. If only legacy `requirements.md` exists, preserve it as input/history and reconcile it into `SPEC.md` before downstream mockup/review/summary work. Maintain one requirements authority.
 4. **Check for shipped features**: Look for related as-built specs.
 
 If validation.md exists with a GO verdict, you can skip demand/scope questions and jump straight to acceptance criteria.
