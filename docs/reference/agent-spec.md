@@ -383,6 +383,12 @@ The startup block follows the same format as in the RigSpec (see `docs/reference
 
 Agent-level startup is applied to all profiles. Profile-level startup is applied only when that profile is active. Both merge additively via the startup layering model.
 
+An additional orientation challenge requires an explicit `startup_proof` action
+with `value: authenticated` and `idempotent: true`. Omission adds no exercise;
+a later applicable `value: none` overrides an earlier selection. See
+[startup proof selection](rig-spec.md#startup-proof-selection) for precedence,
+restore behavior, and the distinction between readiness and verified proof.
+
 ### Delivery Hint Quick Reference
 
 | Hint | When Delivered | Mechanism |

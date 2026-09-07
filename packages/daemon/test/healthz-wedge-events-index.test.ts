@@ -18,7 +18,7 @@ import { deriveOriented } from "../src/domain/startup-proof.js";
 
 // The two hot queries, VERBATIM from the derive functions (must stay in sync).
 const ORIENTED_SQL =
-  "SELECT type, payload, seq FROM events WHERE node_id = ? AND type IN ('node.startup_challenged','node.startup_proof_verified','node.startup_proof_rejected') ORDER BY seq DESC";
+  "SELECT type, payload, seq FROM events WHERE node_id = ? AND type IN ('node.startup_challenged','node.startup_proof_skipped','node.startup_proof_verified','node.startup_proof_rejected') ORDER BY seq DESC";
 const RESTORE_SQL =
   "SELECT type, payload, seq FROM events WHERE rig_id = ? AND type IN ('restore.completed', 'restore.subset_completed', 'restore.outcome_reconciled') ORDER BY seq DESC";
 

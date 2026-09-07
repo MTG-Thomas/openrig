@@ -6,7 +6,7 @@ import type { NodeOriented } from "./types.js";
 
 // OPR.0.4.3.06 — startup proof (challenge-verified orientation).
 //
-// The primitive: at a fresh (or fresh-fallback) managed launch the daemon
+// When authored startup selects authenticated proof, at a fresh (or fresh-fallback) managed launch the daemon
 // issues a per-launch, content-derived CHALLENGE and persists its ground
 // truth as an append-only `node.startup_challenged` event (challengeId +
 // contractHash). The agent, after reading its startup contract, emits an
@@ -110,6 +110,7 @@ export type StartupProofResult =
   | { ok: false; code: ProofRejectReason; error: string };
 
 interface ChallengeRow {
+  type: string;
   payload: string;
   seq: number;
 }
@@ -149,11 +150,11 @@ export function verifyStartupProof(
     return { ok: false, code: "identity_mismatch", error: "startup_proof nodeId and sessionName resolve to different seats" };
   }
 
-  // Ground truth: the latest challenge issued for THIS node.
+  // A new lean launch retires any earlier challenge without deleting history.
   const challengeRow = db.prepare(
-    "SELECT payload, seq FROM events WHERE node_id = ? AND type = 'node.startup_challenged' ORDER BY seq DESC LIMIT 1"
+    "SELECT type, payload, seq FROM events WHERE node_id = ? AND type IN ('node.startup_challenged','node.startup_proof_skipped') ORDER BY seq DESC LIMIT 1"
   ).get(resolved.nodeId) as ChallengeRow | undefined;
-  if (!challengeRow) {
+  if (!challengeRow || challengeRow.type === "node.startup_proof_skipped") {
     // Never challenged (e.g. a resumed restore, or a non-agent path). A proof
     // has nothing to verify against — reject as stale WITHOUT appending an
     // event, so the node's oriented projection stays honest (`n-a`).
@@ -215,8 +216,8 @@ export function verifyStartupProof(
  * Project the oriented signal for a node from the append-only proof events.
  * `verified` requires a verified proof for the CURRENT (latest) challenge;
  * `missing` = challenged but not yet proven; `rejected` = the latest proof for
- * the current challenge was rejected; `n-a` = never challenged (resumed /
- * non-agent / skip-harness). NEVER derived from startup_status.
+ * the current challenge was rejected; `n-a` = no active challenge, including
+ * an explicitly lean fresh launch. NEVER derived from startup_status.
  */
 type OrientedEventRow = { type: string; payload: string; seq: number };
 
@@ -227,9 +228,8 @@ type OrientedEventRow = { type: string; payload: string; seq: number };
  * implementation — same verdicts by construction, no drift.
  */
 function orientedFromRows(rows: OrientedEventRow[]): NodeOriented {
-  // Latest challenge governs.
-  const challengeRow = rows.find((r) => r.type === "node.startup_challenged");
-  if (!challengeRow) return "n-a";
+  const challengeRow = rows.find((r) => r.type === "node.startup_challenged" || r.type === "node.startup_proof_skipped");
+  if (!challengeRow || challengeRow.type === "node.startup_proof_skipped") return "n-a";
   let currentChallengeId: string;
   try {
     currentChallengeId = (JSON.parse(challengeRow.payload) as { challengeId: string }).challengeId;
@@ -240,7 +240,8 @@ function orientedFromRows(rows: OrientedEventRow[]): NodeOriented {
   // The most-recent proof event referencing the current challenge decides
   // verified-vs-rejected (a later verify overrides an earlier reject).
   for (const row of rows) {
-    if (row.type === "node.startup_challenged") continue;
+    if (row.seq <= challengeRow.seq) break;
+    if (row.type !== "node.startup_proof_verified" && row.type !== "node.startup_proof_rejected") continue;
     let cid: string | null = null;
     try { cid = (JSON.parse(row.payload) as { challengeId: string | null }).challengeId; } catch { continue; }
     if (cid !== currentChallengeId) continue;
@@ -251,7 +252,7 @@ function orientedFromRows(rows: OrientedEventRow[]): NodeOriented {
 
 export function deriveOriented(db: Database.Database, nodeId: string): NodeOriented {
   const rows = db.prepare(
-    "SELECT type, payload, seq FROM events WHERE node_id = ? AND type IN ('node.startup_challenged','node.startup_proof_verified','node.startup_proof_rejected') ORDER BY seq DESC"
+    "SELECT type, payload, seq FROM events WHERE node_id = ? AND type IN ('node.startup_challenged','node.startup_proof_skipped','node.startup_proof_verified','node.startup_proof_rejected') ORDER BY seq DESC"
   ).all(nodeId) as OrientedEventRow[];
   return orientedFromRows(rows);
 }
@@ -268,7 +269,7 @@ export function deriveOriented(db: Database.Database, nodeId: string): NodeOrien
  */
 export function buildOrientedMap(db: Database.Database): Map<string, NodeOriented> {
   const rows = db.prepare(
-    "SELECT node_id, type, payload, seq FROM events WHERE type IN ('node.startup_challenged','node.startup_proof_verified','node.startup_proof_rejected') ORDER BY node_id, seq DESC"
+    "SELECT node_id, type, payload, seq FROM events WHERE type IN ('node.startup_challenged','node.startup_proof_skipped','node.startup_proof_verified','node.startup_proof_rejected') ORDER BY node_id, seq DESC"
   ).all() as Array<{ node_id: string; type: string; payload: string; seq: number }>;
   const byNode = new Map<string, OrientedEventRow[]>();
   for (const r of rows) {

@@ -25,7 +25,7 @@ const REPO_ROOT = path.resolve(HERE, "../../..");
 const CHILD = path.resolve(HERE, "fixtures/ps-stall-http-child.ts");
 
 // exact SQL signatures (normalized, lowercased) of the two per-node fold scans
-const STARTUP_SIG = "type in ('node.startup_challenged','node.startup_proof_verified','node.startup_proof_rejected')";
+const STARTUP_SIG = "type in ('node.startup_challenged','node.startup_proof_skipped','node.startup_proof_verified','node.startup_proof_rejected')";
 const RESTORE_SIG = "type in ('restore.completed', 'restore.subset_completed', 'restore.outcome_reconciled')";
 
 function withPrepareTap(db: any) {

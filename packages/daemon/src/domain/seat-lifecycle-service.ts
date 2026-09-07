@@ -11,6 +11,7 @@ import type { StartupOrchestrator } from "./startup-orchestrator.js";
 import type { RuntimeAdapter, ResolvedStartupFile } from "./runtime-adapter.js";
 import type { ProjectionEntry, ProjectionPlan } from "./projection-planner.js";
 import type { StartupAction } from "./types.js";
+import { resolveStartupProof } from "./startup-resolver.js";
 import type { OccupantInvalidator } from "./occupant-invalidator.js";
 import { rebindAndVerifyPaneIdentity } from "./seat-attention-reconciler.js";
 import { observeSolePane } from "./pane-binding-observation.js";
@@ -765,7 +766,7 @@ export class SeatLifecycleService {
     const startupActions: StartupAction[] = [];
     for (const raw of rawActions) {
       if (!isRecord(raw)
-        || !isOneOf(raw["type"], ["slash_command", "send_text"] as const)
+        || !isOneOf(raw["type"], ["slash_command", "send_text", "startup_proof"] as const)
         || typeof raw["value"] !== "string"
         || !isOneOf(raw["phase"], ["after_files", "after_ready"] as const)
         || !isStringArrayOf(raw["appliesOn"], ["fresh_start", "restore"] as const)
@@ -781,6 +782,12 @@ export class SeatLifecycleService {
         idempotent: raw["idempotent"],
         ...(raw["builtin"] === "session_identity" ? { builtin: "session_identity" as const } : {}),
       });
+    }
+
+    try {
+      resolveStartupProof(startupActions, "fresh_start");
+    } catch (err) {
+      return this.malformedStartupContext(nodeId, (err as Error).message);
     }
 
     const startupFiles = resolvedStartupFiles.map((file) => ({

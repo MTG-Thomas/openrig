@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import type { SessionRegistry } from "./session-registry.js";
 import type { EventBus } from "./event-bus.js";
 import type { TmuxAdapter } from "../adapters/tmux.js";
-import type { StartupAction } from "./types.js";
+import type { StartupAction, StartupProofSelection } from "./types.js";
 import type {
   RuntimeAdapter, NodeBinding, ResolvedStartupFile,
   ProjectionResult, StartupDeliveryResult, ForkSource,
@@ -10,6 +10,7 @@ import type {
 import { isAttentionRequiredReadinessCode, resolveConcreteHint } from "./runtime-adapter.js";
 import type { ProjectionPlan } from "./projection-planner.js";
 import { issueStartupChallenge } from "./startup-proof.js";
+import { resolveStartupProof } from "./startup-resolver.js";
 import { AppliedLaunchObservationStore } from "./applied-launch-observation-store.js";
 import type { AppliedLaunchObservation } from "./permission-drift.js";
 
@@ -130,7 +131,14 @@ export class StartupOrchestrator {
 
     // 1. Mark pending
     this.sessionRegistry.updateStartupStatus(input.sessionId, "pending");
-    this.eventBus.emit({ type: "node.startup_pending", rigId: input.rigId, nodeId: input.nodeId });
+    const context = input.isRestore ? "restore" : "fresh_start";
+    let startupProof: StartupProofSelection;
+    try {
+      startupProof = resolveStartupProof(input.startupActions, context);
+    } catch (err) {
+      return this.fail(input, "failed", [`Startup proof selection: ${(err as Error).message}`]);
+    }
+    this.eventBus.emit({ type: "node.startup_pending", rigId: input.rigId, nodeId: input.nodeId, startupProof });
 
     // 2. Project resources
     let projectionResult: ProjectionResult;
@@ -155,7 +163,6 @@ export class StartupOrchestrator {
     // so the operator's trust-precedence ordering is preserved when the post-launch
     // delivery loop walks the array. Rebuild artifacts are tagged
     // appliesOn: ["fresh_start"] by the resolver, which matches the rebuild context.
-    const context = input.isRestore ? "restore" : "fresh_start";
     const sourceFiles = input.rebuildArtifacts && input.rebuildArtifacts.length > 0
       ? [...input.rebuildArtifacts, ...input.resolvedStartupFiles]
       : input.resolvedStartupFiles;
@@ -282,14 +289,12 @@ export class StartupOrchestrator {
       this.appliedLaunchStore.recordGeneration(launchGeneration, appliedLaunch);
     }
 
-    // OPR.0.4.3.06 — a fresh or fresh-fallback MANAGED launch is challenged so
-    // orientation can be proved (never assumed). Resumed restores (excluded by
-    // the `fresh` gate) and skip-harness/legacy no-contract paths are NOT
-    // challenged → oriented stays `n-a` (no false-green, no false-downgrade).
-    // Issue BEFORE the prompt is delivered so the ground truth exists first.
+    // Only an authored selection challenges a fresh/fresh-fallback agent.
+    // Resuming/adopting retains existing proof history; a new lean launch
+    // retires it. Persist ground truth BEFORE delivering any proof prompt.
     const identityAction = this.extractSessionIdentityAction(input.startupActions, context);
     const shouldChallenge = continuityOutcome === "fresh" && !input.skipHarnessLaunch
-      && input.adapter.runtime !== "terminal";
+      && input.adapter.runtime !== "terminal" && startupProof.mode === "authenticated";
     const challenge = shouldChallenge
       ? issueStartupChallenge(this.eventBus, {
           rigId: input.rigId,
@@ -298,9 +303,15 @@ export class StartupOrchestrator {
         })
       : null;
 
-    // A challenge-only prompt is synthesized (guard caveat — never silently
-    // `n-a`) when a fresh managed launch has no session_identity action to ride
-    // along with; delivered after the post-launch contract files below.
+    if (!challenge && continuityOutcome === "fresh" && !input.skipHarnessLaunch) {
+      this.eventBus.emit({
+        type: "node.startup_proof_skipped", rigId: input.rigId, nodeId: input.nodeId,
+        reason: input.adapter.runtime === "terminal" ? "terminal" : "not_selected",
+      });
+    }
+
+    // A selected proof still works without a session_identity action: deliver
+    // its standalone prompt after the post-launch contract files below.
     const consumedActions = new Set<StartupAction>();
     let challengeOnlyPrompt: string | null = null;
     if (continuityOutcome === "fresh" && identityAction) {
@@ -464,6 +475,7 @@ export class StartupOrchestrator {
     const context = input.isRestore ? "restore" : "fresh_start";
 
     for (const action of input.startupActions) {
+      if (action.type === "startup_proof") continue; // declaration, never terminal input
       if (isSessionIdentityAction(action)) continue;
       if (skip?.has(action)) continue;
 

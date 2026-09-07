@@ -1,4 +1,5 @@
-import type { StartupBlock, StartupFile, StartupAction } from "./types.js";
+import type { StartupBlock, StartupFile, StartupAction, StartupProofSelection } from "./types.js";
+import { validateStartupAction } from "./startup-validation.js";
 
 export interface StartupLayerInputs {
   specStartup: StartupBlock;
@@ -74,4 +75,23 @@ export function resolveStartup(inputs: StartupLayerInputs): StartupBlock {
 function appendBlock(block: StartupBlock, files: StartupFile[], actions: StartupAction[]): void {
   files.push(...block.files);
   actions.push(...block.actions);
+}
+
+/** Last applicable authored selection wins; omission adds no exercise. */
+export function resolveStartupProof(
+  actions: StartupAction[],
+  context: "fresh_start" | "restore",
+): StartupProofSelection {
+  let selection: StartupProofSelection = { mode: "none", source: "default" };
+  for (const [actionIndex, action] of actions.entries()) {
+    if (action.type !== "startup_proof") continue;
+    // Persisted/direct inputs must obey the same contract as authored YAML,
+    // including overridden and inapplicable declarations.
+    const errors = validateStartupAction({ ...action, applies_on: action.appliesOn }, actionIndex, "startup.");
+    if (errors.length) throw new Error(errors.join("; "));
+    if (action.appliesOn.includes(context)) {
+      selection = { mode: action.value as StartupProofSelection["mode"], source: "authored", actionIndex };
+    }
+  }
+  return selection;
 }

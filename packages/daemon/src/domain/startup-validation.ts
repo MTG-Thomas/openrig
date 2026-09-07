@@ -4,7 +4,7 @@ import type { StartupBlock, StartupFile, StartupAction } from "./types.js";
 // -- Constants --
 
 const VALID_DELIVERY_HINTS = new Set(["auto", "guidance_merge", "skill_install", "send_text"]);
-const VALID_ACTION_TYPES = new Set(["slash_command", "send_text"]);
+const VALID_ACTION_TYPES = new Set(["slash_command", "send_text", "startup_proof"]);
 const VALID_PHASES = new Set(["after_files", "after_ready"]);
 const VALID_APPLIES_ON = new Set(["fresh_start", "restore"]);
 
@@ -54,6 +54,9 @@ export function validateStartupFile(raw: Record<string, unknown>, index: number,
  * @returns array of error strings
  */
 export function validateStartupAction(raw: Record<string, unknown>, index: number, prefix: string): string[] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return [`${prefix}actions[${index}]: must be an object`];
+  }
   const errors: string[] = [];
   const type = raw["type"] as string;
   if (type === "shell") {
@@ -63,6 +66,14 @@ export function validateStartupAction(raw: Record<string, unknown>, index: numbe
   }
   if (!raw["value"] || typeof raw["value"] !== "string") {
     errors.push(`${prefix}actions[${index}].value: must be a non-empty string`);
+  }
+  if (type === "startup_proof") {
+    if (raw["value"] !== "authenticated" && raw["value"] !== "none") {
+      errors.push(`${prefix}actions[${index}].value: startup_proof must select authenticated or none`);
+    }
+    if (raw["idempotent"] !== true) {
+      errors.push(`${prefix}actions[${index}].idempotent: startup_proof selection must be true`);
+    }
   }
   if (raw["phase"] !== undefined && !VALID_PHASES.has(raw["phase"] as string)) {
     errors.push(`${prefix}actions[${index}].phase: must be one of ${[...VALID_PHASES].join(", ")} (got "${raw["phase"]}")`);

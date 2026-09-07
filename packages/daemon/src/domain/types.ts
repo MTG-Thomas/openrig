@@ -209,16 +209,17 @@ export type RigEvent =
   // AgentSpec reboot events — pods + startup + continuity
   | { type: "pod.created"; rigId: string; podId: string; namespace: string; label: string }
   | { type: "pod.deleted"; rigId: string; podId: string }
-  | { type: "node.startup_pending"; rigId: string; nodeId: string }
+  | { type: "node.startup_pending"; rigId: string; nodeId: string; startupProof?: StartupProofSelection }
   | { type: "node.startup_ready"; rigId: string; nodeId: string }
   | { type: "node.startup_failed"; rigId: string; nodeId: string; error: string }
   // OPR.0.4.3.06 — startup proof (challenge-verified orientation). Append-only.
   // `node.startup_challenged` freezes this launch's challenge ground truth
   // (challengeId + contractHash; the expected answer is recomputed, never
   // stored). `node.startup_proof_verified`/`_rejected` are the verified/rejected
-  // evidence — the ONLY writer of the `oriented` projection. None route through
-  // updateStartupStatus; `ready` never means oriented.
+  // evidence; `node.startup_proof_skipped` retires a previous challenge on a
+  // lean launch. None route through updateStartupStatus; `ready` never means oriented.
   | { type: "node.startup_challenged"; rigId: string; nodeId: string; challengeId: string; contractHash: string }
+  | { type: "node.startup_proof_skipped"; rigId: string; nodeId: string; reason: "not_selected" | "terminal" }
   | { type: "node.startup_proof_verified"; rigId: string; nodeId: string; sessionId: string; challengeId: string; contractHash: string }
   | { type: "node.startup_proof_rejected"; rigId: string; nodeId: string; challengeId: string | null; reason: "identity_unbound" | "identity_mismatch" | "challenge_stale" | "contract_mismatch" | "bare_ack" }
   | { type: "continuity.sync"; rigId: string; podId: string; nodeId: string }
@@ -848,8 +849,15 @@ export interface StartupFile {
   appliesOn: ("fresh_start" | "restore")[];
 }
 
+export interface StartupProofSelection {
+  mode: "authenticated" | "none";
+  source: "authored" | "default";
+  /** Index in the composed startup action sequence. */
+  actionIndex?: number;
+}
+
 export interface StartupAction {
-  type: "slash_command" | "send_text";
+  type: "slash_command" | "send_text" | "startup_proof";
   value: string;
   phase: "after_files" | "after_ready";
   appliesOn: ("fresh_start" | "restore")[];

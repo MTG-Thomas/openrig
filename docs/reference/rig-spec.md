@@ -343,11 +343,47 @@ Startup blocks can appear at three levels: rig, pod, and member. They are merged
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `type` | string | yes | — | Action type. One of: `slash_command`, `send_text`. Note: `shell` is explicitly NOT supported in v1. |
-| `value` | string | yes | — | The command or text to send. |
-| `phase` | string | no | `after_files` | When to execute. One of: `after_files` (after startup files are delivered), `after_ready` (after harness readiness check passes). |
+| `type` | string | yes | — | Action type. One of: `slash_command`, `send_text`, `startup_proof`. Note: `shell` is explicitly NOT supported in v1. |
+| `value` | string | yes | — | Command/text to send, or `authenticated` / `none` for `startup_proof`. |
+| `phase` | string | no | `after_files` | When to execute text/commands. One of: `after_files` (after startup files are delivered), `after_ready` (after harness readiness check passes). Proof selection is resolved before projection regardless of phase. |
 | `idempotent` | boolean | yes | — | Whether this action is safe to replay on restore. **Required field.** Non-idempotent actions must NOT include `restore` in `applies_on`. |
 | `applies_on` | string[] | no | `[fresh_start, restore]` | When this action runs. Subset of: `fresh_start`, `restore`. |
+
+### Startup proof selection
+
+Startup adds no orientation exercise by default. To select the authenticated
+startup challenge, declare an action in an agent, profile, rig, pod, member, or
+operator startup block:
+
+```yaml
+startup:
+  actions:
+    - type: startup_proof
+      value: authenticated
+      idempotent: true
+```
+
+Use `value: none` in a later layer to select lean startup explicitly. The last
+applicable declaration wins in agent → profile → rig → pod → member → operator
+order. Culture contributes files, not a proof selection. With no applicable
+declaration, the result is `none`; the number of startup files never selects
+proof. Invalid values and non-idempotent proof declarations fail validation,
+including declarations overridden later. These actions declare policy and are
+never typed into a terminal.
+
+An authenticated selection challenges only a fresh or fresh-fallback managed
+agent launch. Resumed, forked, rebuilt, and adopted sessions receive no new
+challenge; terminal nodes never receive one. `applies_on` follows the requested
+startup context, so a fresh fallback during restore uses `restore` selections.
+Keep the default `[fresh_start, restore]` to cover both fresh launch paths.
+
+Identity delivery, projection, readiness, and ordinary startup actions still
+run. `startup_status: ready` means startup completed, while `oriented: missing`
+means a selected proof awaits authenticated submission. Omission/`none` yields
+`oriented: n-a` on a new fresh launch and retires an older challenge without
+deleting its audit history. Resume/adoption preserves existing proof history.
+The effective selection is recorded on `node.startup_pending`; actions are
+persisted in startup context for restore and fresh relaunch.
 
 ---
 
@@ -477,7 +513,7 @@ These rules are enforced by the validator. A spec that violates any of these wil
 19. Each wait target must define exactly one of: `service`, `url`, `tcp`.
 20. `condition` is only valid on `service` targets and must be `healthy`.
 21. Startup file `delivery_hint` must be one of: `auto`, `guidance_merge`, `skill_install`, `send_text`.
-22. Startup action `type` must be one of: `slash_command`, `send_text`. (`shell` is explicitly rejected.)
+22. Startup action `type` must be one of: `slash_command`, `send_text`, `startup_proof`. (`shell` is explicitly rejected.) Proof selection requires `value: authenticated` or `none` and `idempotent: true`.
 23. Startup action `phase` must be one of: `after_files`, `after_ready`.
 24. Startup action `idempotent` is a required boolean.
 25. Non-idempotent actions must not include `restore` in `applies_on`.

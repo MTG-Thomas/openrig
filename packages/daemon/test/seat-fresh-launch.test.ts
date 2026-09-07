@@ -12,6 +12,8 @@ import { SeatIdentityStore } from "../src/domain/seat-identity-store.js";
 import type { RuntimeAdapter } from "../src/domain/runtime-adapter.js";
 import type { ProjectionPlan } from "../src/domain/projection-planner.js";
 import type { TmuxAdapter, TmuxResult } from "../src/adapters/tmux.js";
+import { normalizeStartupBlock } from "../src/domain/startup-validation.js";
+import { deriveOriented } from "../src/domain/startup-proof.js";
 
 function startupEntry(category: "skill" | "guidance", id: string) {
   return {
@@ -173,6 +175,21 @@ describe("SeatLifecycleService.launchFresh", () => {
     const malformed = await service.launchFresh({ seatRef: "dev.impl", fresh: true, reason: "x" });
     expect(malformed).toMatchObject({ ok: false, code: "startup_context_malformed" });
     expect(db.prepare("SELECT COUNT(*) AS c FROM sessions WHERE node_id = ?").get(seat.node.id)).toEqual({ c: 0 });
+  });
+
+  it.each(["authenticated", "none", "unknown"])("fresh launch consumes persisted proof selection %s", async (value) => {
+    const seat = seedSeat({ clean: true });
+    const actions = normalizeStartupBlock({ actions: [{ type: "startup_proof", value, idempotent: true }] }).actions;
+    db.prepare("UPDATE node_startup_context SET startup_actions_json=? WHERE node_id=?").run(JSON.stringify(actions), seat.node.id);
+    const result = await service.launchFresh({ seatRef: seat.sessionName, fresh: true, reason: "fixture" });
+    if (value === "unknown") {
+      expect(result).toMatchObject({ ok: false, code: "startup_context_malformed" });
+      expect(tmux.createSession).not.toHaveBeenCalled();
+    } else {
+      expect(result.ok).toBe(true);
+      expect(projectedPlan?.startup.actions).toEqual(actions);
+      expect(deriveOriented(db, seat.node.id)).toBe(value === "authenticated" ? "missing" : "n-a");
+    }
   });
 
   it("refuses a live managed seat without stop and refuses an adopted seat even with stop", async () => {

@@ -837,6 +837,22 @@ Notes:
 
 ## Identity, Communication, and Context
 
+### `rig startup-proof submit`
+
+Usage: `rig startup-proof submit --challenge-id <id> --answer <answer> [--json]`
+
+Submits the selected startup exercise through the authenticated activity hook,
+using the current seat's identity and the challenge supplied in its startup
+prompt. A correct current answer returns `oriented: verified`; a bare
+acknowledgement, wrong answer, or stale challenge fails. Startup readiness alone
+does not verify orientation.
+
+An extra exercise is opt-in through a `startup_proof` startup action with
+`value: authenticated` and `idempotent: true`. Omission adds no exercise, and a
+later applicable `value: none` selects lean startup. See
+[startup proof selection](../reference/rig-spec.md#startup-proof-selection)
+for the full authoring and restore rules. Terminal nodes receive no challenge.
+
 ### `rig whoami`
 
 Usage: `rig whoami [--node-id <id>] [--session <name>] [--host <id>] [--full | --verbose] [--json]`

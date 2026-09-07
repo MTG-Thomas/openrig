@@ -17,6 +17,7 @@ import {
   issueStartupChallenge,
   verifyStartupProof,
   deriveOriented,
+  buildOrientedMap,
   computeContractHash,
   computeExpectedAnswer,
 } from "../src/domain/startup-proof.js";
@@ -65,6 +66,21 @@ describe("startup-proof — issue + verify", () => {
     expect(challenge.promptBlock).toContain("rig startup-proof submit");
     expect(challenge.promptBlock).toContain(`--challenge-id ${challenge.challengeId}`);
     expect(challenge.promptBlock).toContain(`--answer ${challenge.expectedAnswer}`);
+  });
+
+  it("a new lean launch retires proof without deleting history or accepting late answers", () => {
+    const challenge = issueStartupChallenge(ctx.eventBus, { rigId: ctx.rigId, nodeId: ctx.nodeId, contractSource: CONTRACT });
+    const proof = { sessionName: ctx.sessionName, challengeId: challenge.challengeId, answer: challenge.expectedAnswer };
+    expect(verifyStartupProof(ctx, proof).ok).toBe(true);
+    ctx.eventBus.emit({ type: "node.startup_proof_skipped", rigId: ctx.rigId, nodeId: ctx.nodeId, reason: "not_selected" });
+    expect(verifyStartupProof(ctx, proof)).toMatchObject({ ok: false, code: "challenge_stale" });
+    expect(deriveOriented(ctx.db, ctx.nodeId)).toBe("n-a");
+    expect(buildOrientedMap(ctx.db).get(ctx.nodeId)).toBe("n-a");
+    expect(ctx.db.prepare("SELECT count(*) AS n FROM events WHERE type='node.startup_proof_verified'").get()).toEqual({ n: 1 });
+    expect(ctx.db.prepare("SELECT count(*) AS n FROM events WHERE type='node.startup_proof_rejected'").get()).toEqual({ n: 0 });
+    issueStartupChallenge(ctx.eventBus, { rigId: ctx.rigId, nodeId: ctx.nodeId, contractSource: CONTRACT });
+    expect(deriveOriented(ctx.db, ctx.nodeId)).toBe("missing");
+    expect(buildOrientedMap(ctx.db).get(ctx.nodeId)).toBe("missing");
   });
 
   it("DELIVERY-READY is not orientation: a challenged-but-unproven node is oriented=missing", () => {

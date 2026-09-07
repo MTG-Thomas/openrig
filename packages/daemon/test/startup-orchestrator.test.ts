@@ -350,11 +350,9 @@ describe("StartupOrchestrator", () => {
     ];
     const result = await orch.startNode(makeInput(seed, { startupActions: actions, isRestore: true }));
     expect(result.ok).toBe(true);
-    // OPR.0.4.3.06 — a fresh-continuity launch is challenged (the orientation
-    // challenge IS sent), but the non-idempotent fresh_start-only action is
-    // still skipped: it must never appear among the sends.
+    // Neither an inapplicable action nor an unselected proof is sent.
     const calls = (tmux.sendText as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
-    expect(calls).not.toContain("/setup-once");
+    expect(calls).toEqual([]);
   });
 
   // T7: idempotent restore action replays safely
@@ -618,16 +616,14 @@ describe("StartupOrchestrator", () => {
     expect(sendText).toHaveBeenNthCalledWith(2, "r01-impl", "/rename impl");
   });
 
-  // OPR.0.4.3.06 — a fresh managed launch is challenged (oriented=missing until
-  // proved); the challenge rides along in the identity prompt.
-  it("issues a startup challenge on a fresh launch (oriented=missing, challenge in prompt)", async () => {
+  it("issues a selected startup challenge (oriented=missing, challenge in prompt)", async () => {
     const seed = seedSession();
     const sendText = vi.fn(async () => ({ ok: true as const }));
     const orch = createOrchestrator({ tmux: mockTmux({ sendText }) });
 
     await orch.startNode(makeInput(seed, {
       resolvedStartupFiles: [{ path: "role.md", absolutePath: "/tmp/role.md", ownerRoot: "/tmp", deliveryHint: "guidance_merge", required: true, appliesOn: ["fresh_start"] }],
-      startupActions: [makeIdentityAction()],
+      startupActions: [makeAction({ type: "startup_proof", value: "authenticated" }), makeIdentityAction()],
     }));
 
     const challenged = db.prepare("SELECT COUNT(*) AS n FROM events WHERE node_id = ? AND type = 'node.startup_challenged'").get(seed.nodeId) as { n: number };
@@ -644,7 +640,7 @@ describe("StartupOrchestrator", () => {
     const orch = createOrchestrator({ tmux: mockTmux({ sendText }) });
     await orch.startNode(makeInput(seed, {
       adapter: mockAdapter({ runtime: "terminal" }),
-      startupActions: [makeAction({ type: "send_text", value: "rig tui" })],
+      startupActions: [makeAction({ type: "startup_proof", value: "authenticated" }), makeAction({ type: "send_text", value: "rig tui" })],
     }));
     expect(sendText).toHaveBeenCalledTimes(1);
     expect(sendText).toHaveBeenCalledWith("r01-impl", "rig tui");
@@ -655,13 +651,42 @@ describe("StartupOrchestrator", () => {
     const seed = seedSession();
     const orch = createOrchestrator();
     await orch.startNode(makeInput(seed, {
-      startupActions: [makeIdentityAction()],
+      startupActions: [makeAction({ type: "startup_proof", value: "authenticated" }), makeIdentityAction()],
       isRestore: true,
       resumeToken: "claude-session-123",
     }));
     const challenged = db.prepare("SELECT COUNT(*) AS n FROM events WHERE node_id = ? AND type = 'node.startup_challenged'").get(seed.nodeId) as { n: number };
     expect(challenged.n).toBe(0);
     expect(deriveOriented(db, seed.nodeId)).toBe("n-a");
+  });
+
+  it.each([false, true])("omission delivers authored identity with files=%s and adds no exercise", async (withFiles) => {
+    const seed = seedSession();
+    const adapter = mockAdapter();
+    const result = await createOrchestrator().startNode(makeInput(seed, {
+      adapter,
+      startupActions: [makeIdentityAction()],
+      resolvedStartupFiles: withFiles ? [{ path: "role.md", absolutePath: "/tmp/role.md", ownerRoot: "/tmp", deliveryHint: "guidance_merge", required: true, appliesOn: ["fresh_start"] }] : [],
+    }));
+    expect(result).toMatchObject({ ok: true, startupStatus: "ready" });
+    expect(adapter.project).toHaveBeenCalledOnce();
+    expect(adapter.checkReady).toHaveBeenCalledOnce();
+    expect(tmux.sendText).toHaveBeenCalledExactlyOnceWith("r01-impl", makeIdentityAction().value);
+    expect(deriveOriented(db, seed.nodeId)).toBe("n-a");
+    const row = db.prepare("SELECT payload FROM events WHERE type='node.startup_pending'").get() as { payload: string };
+    expect(JSON.parse(row.payload).startupProof).toEqual({ mode: "none", source: "default" });
+  });
+
+  it("rejects unknown persisted proof selection before projection or launch", async () => {
+    const seed = seedSession();
+    const adapter = mockAdapter();
+    const result = await createOrchestrator().startNode(makeInput(seed, {
+      adapter, startupActions: [makeAction({ type: "startup_proof", value: "quiz" })],
+    }));
+    expect(result).toMatchObject({ ok: false, startupStatus: "failed" });
+    expect(adapter.project).not.toHaveBeenCalled();
+    expect(adapter.launchHarness).not.toHaveBeenCalled();
+    expect(tmux.sendText).not.toHaveBeenCalled();
   });
 
   // T10: launcher does not mark ready before actions complete

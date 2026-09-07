@@ -12,6 +12,7 @@ import { RigSpecSchema } from "../src/domain/rigspec-schema.js";
 import type { RuntimeAdapter, NodeBinding, ResolvedStartupFile } from "../src/domain/runtime-adapter.js";
 import type { TmuxAdapter } from "../src/adapters/tmux.js";
 import type { StartupAction } from "../src/domain/types.js";
+import { deriveOriented } from "../src/domain/startup-proof.js";
 
 function mockTmux(): TmuxAdapter {
   return {
@@ -57,7 +58,7 @@ function mockFs(files: Record<string, string>): AgentResolverFsOps {
 
 describe("AgentSpec startup integration", () => {
   // T12: rig.yaml + agent.yaml resolves, projects, starts, and reaches startup_status: ready
-  it("full startup lifecycle: resolve -> project -> start -> ready", async () => {
+  it.each([undefined, "authenticated", "none"] as const)("full startup lifecycle with proof selection %s: resolve -> project -> start -> ready", async (selection) => {
     const db = createFullTestDb();
     const rigRepo = new RigRepository(db);
     const sessionRegistry = new SessionRegistry(db);
@@ -74,7 +75,10 @@ describe("AgentSpec startup integration", () => {
           runtime: "claude-code", cwd: ".",
           startup: {
             files: [{ path: "pods/dev/overlays/impl.md", deliveryHint: "auto", required: true, appliesOn: ["fresh_start", "restore"] }],
-            actions: [{ type: "slash_command" as const, value: "/rename impl", phase: "after_ready" as const, appliesOn: ["fresh_start" as const], idempotent: true }],
+            actions: [
+              ...(selection ? [{ type: "startup_proof" as const, value: selection, phase: "after_files" as const, appliesOn: ["fresh_start" as const, "restore" as const], idempotent: true }] : []),
+              { type: "slash_command" as const, value: "/rename impl", phase: "after_ready" as const, appliesOn: ["fresh_start" as const], idempotent: true },
+            ],
           },
         }],
         edges: [],
@@ -181,6 +185,14 @@ describe("AgentSpec startup integration", () => {
     const types = events.map((e) => e.type);
     expect(types).toContain("node.startup_pending");
     expect(types).toContain("node.startup_ready");
+    expect(deriveOriented(db, node.id)).toBe(selection === "authenticated" ? "missing" : "n-a");
+    const stored = db.prepare("SELECT startup_actions_json FROM node_startup_context WHERE node_id=?").get(node.id) as { startup_actions_json: string };
+    expect(JSON.parse(stored.startup_actions_json)).toEqual(configResult.config.startup.actions);
+    const sent = vi.mocked(tmux.sendText).mock.calls.map(call => call[1]);
+    expect(sent).toContain("/rename impl");
+    expect(sent.filter(text => text.includes("startup-proof submit"))).toHaveLength(selection === "authenticated" ? 1 : 0);
+    expect(sent).not.toContain("none");
+    expect(sent).not.toContain("authenticated");
 
     db.close();
   });
