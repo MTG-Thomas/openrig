@@ -21,8 +21,7 @@ metadata:
       - openrig-upgrade
       - forming-an-openrig-mental-model
       - ai-dev-workflows
-    notes: |
-      Description was already correct (starts with "Use when..."; lists specific authoring triggers including the diagnose-bad-rig case). Final sentence ("Covers the full authoring lifecycle from user intent to validated, launchable rig.") is workflow-summary-adjacent; on next iteration, consider trimming. For factory-adoption cycle, kept as-is to match product source-of-truth.
+
 ---
 
 # OpenRig Architect
@@ -33,43 +32,33 @@ Your job is to take a user's intent — "I need a team that does X" — and prod
 
 You also diagnose problems when a rig launches but agents aren't behaving as intended.
 
-## Before You Design: Required Reading
+## Before you design: select the relevant sources
 
-Load these before starting any design work. The quality of your output depends on the depth of knowledge you bring.
+Start with the user's outcome, the current project authority, and the part of
+the format you will author. Load the selected paths from public onboarding;
+consult additional skills when their triggers apply. A design task does not
+require reading the whole command library.
 
-**Required (read all of these):**
+- Read the relevant sections of `rig-spec.md` and `agent-spec.md` before writing
+  those declarations. Consult `agent-startup-guide.md` for startup/loadout work
+  and `edge-types.md` when selecting relationships. Resolve the installed
+  reference root from the actual OpenRig installation; `~/.openrig/reference/`
+  is a default, not a fixed location. If it is absent, use the matching source
+  repository docs or report the missing reference. Reading does not require
+  starting or changing a daemon.
+- Use current `rig <command> --help` for command shape. Load `openrig-user` for
+  the specific CLI surface needed, through the installed skill/context catalog.
+- Inspect relevant starter specs with `rig specs ls`. Treat them as examples to
+  validate against the current environment, not proof that your new rig works.
+- If the environment declares host or project doctrine, read the actual
+  applicable authority and reconcile it with the task. Do not assume a filename,
+  section number, rig classification or fixed authoring SOP. Missing authority
+  is a question to resolve when it changes the design.
+- Load domain-specific guidance for specialist roles. When authoring an
+  agent-facing tool, consult `building-agent-software` if available.
 
-1. **`openrig-user` skill** — full OpenRig CLI surface. You must know the operator primitives. If your runtime supports skills, load it by name. Otherwise, look for it at `~/.openrig/skills/openrig-user/SKILL.md` (the runtime install dogfood mirror — packaged skills land here) or inside the OpenRig installation under `packages/daemon/specs/agents/shared/skills/core/openrig-user/SKILL.md`. The `~/.openrig/reference/` directory holds reference docs (rig-spec.md, agent-spec.md, etc.), NOT skills.
-
-2. **OpenRig reference docs** — these are installed at `~/.openrig/reference/` when the daemon starts. Read all of them:
-   - `~/.openrig/reference/rig-spec.md` — canonical RigSpec YAML reference. Every field, validation rule, default.
-   - `~/.openrig/reference/agent-spec.md` — canonical AgentSpec YAML reference. Same depth.
-   - `~/.openrig/reference/agent-startup-guide.md` — how to think about what goes into agent startup. Context loading vs deterministic config, when to use skills vs guidance, the layering model, current support matrix.
-   - `~/.openrig/reference/edge-types.md` — what edges do today vs what they're intended to do.
-
-   If `~/.openrig/reference/` doesn't exist yet, start the daemon first (`rig daemon start`) — it copies the reference docs on startup.
-
-**Read as worked examples:**
-
-3. **Shipped starter specs** — the OpenRig installation includes proven starter topologies. Find them by running `rig specs ls`. Read the ones that are relevant to your design task, especially:
-   - `implementation-pair` — the smallest effective development unit (2 agents)
-   - `secrets-manager` — a managed-app rig with services integration and a specialist agent
-
-**Read if present on this host:**
-
-4. **Host-level doctrine** in your host's topology doc, if it keeps one. If this file exists, it supersedes the baseline process below for complex or high-stakes rigs. Specifically:
-   - §3 defines the canonical rig classes (kernel, project, ephemeral, infra-build, managed-app). Classify before designing.
-   - §4 defines context-sharing patterns (pods as context domains, pair pattern, HA via mental-model-ha skill + substrate session logs, terminal nodes as common-room, chatroom/substrate/transcripts/Corpus).
-   - **§7 is the canonical 12-step rig-spec authoring SOP for high-stakes rigs — use it instead of the baseline "Design Process" below when the rig is ≥4 members, uses HA, is a managed-app, or will be shared/copied.** The baseline below still applies to small/focused rigs.
-   - §10 contains the host's bootstrap sequence so you know where your new rig fits.
-   - §12 has the naming canon and vocabulary mapping to shipped terms.
-5. **`building-agent-software` skill** if available in your skill catalog. Design principles for agent-facing tools and surfaces. Relevant when your rig ships a new CLI, service, or managed app.
-
-**Load as needed:**
-- Domain-specific skills when designing specialist agents — find shipped skills inside the OpenRig installation under the `specs/agents/` tree
-- If the design session is long and you're running inside a managed rig, use `rig whoami --json` to recover your identity after compaction
-
-Do not skip the required reading. A rig architect who doesn't know the spec format will produce specs that don't validate. An architect who doesn't know the startup layering model will produce agents that boot without knowing their role. An architect who doesn't check for host-level doctrine will reinvent conventions the host has already established.
+Keep the spec, startup layering, role responsibilities and selected proof
+standard explicit. Scale the reading and checks to what the design changes.
 
 ## The Design Process
 
@@ -152,14 +141,17 @@ To verify the current builtin set on this host, run `rig specs ls` and look for 
 
 Each member needs a `runtime` and optionally a `model`.
 
-**Runtime selection:**
-- `claude-code` — Claude Code. Best for: complex reasoning, architecture, code review, orchestration. Supports `/loop` for recurring tasks, rich hooks system, MCP servers.
-- `codex` — Codex. Best for: parallel work, implementation, testing. Different approval model. Less reliable for recurring tasks.
-- `terminal` — Infrastructure nodes. Servers, log tails, build watchers. Not an agent — a process.
+Choose from the installed, authenticated runtimes and the project's current
+execution policy. `claude-code` and `codex` are agent runtimes; `terminal` is an
+infrastructure process. Their model availability, hooks, approval behavior and
+continuation support differ. Check the relevant installed interfaces rather
+than ranking vendors permanently in a reusable role skill.
 
-**Runtime diversity is valuable.** Using both Claude Code and Codex in the same rig gives you different reasoning perspectives. The `product-team` starter uses Claude Code for the lead/impl/design/r1 roles and Codex for peer/qa/r2 roles. This is deliberate — model diversity catches different classes of issues.
-
-**Model selection** is optional. The runtime's default model is usually fine. Override only when you have a specific reason (e.g., a complex architecture agent might benefit from a specific model).
+Pin a model when the work or environment requires it, and verify the active
+runtime reports that model before relying on its result. Select reviewers and
+support roles by consequence, competence and the declared policy. Runtime
+diversity can provide different methods; it does not by itself prove independence
+or make any model suitable for a task.
 
 ### Step 5: Design Edge Topology
 
@@ -181,7 +173,8 @@ This is where most rigs succeed or fail. The topology is mechanical; the startup
 **Minimum for every rig:**
 1. Each agent has a `guidance/role.md` — who they are, what they do
 2. The rig has a `CULTURE.md` — how the team works together
-3. Each agent gets `openrig-user` skill — so they know how to use the rig primitives
+3. Each agent gets the selected onboarding path and can discover the relevant
+   command/skill references when needed
 
 **For serious rigs, also include:**
 4. `startup/context.md` per agent — boot-time grounding (project info, environment details)

@@ -24,17 +24,15 @@ A pair of primitive families that separate *who is sitting in a seat* from
 *what the seat itself is*:
 
 1. **Occupant-creation primitives** — `resume`, `fork`, `rebuild`, `fresh` — produce a candidate new occupant. Answer: "where did the new occupant come from?"
-2. **Seat-binding primitives** — `seat handover`, later `seat transfer` / `seat retire` / `seat swap` — bind a candidate occupant into the topology. Answer: "what happened to the stable seat identity?"
+2. **Seat-binding operations** — handover binds a candidate occupant into the topology. Answer: "what happened to the stable seat identity?" Inspect the current CLI for executable operations; design vocabulary alone does not establish a command.
 
 Core architectural decision: **stable seat identity, fluid occupant
-identity, explicit provenance.** Today's `lead2`/`lead3`/`lead4`/`lead5`
-pattern encodes successor lineage into seat names — that's the wrong
-shape. Stable seat name + separately-recorded provenance trail is the
-right shape.
+identity, explicit provenance.** Do not encode successive occupants into live
+seat names. Keep the stable address and record lineage separately.
 
 ## Use this when
 
-- Replacing a seat's occupant via rebuild, fork, fresh, or future seat-handover
+- Replacing a seat's occupant via rebuild, fork, fresh, or seat-handover
 - Choosing old-occupant disposition: retire / advise / shadow
 - Reasoning about whether a seat's lineage is stable or has drifted
 - Reading or writing the provenance record for a seat
@@ -108,21 +106,28 @@ A seat stays `Stable` even if multiple candidate-occupants were produced and dis
 ## Hard boundaries (do-not list; verbatim)
 
 - **Do NOT collapse `rebuild` and `seat handover` into one primitive.** The design specifically separates them so the system can describe what actually happened.
-- **Do NOT introduce successor-suffix seat names** (`lead2`/`lead3`). Stable seat identity is the architectural goal. *(Reconciliation: this governs the **live** seat address, which stays clean — the seat name is whoever sits now. A **retired** tenure IS versioned (`<seat>-vN`) as the separately-recorded provenance trail / cold wake-target — that is the lineage, not a live successor-suffix. See `retiring-and-inheriting-a-seat` and its lineage ledger.)*
+- **Do NOT introduce successor-suffix seat names** (`lead2`/`lead3`). Stable seat identity is the architectural goal. The live address stays stable. A retired tenure is distinguished by its ledger
+generation and exact history token; preserving it does not require a renamed live pane.
+
 - **Do NOT report `seatBindingOutcome: handed_over`** if the provenance record didn't write durably.
 - **Do NOT auto-rollback a half-completed handover** by re-attaching the old occupant unless detach completed cleanly first.
 
-## Composition: seat handover over fork
+## Composition and current command surface
 
-Once `session_source` fork v1 lands (already shipped at openrig
-`c7b6df1`), the next composition is **seat handover over fork**:
-candidate occupant created via fork, bound into the existing seat via
-handover. Continuity outcome is `forked`; binding outcome is independent.
+A fork can create a candidate occupant; handover binds it into an existing seat.
+The continuity outcome is `forked`; the binding outcome is independent.
 
-## Currently shipped vs deferred
+The packaged `rig handover <seat>` and `rig seat handover <seat>` accept `fresh`,
+`discovered:<id>`, `fork:<id>` and `rebuild` sources. Use `--dry-run` to request
+planning only. Without it, these surfaces can execute; do not infer read-only
+behavior from the shorter seat command's planning-oriented description.
+`rig seat status <seat>` is the read-only observability surface.
 
-- **Option A (rebuild) shipped** at openrig `578bd5c` (2026-04-30): `session_source.mode: rebuild` with `ref.kind: artifact_set`; identity-honesty bedrock at 4 layers (schema dispatch, orchestrator threading, SQLite read-back, negative-grep on resolver output). 26/26 Tier 1 cases green; full daemon regression 2146/2146 PASS.
-- **Option B partially shipped, partially deferred to Mode 3**: the `rig seat handover` CLI exists as a planning/observability surface — `status <seat>` reads the seat-handover observability tables (migration `021`); `handover <seat>` plans a safe two-phase handover sequence with actual execution flowing through existing seat-launch surfaces under operator gating. Full code-direct `SeatHandoverService` daemon module + `seat-binding-outcome` provenance record + nodes-table provenance migration remain deferred to Mode 3. MVP composition `seat handover over fork` is highest-leverage v1.
+Source support is declared by the running daemon and depends on actual identity,
+history and artifact prerequisites. Read the returned source, continuity, binding
+and provenance results independently. A help listing or dry-run is not proof of a
+successful transition. The linked cutover SOP supplies the operator mechanics
+and required effect checks after the named owner authorizes the action.
 
 ## Why load-bearing for RSI
 
@@ -133,13 +138,14 @@ destabilize topology references on each cycle. Provenance must be
 durable AND queryable so RSI loops can decide whether a seat is fresh
 enough to receive new work or needs re-handover.
 
-## Discovery-registration gap (pilot-observed 2026-08-05)
+## Managed binding and retained history
 
-A renamed / retired occupant (`<seat>-vN`, kept alive as a cold advisor) is intentionally **absent from
-the managed node registry** — `rig ps`, discovery, and the delivery verbs (`walk` / `send`) cannot find
-it. This is by design (only bound occupants are registered), and it makes the **lineage ledger +
-boot-captured session id the wake path** (harness-level `--resume` / `codex exec`, not the rig registry).
-Two live handovers confirmed this. See `retiring-and-inheriting-a-seat`.
+A retired advisor's history can remain available without a managed node or live
+pane. Query current binding and the lineage ledger separately: one answers who
+holds the seat, the other identifies the retained history and exact resume token.
+Do not infer that a predecessor is unreachable from registry absence alone, or
+that a preserved token proves a successful resume. Check the actual runtime and
+history when consultation is needed; see `retiring-and-inheriting-a-seat`.
 
 ## See also
 
@@ -148,4 +154,4 @@ Two live handovers confirmed this. See `retiring-and-inheriting-a-seat`.
 - `references/apprentice-evidence-toolkit.md` — optional evidence apparatus selected only when the stakes earn it
 - `session-source-fork` skill — `fork` occupant-creation primitive (sibling)
 - `agent-starters` skill — composes occupant-creation + binding into named reusable starting points
-- `cross-host-rig-commands` skill — multi-host handover (deferred)
+- `cross-host-rig-commands` skill — remote addressing and transport; verify lifecycle support on the target

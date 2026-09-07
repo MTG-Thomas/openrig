@@ -9,20 +9,20 @@ You do not need to read any of it now. You need to know it is there.
 
 ## The command surface — `docs/as-built/` in the source repo
 
-Eight documents sit directly in `docs/as-built/` in the source repo, and
-twenty-four files across `docs/` carry the same `kind: as-built` marker. Two of them are entry
-points and were written to be entered from:
+Use the source repository's `docs/as-built/` index and documents marked
+`kind: as-built`. Start with the entry point that matches your question:
 
 - **`README.md` — "Map of Territory + Module Index."** Start here when you do not know which
   document you want.
 - **`codemap.md` — "Navigation Index / Map of Territory."** Start here when you are about to go
   into the code and do not know which module owns the thing.
-- **`cli-reference.md` — the full `rig` command surface, ~106 KB.** Every group, subcommand, flag,
+- **`cli-reference.md` — the `rig` command reference.** Every group, subcommand, flag,
   JSON shape. **This is the authority on how a command works**, and the capabilities piece
   (`public-what-you-can-do.md`) is only the map to it.
 
-**These are maintained, not archaeology.** `cli-reference.md` alone has forty-nine commits against
-it. Treat them as current.
+Check the document's verification marker against the source you are using. A
+maintained document can still lag a changed command; its history is not proof
+of current behavior.
 
 ### The field that tells you how much to trust one
 
@@ -42,11 +42,11 @@ binary wins** — and the disagreement is worth reporting, not just working arou
 
 ## The living answer — `--help`
 
-**The binary is always more current than anything written about it.** `rig <verb> --help` and
+**Ask the binary you will actually run.** `rig <verb> --help` and
 `rig <verb> <subcommand> --help` are authoritative for shape, flags and defaults. This costs
 seconds and it is the single cheapest habit on this list.
 
-**And use it as a search, not just a lookup.** `rig --help` lists eighty-one top-level verbs. If
+**And use it as a search, not just a lookup.** `rig --help` lists the installed top-level commands. If
 you are about to build something, read that list first — the most expensive failure here is
 building a parallel solution out of primitives that already compose into the answer.
 
@@ -61,16 +61,12 @@ does not know the external sources below exist invents instead of looking. An ag
 **answers from its training snapshot and states it as current** — and an invented answer and a
 known one look identical once you have stated one.
 
-- **`context7`** — official documentation for a library, framework, SDK, API, CLI tool or cloud
-  service. **The moment: you are about to answer a question about any of those from memory.**
-  Reach for it even when you are confident, because confidence is exactly what a stale training
-  snapshot feels like. `resolve-library-id` first, then `query-docs`; it returns versioned library
-  IDs with a source-reputation and benchmark score, so you can see how good the coverage is before
-  you trust it.
-- **`exa` web search** — the general web. Describe the ideal *page*, not keywords: *"blog post
-  comparing X and Y performance"* beats *"X vs Y"*. It has an agent mode that does multi-step
-  research when one query will not do. `WebSearch` / `WebFetch` ship in the harness and do the
-  simpler version of the same job.
+Use the tools actually available in your harness. If a documentation connector
+such as `context7` is installed, use its current lookup interface to find the
+relevant library and version. If a web-search or fetch tool such as `exa` is
+available, use it to locate current primary sources. These tool names are
+examples, not a promise that your installation includes them. State any access
+or version limitation that affects the answer.
 
 ### The trust rule, and it is not the one these tools invite
 
@@ -78,18 +74,17 @@ known one look identical once you have stated one.
 to FIND; go to the primary source to CONFIRM anything load-bearing — the registry, the API, the
 repository, the running binary's `--help`.
 
-**Measured here 2026-08-18, and it inverts the intuition.** Asked for the current published version
-of a package, web search returned one page saying `0.5.0` (stamped "updated" two weeks earlier) and
-another saying `0.4.0`. The registry itself said `latest: 0.5.1` — and a four-day-old line in an
-agent's own memory index had been right all along. **The live-looking source was the stale one.**
-Web caches lag by an unknown and unstated amount, and nothing on the page tells you how much.
+Search indexes and caches can lag the source they describe. For a published
+package version, query the package registry; for an API contract, inspect the
+versioned provider documentation or implementation. An “updated” timestamp on
+a secondary page does not establish which source revision it reflects.
 
 So these extend your reach; they do not outrank a primary source, and *newer-looking* is not
 *newer*.
 
 ## The one you read rather than consult
 
-**`openrig-operating-model`** — a skill, ~23 KB. Everything else on this page you visit with a
+**`openrig-operating-model`** — the skill for context placement and chain walking. Everything else on this page you visit with a
 question already in hand. **That one you read through once**, because it is the shape the rest
 hangs on: the two trees, how context is arranged by altitude, and how a cold agent finds what it
 needs. Reading it is what stops you inventing an arrangement that already exists.

@@ -45,10 +45,10 @@ the receipt and move on.
 Example:
 
 ```bash
-rig send guard@your-rig "Heads up — filing per-commit handoff on the rig-up paper-cut fix at tip 6b8673b6." --verify
+rig send dev-reviewer@example-project "The import report is ready; the durable handoff names its evidence." --verify
 ```
 
-### `rig queue create --source <X> --destination <Y> --tags <...> --body "<...>"` — durable work item
+### `rig queue create --destination <Y> --tags <...> --body-file <path>` — durable work item
 
 Use for any substantive work that must not fall through chat — slice handoffs,
 guard verdicts, QA results, full-tip reviews, multi-item batches. Survives agent
@@ -65,10 +65,9 @@ Example:
 
 ```bash
 rig queue create \
-  --source driver-2@your-rig \
-  --destination redo-guard-2@your-rig \
-  --tags "mission:release,slice:rig-up-paper-cut-fix,gate:guard,handoff:per-commit,checkpoint:bug-1-bonus" \
-  --body-file /tmp/per-commit-body.txt
+  --destination dev-reviewer@example-project \
+  --tags "mission:data-import,slice:import-report" \
+  --body-file /tmp/import-report-handoff.md
 ```
 
 ### `rig queue handoff <qitem-id> --to <next> ...` — hot-potato handoff
@@ -76,22 +75,26 @@ rig queue create \
 Use when you have completed your turn on a qitem and the work moves to the next
 owner. **This is forward momentum.** The ball passes to the destination seat;
 chain-of-record (the prior qitem id) is preserved so the verdict trail is intact;
-tags carry the phase boundary forward (e.g. `gate:guard` → `gate:qa`).
+tags carry the selected work context forward. Gate tags describe checks actually
+selected for that work; they do not require a fixed sequence of roles.
 
 Example:
 
 ```bash
-rig queue handoff qitem-20260601012431-d78aa805 \
-  --to velocity-qa@your-rig \
-  --tags "mission:release,slice:rig-up-paper-cut-fix,gate:qa,handoff:adversarial-dogfood"
+rig queue handoff <qitem-id> \
+  --to dev-reviewer@example-project \
+  --tags "mission:data-import,slice:import-report" \
+  --body-file /tmp/import-report-handoff.md
 ```
 
 ### §1b doctrine — turn ends by passing the ball
 
 **A turn ends by passing the ball, never by going idle holding the slice waiting
-on a confirmation the process does not include.** If the work was authorized, the
-per-commit guard + adversarial QA + orch heavy-verify are the guardrails — not an
-operator pre-commit gate. Do the authorized work and pass the ball.
+on a confirmation the selected process does not include.** Follow the current
+`mission-slice-sop`: proportional owner checks are the default; independent review
+runs when selected, at the authored work boundary. Role names do not add per-commit
+guard, QA, or orchestration gates. Do the authorized work, run its selected checks,
+and return the outcome through durable custody.
 
 Valid pauses are only:
 
@@ -134,13 +137,9 @@ Default posture:
 
 - Treat daemon `rig queue`, `rig stream`, `rig project`, `rig view`, `rig watchdog`, and
   `rig workflow` as the product coordination surfaces when the active daemon is v0.2.0 or newer.
-- **CANONICAL SURFACE NOTE (2026-05-11)**: `rig queue` (daemon-backed SQLite) became
-  the canonical queue-routing surface when the 2026-05-11 host-CLI fix landed. The
-  coordination model is now load-bearing at the top of this skill — see
-  "Coordination primitives — when to use which" above for the send / queue /
-  queue-handoff usage model and the §1b doctrine. Auxiliary queue verbs:
-  `rig queue update / show / list` complement `rig queue create / handoff`
-  for in-flight inspection and state mutation.
+- Use daemon-backed `rig queue` for durable routing. `update / show / list`
+  complement `create / handoff` for inspection and state changes; records in an
+  unrelated store are not evidence that this daemon owns the work.
 - If a daemon-backed coordination command fails, debug the command/runtime/schema edge directly;
   do not assume the right workaround is to drop back to a config-layer primitive.
 - Do not perform daemon stop/start, production DB copy/mutation, release, publish, or other
@@ -321,25 +320,20 @@ rig plugin validate <path>
 There is no `rig plugin install` verb in v0.3.1. Plugin installation remains
 explicit operator copy/symlink to `$OPENRIG_HOME/plugins/<plugin-id>/`.
 
-Claude auto-compaction policy is opt-in default-off. The v0.3.1 package and
-this host's active daemon ship `policies.claude_compaction.*` ConfigStore keys,
-but no behavior changes unless the operator enables the policy.
+The v0.3.1 package introduced opt-in Claude auto-compaction policy through
+`policies.claude_compaction.*` ConfigStore keys. A package version alone says
+nothing about a running daemon's configuration; inspect the selected instance
+before relying on a policy or its default.
 
-Known v0.3.0/v0.3.1 caveats:
-- `rig down` now accepts a rig name or id (symmetric with `rig up`): the earlier
-  name-to-404 caveat (the D1 path) is resolved in v0.3.3. An ambiguous name
-  matching more than one active rig is refused with the matching ids; re-run
-  with `rig down <id>`.
-- `rig queue` / `rig view` JSON and limit compatibility drift is an open
-  follow-up from host-adoption proof; treat it as a compatibility caveat, not a
-  daemon-health failure.
-- Queue/view JSON/limit drift is now refined as a wrapper-layer routing issue,
-  not a daemon-layer issue; use human-readable output for affected wrapper
-  commands until v0.3.2.
-- First v0.3.1 daemon start hit a plugin-vendor fallback health-probe timeout;
-  controlled retry succeeded. Manual retry is the current workaround.
-- Topology mobile drawer restoration and plugin source-label taxonomy are
-  v0.3.2 carry-forwards.
+Compatibility checks:
+- `rig down` accepts a rig name or id. An ambiguous name matching more than one
+  active rig is refused with matching ids; use the intended id.
+- For queue/view JSON or limit differences, compare the installed command's help,
+  the running daemon version and the actual response. A wrapper mismatch is not
+  by itself a daemon-health failure, and historical workarounds are not current
+  behavior guarantees.
+- After a startup timeout, inspect status and logs before retrying; a timeout
+  does not establish whether the underlying operation completed.
 
 ## Recovery and Resilience (v0.3.4+)
 
@@ -479,14 +473,14 @@ rig ps --active             # opt-in active-state filter (does NOT change the al
 - **All-states stays default** (different from `rig queue list` which defaults to active-only) — for `ps`, non-running states ARE often the actionable signal.
 - **Resume-token security**: `--full` JSON emits `resumeTokenPresent` (boolean) — the actual `resumeToken` value also remains in `--full` for downstream consumers that legitimately need it, but the compact default never carries it (an orch glance never accidentally leaks token material).
 
-**⚠ SCOPE-AWARENESS — the one that bites:** `rig ps --nodes` (and `--nodes --json`) show ONLY your current rig's seats, by design — the narrow default protects your context window. **Narrow output is not the whole world.** Never conclude "my rig is the only rig on the host" from a `--nodes` read — run bare `rig ps` FIRST (cheap; it lists every rig), then `rig ps --nodes --rig <name>` for the one you need. (`-A` = the expensive whole-host node read; use sparingly. The ~77k-token status-glance incident is closed by compact + scope.)
+**⚠ SCOPE-AWARENESS — the one that bites:** `rig ps --nodes` (and `--nodes --json`) show ONLY your current rig's seats, by design — the narrow default protects your context window. **Narrow output is not the whole world.** Never conclude "my rig is the only rig on the host" from a `--nodes` read — run bare `rig ps` FIRST (cheap; it lists every rig), then `rig ps --nodes --rig <name>` for the one you need. (`-A` widens to the whole-host node view; choose it when that breadth is needed.)
 
 ### `rig whoami` — compact-by-default + `--full` (`--verbose` alias)
 
 ```bash
 rig whoami                  # compact: identity + peers names + edges + transcript path
-rig whoami --json           # compact JSON (~192 tokens)
-rig whoami --full           # complete payload (~909 tokens; v0.3.4 default shape)
+rig whoami --json           # compact JSON
+rig whoami --full           # complete payload (v0.3.4 default shape)
 rig whoami --verbose        # alias of --full
 ```
 
@@ -504,10 +498,11 @@ rig queue list --full -o json        # full JSON
 rig queue list --mine                # just the caller's items
 rig queue list --destination <s>     # destined to <s>
 rig queue list --source <s>          # sourced by <s>
-rig queue show <qitemId>             # full single item (kubectl describe)
+rig queue show <qitemId>             # bounded single-item body preview
+rig queue show <qitemId> --full      # complete body and chain fields
 ```
 
-Four orthogonal axes (scope × history × field-breadth × encoding), all composable. **STOP using bare `rig queue list` as the cross-rig firehose.** Default is now active + compact + current-rig. The cross-rig + history + full-body firehose (the ~64,000-token payload spike) is opt-in via `-A -a --full`.
+Four orthogonal axes (scope × history × field-breadth × encoding), all composable. **STOP using bare `rig queue list` as the cross-rig firehose.** Default is now active + compact + current-rig. Cross-rig history with full bodies is opt-in via `-A -a --full`; request only the breadth and fields needed for the question.
 
 ### `rig restore-check` — summary + not-ready-only default + `--full`
 
@@ -518,7 +513,7 @@ rig restore-check --rig <name>  # narrow
 rig restore-check --as <session>  # narrow to one seat
 ```
 
-Closes the largest measured bomb (~79,000 → low thousands). Summary correctly identifies EVERY not-ready seat (no false-ready omission); detail is dropped only for ready seats.
+The summary retains not-ready seats and their reasons; `--full` adds ready-seat detail when needed. Scope the query before expanding its payload.
 
 ### `rig context` — context-window usage viewer (0.4.x; REMOVED in 0.5.0)
 
@@ -531,13 +526,13 @@ rig context --threshold 80 # filter to seats at/above 80%
 
 Lower leverage than the others; keeps the read-command surface compact-by-default after the 0.4.0 upgrade. **⚠ 0.5.0: this usage viewer is removed entirely and the `rig context` name is reassigned to the context library (store + compose) — see "Context packs and paced delivery (0.5.0)" below. On a 0.5.0 host, bare `rig context` is the library, not this viewer.**
 
-### Why this matters
+### Keep routine reads bounded
 
-This release closes the host-version-aged token-burn class: on this host the read-commands accumulated to ~225,000 tokens of context-window cost over a typical orchestrator session, almost all of it firehose-when-a-glance-was-wanted. Compact defaults restore the lean-monitoring doctrine: a narrow status check must be cheap. The full payloads remain one flag away when actually needed.
-
-### Token-efficiency-boot-guardrail pack (interim) — CLI-prohibitions RETIRE at host-upgrade
-
-The interim `token-efficiency-boot-guardrail` pack (the CLI-command prohibitions on `rig queue list` unfiltered, `rig ps --nodes --json` unfiltered, `rig restore-check`, `rig context`, `rig whoami --json`) is a host-version workaround for the bloated defaults this release closes. **The CLI-command-prohibitions half retires when 0.4.0 lands on the host.** The pack's bounded-local-search rule + scope / over-flag discipline GRADUATE to a standing convention (`conventions/bounded-local-search-and-flag-scope`) and continue to apply host-independently.
+Choose scope, active/history breadth and fields before expanding a result. A
+status question usually needs identifiers, owner, state and reason; open the full
+body or artifact when it is relevant. Preserve full evidence on disk instead of
+repeatedly loading unchanged output. Compact defaults reduce reading cost; they
+do not remove the full-detail path or prove that nothing exists outside the scope.
 
 ### `rig scope mission|slice progress` — deterministic progress updates
 
@@ -585,14 +580,10 @@ v0.3.4 shipped `clear-attention` gating on `session.startupStatus` only. v0.4.0 
 ### Native Codex session id capture
 
 Codex seats can now record the real native session id from the Codex
-`SessionStart` hook instead of relying on scrape-shaped identity. The proof
-lane for v0.4.0 matched the same id across the hook payload, rollout log, and
-SQLite. Treat hook-sourced ids as stronger resume/identity evidence than
-terminal scraping when present.
-
-Managed-seat hook trust is a 0.4.1 carry: the v0.4.0 surface proves native
-capture and hook-trust constraints, but do not assume every managed Codex seat
-has already migrated from scrape-backed to hook-sourced ids.
+`SessionStart` hook instead of relying on scrape-shaped identity. Corroborate the id across the current hook payload, provider history and
+managed record before relying on it. A release introducing native capture does
+not prove that every existing seat uses it; retain any unavailable or conflicting
+identity evidence explicitly.
 
 ### Codex resume preserves approval posture
 
@@ -696,7 +687,7 @@ rig ps --nodes --full       # complete per-node record (the firehose — opt-in)
 rig ps --nodes --json       # compact JSON node inventory (add --full for the full record)
 ```
 
-**v0.4.0 flipped these to compact-by-default — see the `rig ps` compact-defaults section above; STOP using bare `rig ps --nodes --json` as a fleet-wide firehose (the ~77k-token status-glance incident).** The compact `rig ps --nodes` node inventory (add `--full` only when you need the complete record, `-A` for cross-rig breadth) carries, per node:
+**v0.4.0 flipped these to compact-by-default — see the `rig ps` compact-defaults section above; STOP using bare `rig ps --nodes --json` as a fleet-wide firehose (scope and detail are separate choices).** The compact `rig ps --nodes` node inventory (add `--full` only when you need the complete record, `-A` for cross-rig breadth) carries, per node:
 - session name
 - runtime
 - session/startup status
@@ -764,7 +755,7 @@ rig send <session> "message" --host <id>
 rig send <session> "message" --json
 ```
 
-**The send-guard (v0.4.0) — the default is SAFE.** A default `rig send` is guarded: it will NOT submit into an interactive prompt / permission block on the target pane (the footgun that prematurely shipped 0.4.0). Flags:
+**The send-guard (v0.4.0) — the default is SAFE.** A default `rig send` is guarded: it will NOT submit into an interactive prompt / permission block on the target pane. Flags:
 - `--verify` — delivery evidence.
 - `--force` — **a back-compat no-op on the send DECISION**: it never bypasses the interactive-prompt/permission guard and never changes whether a message is delivered (a mid-task/busy pane already sends-with-advisory by default). *(It does NOT "bypass activity-risk checks" — that earlier teaching is retired.)* It is **not fully inert**, though — it is still parsed solely to be **rejected in combination with `--wait-for-idle`**: `rig send … --force --wait-for-idle <n>` prints `--wait-for-idle cannot be combined with --force`, exits 1, and sends nothing. So do not read "no-op" as "`--force --wait-for-idle` is harmless"; that pairing errors. *(Verified against current product main `d37a08ad`: the guard-bypass no-op is declared at `send.ts` and confirmed by runtime capture — a plain `--force` send delivers through the ordinary path; the `--wait-for-idle` rejection is enforced at `send.ts`, `routes/transport.ts`, and `session-transport.ts`, and confirmed by runtime capture — exit 1, nothing sent.)*
 - `--wait-for-idle <seconds>` — wait until the target is explicitly idle before sending. **Cannot be combined with `--force`** (that pairing is rejected: exit 1, nothing sent).
@@ -923,7 +914,7 @@ rig auth seats … --runtime codex         # seat -> profile registry (metadata 
 
 **Compose context once, hand it to a seat cleanly.** A library primitive plus a set of delivery flags. The rule that keeps the grammar coherent — internalize this one: **the noun stores and composes; the verbs deliver.** `rig context` never sends anything; delivery is only ever `rig send` / `rig broadcast` / `rig walk` / `rig queue`.
 
-> Version note: this is the 0.5.0 surface, pinned to the team-locked spec — not yet on lagging hosts. In 0.4.x, bare `rig context` was a context-window usage viewer (above); in 0.5.0 that viewer is removed and the `rig context` name belongs to the library here.
+> Version note: this describes the library surface introduced in 0.5.0. Check the installed command and serving daemon before relying on it. In 0.4.x, bare `rig context` was a context-window usage viewer (above); in 0.5.0 that viewer is removed and the `rig context` name belongs to the library here.
 
 ### `rig context` — the store + compose library (never delivers)
 

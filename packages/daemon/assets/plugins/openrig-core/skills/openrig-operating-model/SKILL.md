@@ -9,7 +9,7 @@ description: >-
 metadata:
   openrig:
     stage: draft
-    author: OpenRig product team (sole-context authorship)
+    author: OpenRig product team
 ---
 
 # The OpenRig Operating Model
@@ -20,10 +20,9 @@ find what it needs and knows where to write what it learns. Everything below
 runs on **markdown files, scripts, and conventions only**; the `rig` verbs that
 formalize pieces of it are conveniences, never dependencies.
 
-**Boundary (2026-08-11):** this skill owns the STRUCTURE (trees, chains, trace,
-write protocol). The SUPPLY layer — how canon content flows into the chains:
-addresses, maps, renders, EMM maturity, census — is `openrig-corpus-canon`,
-the deliberate drain mechanism the dual-home interim anticipated.
+This skill owns the structure: trees, chains, tracing, and placement of authored
+knowledge. Resolve installed context through its current library addresses and
+the project's selected loadout; a private corpus is not a required public dependency.
 
 Companion implementation assets in this skill's folder:
 - `templates/` and `scripts/` — starters and working tools, described in §8.
@@ -43,7 +42,7 @@ An **instance** is one OpenRig daemon and the rigs it manages; a **fleet** is al
 a daemon runs is a deployment fact, not an altitude — say the instance's name when you mean a
 particular one.
 
-**The one-parent law (design-ruled 2026-08-10):** the trace follows the
+**The one-parent law:** the trace follows the
 directory path and NOTHING else — no pointer fields, no link-following, no
 branching, ever. The trace is the instrument confused agents reach for, so it
 must be simpler than anything it corrects: path-only ascent fails only in
@@ -99,18 +98,17 @@ generated or projected.** It is the work tree's lived file, the way `LEARNED.md`
 tree's — the field-notes rung, where raw observation goes before anything has earned a place in the
 node itself. Keeping lived files out of the render path is what makes them safe to write freely in.
 
-**Legacy name:** the adopted spelling is `MISSION_NOTES.md` (35 at mission root). It stays
-resolvable, but the chain name is `NOTES.md` — `MISSION_` is altitude-specific and a chain uses one
-name at every altitude.
+**Legacy name:** older workspaces may use `MISSION_NOTES.md`. Keep legacy
+content addressable; use `NOTES.md` for the chain because its name works at every altitude.
 
 | Level | `SPEC.md` — frontmatter `intent:` (why) + body (what must be built) | progress | kept true by |
 |---|---|---|---|
 | project | `intent:` only — stable, changes at real pivots | derived roll-up | the project's PM |
-| mission | `intent:` only — a mission ORGANISES slices; it specifies nothing | authored checklist marks; roll-up derived | the mission's PM |
-| slice | `intent:` **and** a body — the only altitude that specifies | authored checklist marks; roll-up derived | the slice's owner |
+| mission | `intent:` and proportional mission-level specification; organizes slices | authored checklist marks; roll-up derived | the mission's PM |
+| slice | `intent:` and the concrete slice specification | authored checklist marks; roll-up derived | the slice's owner |
 | proof item | *(inherits)* | **the checkbox — the stored acceptance mark** | the prover |
 
-**PROGRESS reconciliation (2026-08-26):** Checkbox items stored in a mission or slice
+**Progress checklists:** Checkbox items stored in a mission or slice
 `PROGRESS.md` are authored acceptance marks. In-process task tracking stays in the agent's own todo
 tool. Everything that rolls those marks up above the managed checklist is derived at render time,
 so authored checklists and the never-author-a-derived-roll-up rule are the same model.
@@ -134,13 +132,10 @@ becomes a confident lie.
 Two directions on the same trees: intent/values/practice **compose downward**
 (you trace UP to read them); progress **aggregates upward** (never hand-written
 above the stored marks). **And PROGRESS above the managed checklist is a RENDER, not a
-file** (design-ruled 2026-08-10): the checkbox is the stored acceptance mark;
-`scripts/compose.py progress` derives the roll-up tree at render time. The
-old PROGRESS.md files that embedded a hand-rendered tree were the right idea
-in the wrong home — a stored derivation drifts into a confident lie (the same
-law that retired `serves:`). Existing legacy PROGRESS.md files with embedded
-trees stay per rule zero and are read as testimony; nobody authors a progress
-tree by hand again.
+file**: the checkbox is the stored acceptance mark;
+`scripts/compose.py progress` derives the roll-up tree at render time. Keep legacy
+embedded roll-ups as historical records when needed, but derive the current view
+from its marks rather than maintaining another copy by hand.
 
 **The axis behind the columns:** every context kind has a *template* half
 (what ships — SOP, the default culture) and a *learned* half (what living
@@ -152,16 +147,13 @@ constitution.
 
 ## 3. Why this exists (the failure it fixes)
 
-*How this seat does its job, learned over time* had no durable home. It lived
-in one runtime's private memory (invisible to the other runtime, the operator,
-and every successor), in handover documents (where day-to-day duties drown
-under urgent state), and in skills nobody opened at the right moment. Measured
-result: several consecutive generations of critical seats each started with a
-fraction of their predecessor's ability, without knowing it. The structural fix
-is the pair: `openrig-core`'s operating-model skill (the job, by type — shared,
-versioned, shipped) + `LEARNED.md` on the chain (the job, as lived — per-instance,
-occupant-written) — **read at every boot before any handover document**, written
-by every generation. A bad handover now costs recent state, not the job itself.
+Seat knowledge needs a durable home that successors and other runtimes can read.
+A private runtime memory or an urgent handover packet alone can omit standing
+duties and the reasons behind a practice. Keep general operating craft in the
+shared skill and position-specific knowledge in the seat's `LEARNED.md` chain.
+At a handover, read the current chain alongside the packet and record any missing
+job context before claiming readiness. Each occupant maintains what the seat has
+learned; the handover packet carries the current transition.
 
 ## 4. LEARNED.md — the living file (all altitudes; seat shown)
 
@@ -187,15 +179,14 @@ Sections, in order — see `templates/LEARNED.md`:
 **Size: soft guidance, not a rule.** Keep it as small as honestly covers the
 job — attention is the budget, and every reader pays it. Some seats genuinely
 need more; write what the job needs. The failure mode to watch for is the
-rulebook that only ever grows — hundreds of accumulated edicts nobody can hold
-(the Deuteronomy pattern, which this fleet has lived through once at population
-scale). The antidote is the distillation habit in §8 above, not a line count.
+rulebook that only ever grows. Distill lessons into practices with reasons at
+deposit boundaries (before clear or handover); use that habit, not a line count.
 
 ## 5. The trace — deliberate reorientation
 
 A trace is walking your chains **with your own file reads** and writing down
 where you stand: what am I doing (queue/NOTES) → under what contract (SPEC) →
-toward what intent (INTENT chain, leaf to root) → by what practice (LEARNED +
+toward what intent (`SPEC.md` intent field, leaf to root) → by what practice (LEARNED +
 SOP) → within what values (CULTURE). A few written lines at the end.
 `scripts/compose.py up` assembles any chain for you.
 
@@ -215,7 +206,7 @@ picture of where you stand may be stale* — after a large stretch of work, at a
 boundary (boot, handover, new mission, confusion), or when someone asks you to
 reorient. Why not simply "every N hours": identical scheduled prompts fade
 from an agent's attention with repetition, and idle seats accumulate ritual
-traces that crowd out real context — both failures observed here, at cost.
+traces that crowd out real context.
 Where a schedule fits your context anyway, use one — but prefer gating the
 *action* on evidence of change: `scripts/trace-due.sh` decides "has enough
 happened since my last trace?" deterministically and stays silent when the
@@ -245,17 +236,14 @@ exist and both are chains in that sense:
 delivery regardless of content. That is why `rig walk` elapses `--pace` between pieces, and why a
 composed render is meant to be read as a sequence rather than skimmed as a wall.
 
-**NAMING, RULED 2026-08-14 — the two ends have two words and neither is shared.**
+Use distinct names for the two directions:
 
-- **TRACE** — the pull ascent. `compose.py up` renders a node's chain to the root. This is what
-  `refocus` means by *run a trace*, and it is what the render itself now prints.
-- **`rig walk`** — the push verb, paced delivery into a seat's pane. It ships in the CLI, so treat
-  renaming it as a product change.
+- **TRACE** — the pull ascent. `compose.py up` renders a node's chain to the root.
+- **`rig walk`** — the push verb for paced delivery into a seat's pane.
 
-**"Walk" no longer means the ascent.** It drifted in through the render's own header and started
-competing with `trace`, which was already the word in `refocus` and in this file. **The fix is the
-name, not a sentence explaining the name** — a disambiguation you have to maintain is a defect you
-decided to live with.
+Use `refocusing` for the current trace workflow. A delivery receipt and an
+agent's read-depth report answer different questions; pacing alone does not
+establish understanding.
 
 ## 6. Writing — two principles
 
@@ -338,8 +326,11 @@ further setup. **A script that only works for its author is not shippable, howev
 tree (`LEARNED.md`). What is being built is the *work* tree (`SPEC.md`). One rig owns both; they
 still do not mix.
 
-**Project and mission bodies are short or absent** — `intent:` is the whole job at those altitudes.
-The slice is the only altitude that specifies.
+**Keep specification depth proportional.** A project carries stable intent; a
+mission carries its intent and mission-level specification in the same authored
+`SPEC.md`. Slices provide their concrete implementation scope. Follow the selected
+`mission-slice-sop` and any explicit mode overlay; mission specification is not a
+requirement to repeat every slice detail.
 
 ### The other axis: AUDIENCE is not MATURITY
 
@@ -363,8 +354,7 @@ practice must accrue** (*never broadcast to a large rig* took an incident).
 
 **LEARNED.md is not a staged item — it is the bed everything lies in.** Its gradient is
 positional: the dated append-log at the bottom is raw observation, the concise sections at the top
-are what survived. What is missing is a **trigger**, not structure — "periodically distill" has
-meant *never*. The answer: distil at deposit boundaries (pre-clear, pre-handover) where a write is
+are what survived. Attach distillation to a **trigger**: distil at deposit boundaries (pre-clear, pre-handover) where a write is
 already required and the author still remembers why each line exists; refocus merely *notices*
 when the log has outgrown the distilled part.
 
@@ -384,10 +374,9 @@ and how you discover which seats cannot yet describe their own job.
   at the next render, silently.
 - "Improving" the trace with pointer-following, serves-resolution, or any
   branching — the trace's entire value is that path-only ascent cannot fail
-  subtly; a smarter trace is a worse trace (design-ruled 2026-08-10).
+  subtly; keep the trace path-only.
 - Summarizing this model for another agent instead of pointing them here —
-  secondhand operating models are how operating models die; this skill was
-  authored precisely because a chain of summaries destroyed the last one.
+  a summary becomes another copy that can drift from its source.
 - Scripts in `scripts/` are macOS-flavored in places (`stat -f`); verify
   platform compatibility before trusting them on another OS.
 

@@ -20,7 +20,7 @@ A **planned** seat transition. A long-lived seat accumulates context; as it near
 window's edge, don't wait for compaction to degrade you into a cold-started agent —
 **retire deliberately** and hand the seat to a fresh successor primed from a packet plus
 the seat's accumulated lineage. The **seat address is stable; its occupants are a lineage.**
-This is the practice that named the "seat" primitive.
+Keep the transition and its authority explicit.
 
 ## Use this when
 
@@ -48,8 +48,9 @@ threshold you can see coming; fall back to compaction only when a transition was
 
 ## The handover sequence
 
-1. **Trigger** — ~85% context, or a deliberate role transition. The oversight-rig context
-   detector can fire this for you; you can also self-initiate when you feel the edge.
+1. **Trigger** — the selected continuity threshold or a deliberate role transition.
+   Use the configured policy and named transition owner; a context estimate alone
+   does not authorize a cutover.
 2. **Author the handover packet, deliberately** — a composed context pack carrying current
    work + next owner, the seat's durable pointers, constraints and authority boundaries, and
    the accumulated **lineage wisdom** ("those before you learned X"). This IS a restore packet
@@ -66,26 +67,29 @@ threshold you can see coming; fall back to compaction only when a transition was
    `orienting-to-an-inherited-seat`** — its world model of what a handover *is*. Carry that
    pointer **in the durable packet artifact itself**; never inject it as a runtime prompt keyed
    to the seat name (that runtime mechanism is the **ghost-prompt** class the orientation skill
-   teaches successors to refuse — and it has misfired on real successors). Artifact-carried
+   teaches successors to refuse). Artifact-carried
    survives the swap for free and needs no enabled gate.
-4. **Preserve the physical seat at cutover** — the live seat address and its canonical tmux
-   session, window, and pane stay stable. Assess the apprentice in a staged session; at the
-   owner-worded cutover, resume the accepted successor history in the original canonical pane
-   and remove the empty staging session. The retiring tenure becomes a cold advisor through its
-   lineage token. Renaming tmux sessions is a repair fallback, because attached clients follow
-   the physical pane rather than the logical seat name.
-5. **Write your lineage-ledger row + a one-line tombstone** (below).
-6. **Optional warm handoff** — a bounded apprenticeship window: the successor asks questions,
-   the predecessor judges fitness, *then* the swap completes. Use it when the seat holds a lot
-   of live judgment; skip it for a clean cut.
+4. **Assess before cutover.** If an apprenticeship or warm handoff is selected,
+   use that staged window for questions and domain work before the owner decides.
+   The incumbent retains authority until the owner-worded cutover; do not retire
+   it merely to free a name while waiting for that decision.
+5. **Preserve the physical seat at cutover** — follow the portable SOP linked from
+   `seat-continuity-and-handover`. Keep the canonical tmux session, window and pane;
+   resume the exact accepted successor history there and reconcile binding,
+   environment, queue identity and attached clients. Preserve the incumbent's
+   exact token as a cold-advisor handle when that is the selected disposition.
+   Renaming tmux sessions is a repair fallback, not the default sequence.
+6. **Write the lineage-ledger row and tombstone** (below). Record the actual
+   outcomes and transfer each standing duty explicitly. Complete the successor's
+   post-cutover self-check before unfreezing authority.
 
 ## Apprentice mode — incumbent
 
 An `apprentice-handover` policy gives you an early preparation boundary, not permission to
 automate the succession decision. Create a fresh, staged, unbound successor; prove the pinned
 model before installing context; then open a **conversation, not a gauntlet**. Give coached
-errands, answer questions, and judge work in the real domain. The experiment's scored probes are
-optional tools whose rigor must match the stakes, not mandatory ceremony.
+errands, answer questions, and judge work in the real domain. Scored probes are optional tools whose rigor must match the stakes, not
+mandatory ceremony.
 
 Stay the authority-bearing incumbent until the named owner words the gate and the mechanic records
 the effect receipt. Before that word, the apprentice may observe, ask, and produce evidence but may
@@ -114,15 +118,15 @@ ledger is the tenure record; work-tree notes remain lived context, not identity 
 **Crash-ended tenures** get their row appended **post-hoc** by the crash-cart / restore path,
 flagged **honest-approximate** (the boot-captured session id is what makes this recoverable).
 
-## Do NOT over-inherit — the key lesson from the practice's history
+## Inherit the seat, not the predecessor's identity
 
 **You are inheriting a seat, not becoming your predecessor.** Frame it explicitly to the
 successor: *"agents sat here before you and learned X; you carry the seat's mission, not their
-identity."* The historical failure was agents getting confused about whether they **were** the
-predecessor — carrying a stale self-model, over-claiming prior work as their own. Inherit the
+identity."* Do not claim a predecessor's work as your own or use its stale identity
+as the current binding. Inherit the
 seat's **mission and hard-won lessons**; keep your own **fresh identity and session**.
 
-## Wake v0 — ask the agent who sat before you (a practice, not a verb)
+## Reach back to a retained predecessor
 
 A retired tenure is a cold advisor you can consult. Look up the seat's ledger → get that
 generation's session token → resume it for **one question**, then let it sleep again:
@@ -130,19 +134,22 @@ generation's session token → resume it for **one question**, then let it sleep
 - Claude: `claude -p --resume <session>`
 - Codex: `codex exec` (resume the rollout)
 
-This is also a `rig` verb: `rig ask <rig> "<q>" --wake <seat[@gen]|token>` (CLI 0.5.1; also
-`--runtime`, `--wake-timeout`, default 180s). It wraps the harness resume above and is **not yet
-well-exercised** — if it fails, fall back to `claude -p --resume <full-uuid>`. **A failing wrapper is
-not a closed channel.** The ledger is how you **find** the right predecessor; wake is how you ask them.
+Use `rig ask <rig> "<q>" --wake <seat[@gen]|token>` for an explicit bounded
+consultation (introduced in CLI 0.5.1). Check `rig ask --help` for `--runtime`
+and `--wake-timeout`. The wrapper uses a runtime resume; its presence is not
+proof that a particular retained history is available. For a Claude history,
+`claude -p --resume <full-uuid>` is the runtime-level fallback when supported.
+Diagnose the specific failure before declaring the channel unavailable.
 
 **What to write in your packet about reaching you** — your successor asking you questions is the
 reason this is a handover and not a compaction:
 
-- **State that the channel does not expire**, and give your **verbatim resume handle**. You stay
-  reachable after retirement; the only real bound is your own context wall, hit while answering. Ask
-  them to treat your answers as testimony if you like — that is a posture claim, not a limit on access.
+- **Give your verbatim resume handle and known availability limits.** Retirement alone
+  does not expire retained history. Resuming still depends on that history, runtime
+  access and remaining context; distinguish these failure modes. The advisor
+  supplies testimony and does not regain the live seat's authority.
 - **Pre-form the questions.** Inventory what only you hold and write the questions out. An affordance
-  without a trigger goes unused, so *"you may consult your predecessor"* reliably produces none.
+  needs a trigger: name the tradeoff, missing rationale or conflict that should prompt a question.
 
 **Wake-tenancy — the identity halves (a woken tenure can mistake itself for the live seat).** The
 hardest thing to apply *checked-not-believed* to is your own identity — a retired tenure resumed for a
@@ -165,57 +172,36 @@ question can answer, and act, as if it still held the seat. Two rules close it:
 3. **Session id captured at retirement, not boot** — a crash then leaves no row, or an
    unfindable tenure. Capture at boot.
 4. **Suffixing the LIVE seat** (`<seat>-v2` as the active address) — lineage leaking into
-   identity, the wrong shape. The live address stays clean; only the retiree is versioned.
+   identity, the wrong shape. The live address stays clean; generation belongs in the ledger.
 5. **Tombstone omitted or vague** — the ledger can no longer answer "who did this / who to
    wake." One honest line, every tenure.
 
-## Field-validated refinements (pilot 2026-08-05 — two live runs, both runtimes)
+## Checks around a planned transition
 
-Two live handovers (a Claude seat + a Codex seat) ran this sequence end-to-end and sharpened it:
+- **Stage and assess before the owner calls cutover.** Use startup context when the
+  successor is unbound; check its actual address before relying on registry-routed
+  delivery. Keep incumbent authority and physical-pane custody until the selected
+  SOP's cutover steps apply. A rejected candidate does not require renaming the
+  incumbent back into a seat it should still hold.
+- **Preserve exact resume handles.** A retained advisor may have no managed node or
+  live pane. The ledger identifies its history independently of the live-seat
+  registry; absence from `rig ps` alone does not prove that history is gone.
+- **Recheck work at the boundary.** Queue items can arrive after the packet was
+  frozen. The successor reads its current owned queue, reconciles transition-window
+  work and staged inputs, and records every remaining obligation.
+- **Verify identity across surfaces.** Canonical binding, provider history,
+  process environment, queue identity and attached clients must agree. Correct a
+  staged identity residue through the supported cutover/reconciliation path;
+  renaming a tmux session alone is not proof that those surfaces agree.
+- **Keep incomplete evidence explicit.** Flag unavailable activity telemetry as
+  unavailable, and mark a tombstone written by someone else as approximate.
+- **Coordinate the maintenance window.** Tell the routing/monitoring owner the
+  target and expected window before an authorized cutover. Only an explicitly
+  configured suppression changes monitoring behavior; close the window with the
+  actual effect receipt, deviations and unresolved gaps.
 
-- **A GATED handover uses STAGED primitives, not an all-in-one verb.** An atomic
-  create/deliver/verify/rebind verb can't pause for a human go/no-go gate. Decompose it: boot the
-  successor **staged (unbound)** → prime it → **retire** the incumbent (this frees the clean seat name)
-  → **HOLD for the gate** → **swap** (bind the successor to the canonical name). The gate sits between
-  retire and swap; a no-go rolls back by renaming the retiree back.
-- **Prime AT BOOT, not walk-after-boot, for a staged successor.** Delivery verbs (`rig walk` / `rig
-  send`) resolve via the **bound** session registry, so they cannot reach an unbound staged successor.
-  Boot it **with the packet as startup/priming context** (the "primed from a handover/startup packet"
-  path). In both runs the successor read the full packet and correctly stated inheritance-not-identity
-  and held.
-- **The lineage ledger is the ONLY reliable wake path — load-bearing, not convenient.** A retired
-  occupant (`<seat>-vN`) is intentionally **absent from the managed registry** — discovery / walk / send
-  cannot find it. The ledger's **boot-captured** session id is how you wake it: `claude -p --resume
-  <id>` (Claude) or `codex exec` resume (Codex) — harness-level, not the rig registry.
-- **Tombstone honest-approximate fallback.** If a long-idle retiree can't be woken to self-write its
-  tombstone, the driver records an honest-approximate one and **flags it as such**.
-- **Telemetry-degraded flag when warranted.** If a fresh successor's activity/producer-link telemetry
-  is degraded, flag its ledger row so no future reader trusts its activity state. (One runtime showed a
-  fresh-launch telemetry gap; the other was clean — capture the reality, don't assume.)
-
-### Production-evidenced (first real-stakes run — a critical-seat generation swap, 2026-08-05)
-
-The first live swap at a critical seat **succeeded** (the successor ruled a live domain question within the
-hour — doctrine intact across the generation) and surfaced two hard refinements:
-
-- **Boot-window queue re-check is REQUIRED — the successor's first action.** A qitem created *during* the
-  swap window can land **after** the handover packet was frozen — and its boot nudge fails
-  `session-not-found` because the seat is mid-cutover. The packet's snapshot is therefore incomplete by
-  construction. So the successor's first action is a **checked-not-believed queue sweep** (`rig queue list`
-  by destination / `--mine`), never trusting the packet's snapshot alone. The swap-window delivery seam is a
-  known product gap until it's closed.
-- **Complete the canonical rename AT cutover — or expect three breakages.** If the staged name
-  (`<seat>-vN-staging`) survives past cutover, it breaks across three identity surfaces with inconsistent
-  enforcement: **transport** (the staged label doesn't resolve; replies to the signature bounce),
-  **queue-claim** (`claim_destination_mismatch` rejects the seat's own claim), and **queue-ledger**
-  (`handoff-and-complete` stamps the phantom staged name durably as `sourceSession`). The product fix is
-  tracked; until it lands, finish the canonical rename at cutover and treat a lingering staged name as a
-  live defect, not cosmetic.
-- **Pre-announce the swap to oversight at swap START.** A live swap fired oversight's liveness detector
-  mid-swap (a false positive, cleared). Oversight clears such flags by consulting handover **receipts** —
-  but receipts only land at swap **end**, so a long swap window can still misfire. So the executing party
-  sends oversight a **one-line pre-announce at swap start** (seat + expected window); oversight honors it
-  as a **suppression window** for its liveness / premature-park flags. See `oversight-team`.
+These are verification prompts, not a claim that a particular runtime transition
+has passed. Use the linked portable SOP for mechanics and record the actual run.
 
 ## See also
 

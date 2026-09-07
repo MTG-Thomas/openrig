@@ -15,9 +15,10 @@ status: UNSEEDED
      checkbox items are stored marks; every roll-up above them is derived, never hand-authored.
      Legacy README.md nodes stay valid indefinitely; nothing is forced to migrate.
 
-     PROJECT and MISSION nodes: the frontmatter `intent:` IS the whole job. A mission
-     ORGANISES slices and carries the context they need; it specifies nothing. Keep the
-     body short or delete it — everything below this line is for SLICES.
+     PROJECT nodes carry stable intent. MISSION nodes carry intent and proportional
+     mission-level specification in this same authored file, organizing slices and
+     giving them shared scope. SLICE nodes carry concrete implementation scope.
+     Keep body depth proportional; do not repeat all slice details at mission level.
 
      WHATEVER BODY YOU DO WRITE, two tests per sentence:
        PORTABILITY — if it would read correctly on a stranger's machine it is knowledge
@@ -27,10 +28,9 @@ status: UNSEEDED
      And check the tree: traps and how-we-work live in LEARNED.md on the topology tree,
      not here. This file is what is being BUILT.
 
-     SLICE nodes are the ONLY altitude that specifies. Keep the sections you need and
-     delete the rest; this is a starting shape, not a contract. Under the FACTORY operating
-     model this node also carries mini-requirements and a proof contract — see that mode's
-     plugin. Under the LAB it does not. -->
+     Follow the selected mission-slice-sop and any explicit operating-mode overlay.
+     Use the required sections for that work; the generic body below is a starting
+     shape, not an additional gate or a requirement for every mission. -->
 
 # <name>
 

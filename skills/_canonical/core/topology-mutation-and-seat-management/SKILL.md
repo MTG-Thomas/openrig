@@ -79,13 +79,11 @@ clean test fixture. The useful matrix:
 A clean-fixture proof is necessary but not sufficient. Live-rig proof
 catches the failure modes that fixture-mode misses.
 
-## Why important strategically
+## Stable roles during topology changes
 
-The current coordination experiments repeatedly need new queues,
-watchdogs, humans, and test seats — which makes this family
-**strategically important.** Seat continuity work will eventually
-separate stable seat identity from runtime occupant identity (see
-`seat-continuity-and-handover`).
+Capacity changes must preserve useful roles, routing and durable work. Distinguish
+adding or removing a seat from replacing its occupant; use
+`seat-continuity-and-handover` for the latter.
 
 ## Currently shipped surfaces
 
@@ -101,14 +99,18 @@ Per `cli-reference.md` v0.2.0:
 - `rig attach --self --rig <rigId> --node <logicalId>`
 - `rig unclaim <sessionRef>` / `rig release <rigId>`
 
-## Active proof gap (current)
+## Choose the proving environment and authority
 
-The 2026-04-30 topology mutation add-seat proof pass is **active**.
-Product Lab shaped it; planner authored `IMPLEMENTATION.md`; driver
-landed the smallest honest CLI retry-guidance patch for failed
-`rig expand` recovery. **Remaining proof is the Section B disposable-rig
-runtime matrix, blocked on operator posture** and owned by
-`orch-lead@your-rig`.
+Select an isolated active rig or an explicitly authorized live target for the
+relevant operation. Record its running build, before/after topology, continuity
+and outstanding work. A passing schema check or isolated fixture does not prove
+an existing live rig was changed correctly. A runtime timeout is indeterminate
+until its durable and process effects are reconciled; do not retry blindly.
+
+The matrix above is verification guidance, not permission to modify another
+rig. Name the operation's owner and scope, preserve the state needed for recovery,
+and retain missing or failed checks in the result. No local experiment or
+unfinished proof obligation is implied by loading this skill.
 
 ## See also
 

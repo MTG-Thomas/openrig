@@ -95,8 +95,8 @@ The primitive must NOT report "restored the original agent" or "resumed
 the original seat" or "snapshot." The correct framing is **"forked from
 source session"** / **"started from prior conversation source."**
 
-Negative-grep over adapter source confirms ZERO `restored` / `resumed` /
-`snapshot` strings in fork code paths.
+Check the actual user-facing outcome and persisted identity; wording alone
+does not prove the intended continuity was created.
 
 ## Hard boundaries (do-not list; verbatim)
 
@@ -128,14 +128,17 @@ Mutual exclusion between `resumeToken` (restore path) and `forkSource`
 For `seat handover over fork` composition, the binding outcome is
 independent (see `seat-continuity-and-handover` skill).
 
-## Active-daemon caveat (live-runtime gap)
+## Verify the running implementation
 
-2026-04-30 live scale-out dogfood found: source checkout contained fork
-support, but active daemon was running from a pre-fork commit. **Verify
-the active daemon/runtime commit contains the fork path before live
-proof.** Isolated daemon proof at the target commit can prove the
-feature safely; live forked scale-out remains unproven until the active
-daemon parity is verified.
+A source checkout and the running daemon can contain different implementations.
+Before an authorized fork, check the target daemon's build identity and support
+for the requested source. A source or isolated test establishes only that cut's
+behavior; it does not prove the live runtime uses it.
+
+Record the actual parent history, new seat identity, new continuity token and
+independent binding outcome. Preserve errors and incomplete results rather than
+reporting a fresh launch or restored original seat as a successful fork. These
+checks confer no authority to launch, replace or retire a live seat.
 
 ## Currently shipped (v1) vs deferred
 
@@ -148,7 +151,6 @@ Shipped at openrig `c7b6df1` (2026-04-30):
 - Honest UX literal contract (`continuityOutcome: forked`)
 
 Deferred:
-- Tier 2 real-runtime fork proof (disposable Tart VM cycle, human-gated)
 - Claude `artifact_path` mode (schema currently refuses with deferred message)
 - Provenance columns (`parent_native_id` / `created_via` for queryable RSI consumer)
 - Cross-host fork (source on host A, new seat on host B) — depends on `cross-host-rig-commands`

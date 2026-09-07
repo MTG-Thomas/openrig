@@ -139,9 +139,8 @@ recipient.
   into a qitem body. **Link the artifact PATH** (e.g.
   `missions/<m>/<slice>/proof.md`) or **summarize in prose**, then point
   at the file for the detail. A pasted dump makes `rig queue show <id>
-  --json` huge — a second-order token bloat: bloated DATA living in the
-  queue, distinct from the command-default output bombs the token-burn
-  emergency pack covers.
+  --full --json` large. Compact defaults limit a preview, but the stored body
+  still costs readers who need full detail. Keep evidence in its durable artifact.
 - **Substantive bodies go through `--body-file`, not inline `--body`.**
   For anything beyond a short line, write the body to a file and pass
   `--body-file <path>` (or `-` for stdin). Inline `--body` with shell
@@ -155,10 +154,10 @@ Heuristic: if the thing you want to include is more than a few lines or
 contains shell metacharacters (backticks, `$`, quotes, newlines-with-pipes),
 it belongs in a file you LINK, not in the body you paste.
 
-Product backstop (defense-in-depth, NOT a substitute for this discipline):
-`rig queue show` oversized-body truncation/preview is tracked separately
-as slice OPR.0.4.1.3. The behavioral rule here is the primary, durable
-cure; the product truncation is the safety net.
+The current `rig queue show` returns a bounded body preview by default;
+`--full` returns the complete body and chain fields. Preview truncation does
+not truncate the stored work. Check `bodyTruncated` and `bodyBytes`, then request
+full content when needed; keep large supporting evidence in linked artifacts.
 
 ## Failure modes (6; verbatim)
 
@@ -167,14 +166,14 @@ cure; the product truncation is the safety net.
 3. Queue item is too small and turns work into bureaucracy.
 4. Queue item is too broad and loses ownership, proof, or closure criteria.
 5. Human escalation happens in chat but not as a durable attention item.
-6. Agent pastes a large command dump (ps/nodes, big JSON, proof blob) into the qitem body, bloating the stored DATA so every future `rig queue show --json` read is huge. Link the proof PATH or summarize in prose; substantive bodies go through `--body-file`; no raw backticks inline.
+6. Agent pastes a large command dump (ps/nodes, big JSON, proof blob) into the qitem body, bloating the stored DATA so every full-body read is large. Link the proof PATH or summarize in prose; substantive bodies go through `--body-file`; no raw backticks inline.
 
 ## Durable handoff field shape
 
 Every qitem carries:
 
 - `handed_off_to` — destination session (qualified `pod-member@rig` form)
-- `handed_off_from` — source session
+- `handed_off_from` — predecessor qitem id (the source session is `source_session`)
 - `state` — one of: `pending | in-progress | done | blocked | failed | denied | canceled | handed-off`
 - `closure_reason` + `closure_target` — set on terminal closure per hot-potato rule
 

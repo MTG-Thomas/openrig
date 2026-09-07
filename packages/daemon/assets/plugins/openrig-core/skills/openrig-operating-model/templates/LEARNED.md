@@ -1,14 +1,15 @@
 ---
 seat: <pod>-<member>@<rig>            # or rig/pod/fleet coords at higher altitudes
-template: <path-or-name of PLAYBOOK.md this diffs against> @ <version/sha>
+template: <path-or-name of SOP.md this refines> @ <version/sha>
 owners: self (sole direct writer) · <orchestrator/PM> (by proposal) · hierarchy (boundaries only, marked)
 updated: <YYYY-MM-DD from the clock command — never mental math>
 status: UNSEEDED  # the first real occupant replaces this line with: seeded-by-self <date>
 ---
 # LEARNED — <instance coords>
-<!-- HARD CAP ~150 lines. At the cap: distill LESSONS into HOW I WORK, or expire them. -->
+<!-- Size is soft guidance: keep the file as small as honestly covers the job.
+     Before handover or clear, distill LESSONS into HOW I WORK and retain needed context. -->
 
-## MY JOB HERE (≤10 lines)
+## MY JOB HERE
 <!-- This instance's actual function, in operational terms. If you cannot write
      this section yourself, say so to your orchestrator — that discovery is the
      audit working, not a failure. -->
@@ -35,6 +36,7 @@ status: UNSEEDED  # the first real occupant replaces this line with: seeded-by-s
 <!-- situation → read this. Attach pointers to MOMENTS, not to boot. -->
 - 
 
-## LESSONS (append-only, dated, capped)
-<!-- newest first. At cap: distill upward or expire. -->
+## LESSONS (dated, newest first)
+<!-- Distill into HOW I WORK at deposit boundaries; preserve necessary reasons
+     and archive superseded material. Attention is the budget, not a hard line cap. -->
 - 

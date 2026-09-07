@@ -6,7 +6,7 @@
 set -euo pipefail
 ROOT="${1:?usage: trunk-diff.sh <root-dir> <state-file> [--name FILE ...]}"
 STATE="${2:?state-file required}"; shift 2
-NAMES=("$@"); [[ ${#NAMES[@]} -eq 0 ]] && NAMES=(--name CULTURE.md --name PLAYBOOK.md --name LEARNED.md --name INTENT.md)
+NAMES=("$@"); [[ ${#NAMES[@]} -eq 0 ]] && NAMES=(--name CULTURE.md --name SOP.md --name LEARNED.md --name SPEC.md --name PLAYBOOK.md --name INTENT.md)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NEW="$(mktemp)"
 python3 "$HERE/compose.py" down "$ROOT" "${NAMES[@]}" | grep -v '^<!-- GENERATED' > "$NEW"
