@@ -120,7 +120,23 @@ merely to make the first local change.
 | Viewing terminal was closed | Reattach with `rig tui --shared`; do not relaunch the team. |
 | Daemon restarted but tmux survived | Re-read `rig status` and the existing queue; a daemon restart is not a fresh project. |
 | Host reboot lost tmux sessions | Use the crash-cart/restore guidance from `rig` and inspect its recovery plan. Do not erase the old rig or create another to recover it. |
+| Launch reports no usable snapshot | Inspect the existing rig and retained project files, then follow the same-seat recovery below. |
 | Work is waiting on a prompt or decision | Read the row, transition and named prompt; preserve the obligation until the missing decision arrives. |
+
+If the rig registration and project files are intact but no usable snapshot
+exists, use `rig ps --nodes --rig <rigName> --json` to find the original rig ID
+and seat. Record the surviving state and relaunch that seat:
+
+```bash
+rig snapshot <rigId>
+rig launch <rigId> <nodeRef>
+```
+
+Use the existing rig ID and node logical ID (such as `dev.owner`), not a new
+rig. A new snapshot records what survives now. Recovery may fresh-prime a new
+occupant from retained artifacts; it does not recreate missing native
+conversation history. Check the retained queue, project notes and result before
+continuing work.
 
 `rig setup` prints the short form of this path; `rig status` points back here.
 

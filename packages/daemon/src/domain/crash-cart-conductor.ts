@@ -245,7 +245,7 @@ export function createDefaultRestoreRig(
       return {
         outcome: "not_attempted",
         reason: "no restore-usable snapshot for this rig",
-        remediation: "take a snapshot (rig snapshot create) or mark an existing one restore-usable",
+        remediation: `take a snapshot (rig snapshot ${rigId}) or mark an existing one restore-usable`,
       };
     let receiptRef: number | undefined;
     const outcome = await _deps.restore(snapshot.id, {

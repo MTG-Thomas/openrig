@@ -12,6 +12,7 @@ type LaunchResponse = {
   logicalId?: string;
   sessionName?: string;
   error?: string;
+  message?: string;
   code?: string;
   launched?: Array<{ nodeId: string; logicalId: string; status: string; error?: string }>;
   held?: Array<{ nodeId: string; logicalId: string; reason: string }>;
@@ -138,7 +139,7 @@ export function launchCommand(depsOverride?: StatusDeps): Command {
         }
         // Hard failure (no per-seat result to render — e.g. rig_not_found): error + exit.
         if (!res.data.launched && !res.data.held && !res.data.alreadyRunning) {
-          console.error(res.data.error ?? `Launch failed (HTTP ${res.status})`);
+          console.error(res.data.error ?? res.data.message ?? `Launch failed (HTTP ${res.status})`);
           process.exitCode = 1;
           return;
         }
@@ -198,7 +199,7 @@ export function launchCommand(depsOverride?: StatusDeps): Command {
       }
 
       if (res.status >= 400 || !res.data.ok) {
-        console.error(res.data.error ?? `Launch failed (HTTP ${res.status})`);
+        console.error(res.data.error ?? res.data.message ?? `Launch failed (HTTP ${res.status})`);
         process.exitCode = 1;
         return;
       }

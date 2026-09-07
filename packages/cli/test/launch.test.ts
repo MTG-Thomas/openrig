@@ -169,6 +169,22 @@ describe("rig launch --seats", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it.each([["dev.driver"], ["--seats", "dev.driver"]])("explains a missing snapshot for launch %j", async (...args) => {
+    const message = "No usable snapshot for rig rig-1";
+    const deps = makeDeps({
+      "/api/rigs/rig-1/nodes/": {
+        status: 404,
+        data: { ok: false, code: "no_usable_snapshot", message },
+      },
+    });
+
+    await launchCommand(deps).parseAsync(["node", "rig", "rig-1", ...args]);
+
+    expect(errors).toContain(message);
+    expect(logs.some((line) => line.includes("Launched"))).toBe(false);
+    expect(process.exitCode).toBe(1);
+  });
+
   it("requires nodeRef or --seats", async () => {
     const deps = makeDeps({});
     const cmd = launchCommand(deps);

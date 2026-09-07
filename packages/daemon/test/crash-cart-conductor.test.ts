@@ -166,7 +166,7 @@ describe("createDefaultRestoreRig — composes findLatestRestoreUsable + restore
     const r = await restoreRig("alpha");
     expect(r.outcome).toBe("not_attempted");
     expect(r.reason).toMatch(/no restore-usable snapshot/i);
-    expect(r.remediation).toMatch(/snapshot/i);
+    expect(r.remediation).toContain("rig snapshot alpha");
   });
 
   it("restore ok:false (no result) → failed", async () => {
