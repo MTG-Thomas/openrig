@@ -1,3 +1,4 @@
+import { DEFAULT_TIME_ZONE, displayTime } from "../time.js";
 import { fieldLine, listItem, sectionRule, wrapDetailLines, type ContentLine } from "../detail.js";
 import type { Action } from "../types.js";
 import type { ExecutionViewSnap } from "./execution-model.js";
@@ -28,7 +29,7 @@ export function workflowOverview(execution: ExecutionViewSnap, width: number): C
 }
 
 /** All claims are served state or attributed records. No receipt is adjudicated here. */
-export function workflowDetail(execution: ExecutionViewSnap, key: string, width: number): ContentLine[] | null {
+export function workflowDetail(execution: ExecutionViewSnap, key: string, width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] | null {
   const instances = execution.lifecycle_instances ?? [];
   const packetId = key.startsWith("packet:") ? key.slice(7) : null;
   const instance = packetId ? instances.find((i) => packets(i).some((p) => p.packet_id === packetId)) : instances.find((i) => `workflow:${i.instance_id}` === key);
@@ -39,7 +40,7 @@ export function workflowDetail(execution: ExecutionViewSnap, key: string, width:
     { text: packet ? `Work · ${words(packet.step_id)}` : `${title(instance)} · ${text(instance.status)}` },
     field("mission", execution.mission, { type: "scopes-mission-open", mission: execution.mission }),
     field("project", identity.project),
-    field("as of", execution.derived_at),
+    field("as of", displayTime(execution.derived_at, timeZone)),
   ];
   if (packet) {
     const transition = row(packet.latest_transition);
@@ -49,7 +50,7 @@ export function workflowDetail(execution: ExecutionViewSnap, key: string, width:
     // The rendered owner remains the canonical address; navigation uses the existing
     // resolver, which names unavailable/ambiguous seats rather than choosing a twin.
     lines.push(field("owner", packet.owner, { type: "drill", resource: "agent", name: text(packet.owner) }));
-    lines.push(sectionRule("Waiting and continuation", width), field("last change", transition.transition_note), field("recorded by", transition.actor_session), field("at", transition.ts));
+    lines.push(sectionRule("Waiting and continuation", width), field("last change", transition.transition_note), field("recorded by", transition.actor_session), field("at", displayTime(transition.ts, timeZone)));
     if (packet.blocked_on) lines.push(field("blocker", packet.blocked_on));
     if (packet.blocker) {
       const blocker = row(packet.blocker);
@@ -57,8 +58,8 @@ export function workflowDetail(execution: ExecutionViewSnap, key: string, width:
     }
     lines.push(field("wake", packet.wake ? `${text(wake.kind)} · ${text(wake.phase)} · ${wake.live ? "live" : "not live"}${wake.unconsumed ? " · fired without pickup" : ""}` : "none recorded"));
     if (packet.wake) lines.push(field("wake ref", wake.ref), field("delivery", wake.deliveryStatus));
-    if (wake.expiresAt) lines.push(field("due", wake.expiresAt));
-    if (packet.wake_schedule) lines.push(field("policy", schedule.policy), field("cadence", `${text(schedule.interval_seconds)} seconds (a check, not guaranteed delivery)`), field("last check", schedule.last_evaluation_at));
+    if (wake.expiresAt) lines.push(field("due", displayTime(wake.expiresAt, timeZone)));
+    if (packet.wake_schedule) lines.push(field("policy", schedule.policy), field("cadence", `${text(schedule.interval_seconds)} seconds (a check, not guaranteed delivery)`), field("last check", displayTime(schedule.last_evaluation_at, timeZone)));
     lines.push(sectionRule("Next action", width), ...actionLines(text(packet.targeted_action), width));
     if (packet.gate) lines.push(field("gate", packet.gate));
     if (packet.acceptance) lines.push(field("decision", packet.acceptance));
@@ -77,7 +78,7 @@ export function workflowDetail(execution: ExecutionViewSnap, key: string, width:
       const step = steps.find((s) => s.id === obligation.stepId);
       if (step?.objective) lines.push({ text: `    ${text(step.objective)}` });
       const receipt = row(obligation.receipt);
-      if (obligation.receipt) lines.push(field("evidence", receipt.evidenceRef), field("recorded by", receipt.actorSession), field("at", receipt.closedAt));
+      if (obligation.receipt) lines.push(field("evidence", receipt.evidenceRef), field("recorded by", receipt.actorSession), field("at", displayTime(receipt.closedAt, timeZone)));
     }
     const dependencies = rows(instance.dependencies);
     // Do not infer successor semantics from an arbitrary step name. Show the

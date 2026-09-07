@@ -39,6 +39,10 @@ export function describeState(state: ViewState) {
     drill: state.drill.map((d) => `${d.kind}:${d.name}`),
     filter: state.filter || undefined,
     viewTab: state.viewTab,
+    timeZone: state.timeZone,
+    timeZoneWarning: state.timeZoneWarning,
+    timeZoneHelp: state.timeZoneHelp,
+    recentEvent: state.recentOpen ?? undefined,
     address: {
       instance: state.instanceId,
       section: state.section,

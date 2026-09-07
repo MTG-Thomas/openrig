@@ -326,13 +326,17 @@ describe("founder live-QA correction — rig-wide RECENT rail", () => {
       const screen = renderScreen(view.get(), snap, { cols, rows: 80 });
       const body = screen.lines.join("\n");
       expect(body).toContain("RECENT");
-      if (cols === 160) expect(body).toMatch(/TIME\s+ACTOR\s+CHANGE\s+TARGET/);
-      expect(body.indexOf("22:02")).toBeLessThan(body.indexOf("22:03"));
+      expect(body).toContain("Recorded queue changes");
+      expect(body.indexOf("15:02")).toBeLessThan(body.indexOf("15:03"));
       expect(body).toContain("OPR.0.5.9.11");
       const content = screen.lines.map((line) => line.slice(screen.explorerWidth + 2)).join(" ").replace(/\s+/g, " ");
       expect(content).toContain("Recompose the production terminal dashboard without clipping its meaning");
       expect(body).not.toContain("next event");
-      expect(screen.contentTargets.some((item) => item.action.type === "scopes-open" && item.action.slice === "11-slice-11")).toBe(true);
+      const event = screen.contentTargets.find((item) => item.action.type === "recent-open");
+      expect(event).toBeDefined();
+      view.dispatch(event!.action);
+      const detail = renderScreen(view.get(), snap, { cols, rows: 80 });
+      expect(detail.contentTargets.some((item) => item.action.type === "scopes-open" && item.action.slice === "11-slice-11")).toBe(true);
     }
   });
 

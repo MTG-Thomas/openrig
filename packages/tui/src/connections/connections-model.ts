@@ -1,3 +1,4 @@
+import { DEFAULT_TIME_ZONE, displayTime } from "../time.js";
 import { fieldLine, listItem, sectionRule, wrapDetailLines, type ContentLine } from "../detail.js";
 import type { FleetSnapshot } from "../types.js";
 
@@ -20,7 +21,7 @@ export interface ControlPlaneRead {
   status?: string; semver?: string; commit?: string; dirty?: boolean; builtAt?: string;
   selfHostId?: string | null; selfHostIdSource?: string;
 }
-export function connectionsLines(snap: FleetSnapshot, width: number): ContentLine[] {
+export function connectionsLines(snap: FleetSnapshot, width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
   const c = snap.connections;
   const h = snap.controlPlane;
   const lines: ContentLine[] = [{ text: "Connections · this daemon's instance" },
@@ -36,7 +37,7 @@ export function connectionsLines(snap: FleetSnapshot, width: number): ContentLin
     { text: "  Next: rig status; rig --version; rig daemon logs" },
     { text: "  An older daemon may not support Connections. No readiness inferred." }], width);
   lines.push(fieldLine({ label: "process", value: `PID ${c.pid} · home ${c.home ?? "unreported"}` }),
-    fieldLine({ label: "observed", value: c.observedAt }),
+    fieldLine({ label: "observed", value: displayTime(c.observedAt, timeZone) }),
     sectionRule("Instance settings · resolved now", width));
   lines.push(fieldLine({ label: "settings", value: c.settingsSource ?? "source unavailable" }));
   for (const s of c.settings) lines.push(fieldLine({ label: s.key === "host.name" ? "display name" : s.key === "workspace.root" ? "workspace" : "operator", value: `${s.value ?? "unavailable"} (${s.source})` }));
@@ -62,7 +63,7 @@ export function connectionsLines(snap: FleetSnapshot, width: number): ContentLin
     lines.push(fieldLine({ label: "new inbound", value: cfg.inboundDestination ?? "missing", link: inboundAction }),
       { text: "  Replies follow their existing conversation; new/unmapped inbound uses the configured seat above." });
   }
-  lines.push(fieldLine({ label: "last check", value: `${c.verification.state}${c.verification.at ? ` · ${c.verification.at} · ${c.verification.actor ?? "actor unknown"}` : " · no matching check in the bounded audit tail"}` }),
+  lines.push(fieldLine({ label: "last check", value: `${c.verification.state}${c.verification.at ? ` · ${displayTime(c.verification.at, timeZone)} · ${c.verification.actor ?? "actor unknown"}` : " · no matching check in the bounded audit tail"}` }),
     { text: "  A check records scopes/channel membership at that time. It does not prove delivery, current credentials, or readership." },
     fieldLine({ label: "next", value: c.nextAction }),
     { text: "  Run guidance on the displayed instance. verify contacts Slack explicitly; enable/disable retain their audited CLI behavior." },

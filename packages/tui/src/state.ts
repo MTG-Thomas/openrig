@@ -1,3 +1,5 @@
+import { availableTabs } from "./commands/registry.js";
+import { DEFAULT_TIME_ZONE, resolveTimeZone } from "./time.js";
 // ONE instance-scoped view-state with ONE mutation path (dispatch) — PIN 1.
 // No module-level state anywhere in this file (FR-13). The section set is a
 // data registry, not a switch (FR-12). Ported from the Phase-0 spike verbatim
@@ -29,6 +31,8 @@ export function emptySnapshot(): FleetSnapshot {
 
 export interface CreateViewStateOptions {
   instanceId: string;
+  timeZone?: string;
+  timeZoneWarning?: string | null;
   sections?: SectionDef[];
   getSnapshot?: GetSnapshot;
 }
@@ -39,6 +43,10 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 
   let state: ViewState = {
     instanceId,
+    timeZone: resolveTimeZone(options.timeZone ?? DEFAULT_TIME_ZONE).timeZone,
+    timeZoneWarning: options.timeZoneWarning ?? resolveTimeZone(options.timeZone ?? DEFAULT_TIME_ZONE).warning,
+    timeZoneHelp: false,
+    recentOpen: null,
     sections,
     section: sections[0]?.name ?? "topology",
     drill: [],
@@ -73,6 +81,7 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 
   function dispatch(action: Action): ViewState {
     const previous = state;
+    if (["jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone"].includes(action.type)) state = { ...state, recentOpen: null, timeZoneHelp: false };
     state = reduce(state, action, getSnapshot());
     // Connections is a side trip from work, including explorer/palette entry.
     if (action.type === "jump" && action.section !== "connections" && previous.section !== "connections") state.history = [];
@@ -97,6 +106,12 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewState {
   const next: ViewState = { ...state, lastError: null, notice: action.type === "notice" || action.type === "act" ? state.notice : null };
   switch (action.type) {
+    case "timezone":
+      return resetContent({ ...next, timeZoneHelp: true, viewTab: "table", healthOpen: null });
+    case "recent-open": {
+      const row = snap.recentTransitions?.find((r) => r.transitionId === action.transitionId);
+      return row ? resetContent({ ...next, recentOpen: { ...row }, healthOpen: null }) : { ...next, lastError: "Event is outside the served Recent window" };
+    }
     case "back": {
       const history = [...(state.history ?? [])];
       const frame = history.pop();
@@ -167,8 +182,7 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
       // 5.2 Wave B — PULSE is a FLEET-WIDE top-level view (the mock's tab set),
       // reachable from ANY content context, unlike the section-scoped tabs.
       if (action.tab === "pulse") return resetContent({ ...next, viewTab: "pulse", healthOpen: null });
-      const rigSpec = state.section === "specs" && state.drill.at(-1)?.kind === "spec" && findSpec(snap, state.drill.at(-1)!.name)?.kind === "rig";
-      const allowed = rigSpec ? ["topology", "configuration", "yaml"] : state.section === "topology" ? ["table", "recent", "overview", "graph", "health"] : [];
+      const allowed = availableTabs(state, snap);
       if (!allowed.includes(action.tab)) return { ...next, lastError: `tab ${action.tab} is not available in this content context` };
       return { ...resetContent({ ...next, viewTab: action.tab }), healthOpen: null };
     }
@@ -237,12 +251,12 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
 }
 
 function location(s: ViewState): string {
-  return JSON.stringify([s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen]);
+  return JSON.stringify([s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp]);
 }
 
 function navigationFrame(s: ViewState): NavigationFrame {
-  const { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded } = s;
-  return { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded };
+  const { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp } = s;
+  return { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp };
 }
 
 function clearScopeCoordinatesOnSectionChange(previous: ViewState, next: ViewState): ViewState {

@@ -12,6 +12,15 @@ function parseText(text: string, final: boolean): { events: InputEvent[]; remain
   while (i < text.length) {
     const ch = text[i] ?? "";
     if (ch === "\x1b") {
+      const tail = text.slice(i);
+      if (!final && "\x1b[200~".startsWith(tail)) break;
+      if (tail.startsWith("\x1b[200~")) {
+        const end = text.indexOf("\x1b[201~", i + 6);
+        if (end < 0 && !final) break;
+        events.push({ type: "paste", text: text.slice(i + 6, end < 0 ? text.length : end).replace(/[\x00-\x1f\x7f]/g, " ") });
+        i = end < 0 ? text.length : end + 6;
+        continue;
+      }
       if (i + 1 >= text.length && !final) break;
       if (text[i + 1] === "[") {
         if (i + 2 >= text.length && !final) break;
@@ -59,6 +68,7 @@ function parseText(text: string, final: boolean): { events: InputEvent[]; remain
       i += 1;
       continue;
     }
+    if (ch === "\t") { events.push({ type: "key", key: "tab" }); i += 1; continue; }
     if (ch === "\r" || ch === "\n") {
       events.push({ type: "key", key: "enter", action: { type: "activate" } });
       i += 1;
@@ -69,8 +79,9 @@ function parseText(text: string, final: boolean): { events: InputEvent[]; remain
       i += 1;
       continue;
     }
-    if (ch >= " ") events.push({ type: "char", ch });
-    i += 1;
+    const char = String.fromCodePoint(text.codePointAt(i)!);
+    if (char >= " ") events.push({ type: "char", ch: char });
+    i += char.length;
   }
   return { events, remainder: text.slice(i) };
 }
@@ -101,7 +112,8 @@ export function createInputDecoder(): InputDecoder {
       return parsed.events;
     },
     hasPending() {
-      return pending.length > 0;
+      // Bracketed paste may pause across chunks; only an escape prefix needs the short key timer.
+      return pending.length > 0 && !pending.startsWith("\x1b[200~");
     },
   };
 }
@@ -190,6 +202,8 @@ export function resolveMouseAction(
     : { type: "content-scroll", delta };
 }
 
+export const PASTE_ENABLE = "\x1b[?2004h";
+export const PASTE_DISABLE = "\x1b[?2004l";
 export const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h";
 export const MOUSE_DISABLE = "\x1b[?1006l\x1b[?1000l";
 export const ALT_SCREEN_ON = "\x1b[?1049h\x1b[?25l";

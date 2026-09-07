@@ -1,3 +1,4 @@
+import { DEFAULT_TIME_ZONE, displayTime } from "../time.js";
 import { sectionRule, type ContentLine } from "../detail.js";
 import type { Action, FleetSnapshot, HealthEvidenceReference, HealthRecord } from "../types.js";
 import type { Token } from "../theme.js";
@@ -259,7 +260,7 @@ function wrap(label: string, text: string, width: number, token: Token = "bright
   ], width));
 }
 
-export function healthDetailLines(snap: FleetSnapshot, findingId: string, width: number): ContentLine[] {
+export function healthDetailLines(snap: FleetSnapshot, findingId: string, width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
   const record = snap.health?.records.find((candidate) => candidate.id === findingId);
   if (!record) return [fitLine([{ text: `HEALTH finding ${findingId} is no longer in the bounded canonical read`, token: "warn" }], width)];
   const lines: ContentLine[] = [
@@ -275,8 +276,8 @@ export function healthDetailLines(snap: FleetSnapshot, findingId: string, width:
     ...(record.ceremony ? wrap("diagnosis stage", record.ceremony.stage, width) : []),
     ...wrap("confidence", record.confidence, width),
     ...wrap("freshness", `${record.freshness.state} · source age ${age(record)}`, width),
-    ...wrap("started", record.startedAt ?? "—", width),
-    ...wrap("observed", record.lastObservedAt ?? "—", width),
+    ...wrap("started", displayTime(record.startedAt, timeZone), width),
+    ...wrap("observed", displayTime(record.lastObservedAt, timeZone), width),
     { text: "" },
     sectionRule("EXPLANATION", width),
     ...wrap("why", record.explanation, width),
@@ -294,7 +295,7 @@ export function healthDetailLines(snap: FleetSnapshot, findingId: string, width:
   if (record.evidence.length === 0) lines.push(...wrap("evidence", "none served", width, "warn"));
   for (const evidence of record.evidence) {
     lines.push(...wrap(evidence.type, evidenceText(evidence), width));
-    lines.push(...wrap("observed", evidence.observedAt ?? "timestamp unavailable", width, evidence.observedAt ? "dim" : "warn"));
+    lines.push(...wrap("observed", displayTime(evidence.observedAt, timeZone), width, evidence.observedAt ? "dim" : "warn"));
   }
   return lines;
 }
