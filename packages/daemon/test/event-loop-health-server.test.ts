@@ -18,12 +18,12 @@ function seedRigWithNodes(db: Database.Database, name: string, nodeCount: number
 }
 
 describe("OPR.0.4.3.21 — /healthz enrichment", () => {
-  it("keeps the exact legacy body when no monitor is wired", async () => {
+  it("reports process identity without requiring the event-loop monitor", async () => {
     const db = createFullTestDb();
     const { app } = createTestApp(db);
     const res = await app.request("/healthz");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: "ok" });
+    expect(await res.json()).toEqual({ status: "ok", pid: process.pid });
     db.close();
   });
 
@@ -37,10 +37,12 @@ describe("OPR.0.4.3.21 — /healthz enrichment", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       status: string;
+      pid: number;
       eventLoop: { lagMeanMs: number; lagP99Ms: number; utilization: number; lastTickAgeMs: number; healthy: boolean };
       routeTimings: Record<string, unknown>;
     };
     expect(body.status).toBe("ok");
+    expect(body.pid).toBe(process.pid);
     expect(typeof body.eventLoop.lagMeanMs).toBe("number");
     expect(typeof body.eventLoop.lastTickAgeMs).toBe("number");
     expect(typeof body.eventLoop.healthy).toBe("boolean");

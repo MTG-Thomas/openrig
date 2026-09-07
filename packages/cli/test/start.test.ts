@@ -11,6 +11,7 @@ import { STATE_FILE, type LifecycleDeps, type DaemonState } from "../src/daemon-
 
 function mockLifecycleDeps(): LifecycleDeps {
   return {
+    acquireStartLock: () => ({ recordChild: vi.fn(), release: vi.fn() }),
     spawn: vi.fn(() => ({ pid: 1, unref: vi.fn() }) as never),
     fetch: vi.fn(async () => ({ ok: true })),
     kill: vi.fn(() => true),

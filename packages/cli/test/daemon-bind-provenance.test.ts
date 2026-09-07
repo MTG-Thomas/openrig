@@ -139,14 +139,17 @@ describe("S20 — the restored listener gate: adoption fails loudly on a dropped
 // only positive bad-bind evidence (refused connection / explicit unhealthy) kills.
 import { startDaemon, type LifecycleDeps } from "../src/daemon-lifecycle.js";
 import { vi } from "vitest";
+import { EventEmitter } from "node:events";
 
 function gateDeps(tailBehavior: (attempt: number) => "ok" | "throw-timeout" | "throw-refused") {
   let tailAttempts = 0;
   let spawned = false;
-  const kill = vi.fn(() => true);
-  const bindBody = { bind: { mode: "default", hosts: ["127.0.0.1", "100.64.0.9"], tailscaleDetected: true } };
+  const child = Object.assign(new EventEmitter(), { pid: 4242, exitCode: null as number | null, signalCode: null, unref: vi.fn() });
+  const kill = vi.fn(() => { child.exitCode = 0; child.emit("exit", 0, "SIGTERM"); return true; });
+  const bindBody = { pid: 4242, bind: { mode: "default", hosts: ["127.0.0.1", "100.64.0.9"], tailscaleDetected: true } };
   const deps: LifecycleDeps = {
-    spawn: vi.fn(() => { spawned = true; return { pid: 4242, unref: vi.fn() } as never; }),
+    acquireStartLock: () => ({ recordChild: vi.fn(), release: vi.fn() }),
+    spawn: vi.fn(() => { spawned = true; return child as never; }),
     fetch: vi.fn(async (url: string) => {
       if (!spawned) throw new Error("connect ECONNREFUSED (nothing on the port yet)");
       if (url.includes("100.64.0.9")) {
@@ -168,7 +171,7 @@ function gateDeps(tailBehavior: (attempt: number) => "ok" | "throw-timeout" | "t
     exists: vi.fn(() => false),
     mkdirp: vi.fn(),
     openForAppend: vi.fn(() => 3),
-    isProcessAlive: vi.fn(() => true),
+    isProcessAlive: vi.fn(() => child.exitCode === null),
   };
   return { deps, kill, tailAttempts: () => tailAttempts };
 }

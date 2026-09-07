@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import http from "node:http";
+import { EventEmitter } from "node:events";
 import { Command } from "commander";
 import { upCommand } from "../src/commands/up.js";
 import { DaemonClient } from "../src/client.js";
@@ -8,6 +9,7 @@ import type { StatusDeps } from "../src/commands/status.js";
 
 function mockLifecycleDeps(overrides?: Partial<LifecycleDeps>): LifecycleDeps {
   return {
+    acquireStartLock: () => ({ recordChild: vi.fn(), release: vi.fn() }),
     spawn: vi.fn(() => ({ pid: 1, unref: vi.fn() }) as never),
     fetch: vi.fn(async () => ({ ok: true })),
     kill: vi.fn(() => true),
@@ -691,11 +693,11 @@ describe("Up CLI", () => {
         spawn: vi.fn((cmd, args, opts) => {
           daemonStarted = true;
           spawnedPort = opts.env["OPENRIG_PORT"];
-          return { pid: 321, unref: vi.fn() } as never;
+          return Object.assign(new EventEmitter(), { pid: 321, exitCode: null, signalCode: null, unref: vi.fn() }) as never;
         }),
         fetch: vi.fn(async (url: string) => {
           if (!daemonStarted) throw new Error(`refused:${url}`);
-          return { ok: url === "http://127.0.0.1:7461/healthz" };
+          return { ok: url === "http://127.0.0.1:7461/healthz", json: async () => ({ pid: 321, bind: { mode: "explicit", hosts: ["127.0.0.1"], tailscaleDetected: false } }) };
         }),
       },
       clientFactory: (baseUrl) => {
@@ -748,11 +750,11 @@ describe("Up CLI", () => {
           spawn: vi.fn((cmd, args, opts) => {
             daemonStarted = true;
             captureSpawn(opts.env as Record<string, string>);
-            return { pid: 999, unref: vi.fn() } as never;
+            return Object.assign(new EventEmitter(), { pid: 999, exitCode: null, signalCode: null, unref: vi.fn() }) as never;
           }),
           fetch: vi.fn(async (url: string) => {
             if (!daemonStarted) throw new Error(`refused:${url}`);
-            return { ok: url.includes("/healthz") };
+            return { ok: url.includes("/healthz"), json: async () => ({ pid: 999, bind: { mode: "explicit", hosts: ["127.0.0.1"], tailscaleDetected: false } }) };
           }),
         },
         clientFactory: () => ({

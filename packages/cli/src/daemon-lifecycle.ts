@@ -1,6 +1,7 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import type { ChildProcess } from "node:child_process";
+import type { DaemonStartLock } from "./daemon-start-lock.js";
 import { DAEMON_STOP_WAIT_MS, DAEMON_SHUTDOWN_RECEIPT, type DaemonShutdownReceipt } from "@openrig/daemon/daemon-shutdown";
 import { ConfigStore } from "./config-store.js";
 import { OPENRIG_HOME, LEGACY_RIGGED_HOME, readOpenRigEnv } from "./openrig-compat.js";
@@ -168,6 +169,8 @@ export interface StartOptions {
 }
 
 export interface LifecycleDeps {
+  /** Required by startDaemon; read-only lifecycle consumers need no launch capability. */
+  acquireStartLock?: () => DaemonStartLock;
   spawn: (cmd: string, args: string[], opts: {
     env: Record<string, string>;
     stdio: unknown;
@@ -187,6 +190,7 @@ export interface LifecycleDeps {
    * not exercise collisions may omit it and use the legacy exists seam. */
   pathKind?: (path: string) => ManagedPathKind;
   openForAppend: (path: string) => number;
+  closeFile?: (fd: number) => void;
   isProcessAlive: (pid: number) => boolean;
   // OPR.0.4.2.1 — optional injectable delay for the status-probe bounded settle/retry.
   // Defaults to a real setTimeout in production; tests pass a no-op to stay fast. Optional so
@@ -570,7 +574,24 @@ export async function verifyRequiredListeners(input: {
   return { ok: true, verified };
 }
 
+class StartupIdentityError extends Error {}
+class StartupChildPendingError extends Error {}
+
 export async function startDaemon(opts: StartOptions, deps: LifecycleDeps): Promise<DaemonState> {
+  if (!deps.acquireStartLock) throw new Error("Daemon startup requires a local launch reservation");
+  const lock = deps.acquireStartLock();
+  let preserve = false;
+  try {
+    return await startOwnedDaemon(opts, deps, lock);
+  } catch (error) {
+    preserve = error instanceof StartupChildPendingError;
+    throw error;
+  } finally {
+    lock.release(preserve);
+  }
+}
+
+async function startOwnedDaemon(opts: StartOptions, deps: LifecycleDeps, lock: DaemonStartLock): Promise<DaemonState> {
   const port = opts.port ?? DEFAULT_PORT;
   const db = opts.db ?? DEFAULT_DB;
   // bug-fix slice auth-bearer-tailscale-trust: preserve the
@@ -624,7 +645,9 @@ export async function startDaemon(opts: StartOptions, deps: LifecycleDeps): Prom
 
   const logFd = deps.openForAppend(LOG_FILE);
 
-  const child = deps.spawn(process.execPath, [daemonEntry], {
+  let child: ChildProcess;
+  try {
+    child = deps.spawn(process.execPath, [daemonEntry], {
     env: buildDaemonEnv(process.env as Record<string, string>, {
       port,
       host: explicitHost,
@@ -637,88 +660,128 @@ export async function startDaemon(opts: StartOptions, deps: LifecycleDeps): Prom
     }),
     stdio: ["ignore", logFd, logFd],
     detached: true,
-  });
+    });
+  } finally { deps.closeFile?.(logFd); }
 
+  let childFailure: Error | undefined;
+  let rejectExit!: (error: Error) => void;
+  let resolveExit!: () => void;
+  const exited = new Promise<void>((resolve) => { resolveExit = resolve; });
+  const failed = new Promise<never>((_, reject) => { rejectExit = reject; });
+  // An error can arrive during synchronous publication/cleanup, between awaits.
+  void failed.catch(() => {});
+  const onError = (error: Error): void => {
+    childFailure = new Error(`Daemon child failed to spawn: ${error.message}`);
+    rejectExit(childFailure);
+    resolveExit();
+  };
+  const onExit = (code: number | null, signal: string | null): void => {
+    childFailure = new Error(`Daemon child ${child.pid ?? "unknown"} exited before startup completed (code ${code}, signal ${signal ?? "none"})`);
+    rejectExit(childFailure);
+    resolveExit();
+  };
+  child.once("error", onError);
+  child.once("exit", onExit);
   child.unref();
-
-  const pid = child.pid!;
-
-  // Poll healthz against the configured probe host (loopback default
-  // when operator didn't opt in to a specific bind).
+  const pid = child.pid;
+  const assertChild = (): void => {
+    if (childFailure) throw childFailure;
+    if (!Number.isSafeInteger(pid) || pid! <= 0) throw new Error("Daemon spawn returned no valid child PID");
+    if (child.exitCode != null || child.signalCode != null) throw new Error(`Daemon child ${pid} exited before startup completed`);
+  };
   const healthzUrl = `http://${probeHost}:${port}/healthz`;
-  let healthy = false;
-  for (let i = 0; i < HEALTHZ_RETRIES; i++) {
+  type StartHealth = { pid?: unknown; bind?: { mode: "explicit" | "default"; hosts: string[]; tailscaleDetected: boolean } };
+  const readOwnedHealth = async (url: string): Promise<StartHealth | null> => {
+    assertChild();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const res = await fetchDaemonProbe(deps, healthzUrl, HEALTHZ_PROBE_TIMEOUT_MS);
-      if (res.ok) {
-        healthy = true;
-        break;
-      }
-    } catch {
-      // Not ready yet
-    }
-    await new Promise((r) => setTimeout(r, HEALTHZ_DELAY_MS));
-  }
-
-  if (!healthy) {
-    try { deps.kill(pid, "SIGTERM"); } catch { /* best effort */ }
-    const logContent = deps.readFile(resolveLifecycleFile(deps, "daemon.log"));
-    throw new Error(summarizeDaemonStartFailure(healthzUrl, logContent));
-  }
-
-  // S20 — the restored adoption/upgrade gate: when the daemon reports its bind plan,
-  // derive the required listener set from the EFFECTIVE mode and prove every listener
-  // by probing its own /healthz. A silently dropped listener fails the start LOUDLY
-  // (the 0.5.3-receipt regression accepted loopback health alone and missed exactly
-  // this). Older daemons without the payload skip the gate unchanged (additive).
-  try {
-    const healthRes = await fetchDaemonProbe(deps, healthzUrl, HEALTHZ_PROBE_TIMEOUT_MS);
-    const healthBody = (await (healthRes.json?.() ?? Promise.resolve(null)).catch(() => null)) as
-      | { bind?: { mode: "explicit" | "default"; hosts: string[]; tailscaleDetected: boolean } }
-      | null;
-    if (healthBody?.bind) {
-      const gate = await verifyRequiredListeners({
-        bind: healthBody.bind,
-        port,
-        // r2 repair — error PROVENANCE preserved: an explicit non-OK answer or a
-        // connection refusal is positive evidence ("unhealthy"); a timeout or any
-        // other transient probe exception is "indeterminate" and can never kill.
-        probe: async (url) => {
-          try {
-            const r = await fetchDaemonProbe(deps, url, HEALTHZ_PROBE_TIMEOUT_MS);
-            return r.ok ? "healthy" : "unhealthy";
-          } catch (err) {
-            const code = (err as { code?: string; cause?: { code?: string } }).code
-              ?? (err as { cause?: { code?: string } }).cause?.code;
-            return code === "ECONNREFUSED" ? "unhealthy" : "indeterminate";
+      return await Promise.race([
+        failed,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new HealthProbeTimeoutError(url)), HEALTHZ_PROBE_TIMEOUT_MS);
+        }),
+        (async () => {
+          const res = await deps.fetch(url);
+          if (!res.ok) return null;
+          let body: StartHealth | null;
+          try { body = res.json ? await res.json() as StartHealth : null; }
+          catch { throw new StartupIdentityError(`Daemon startup identity unavailable at ${url}: expected child PID ${pid}; invalid health response`); }
+          if (body?.pid !== pid) {
+            throw new StartupIdentityError(`Daemon startup identity mismatch at ${url}: expected child PID ${pid}, observed ${typeof body?.pid === "number" ? body.pid : "unknown"}; state not published`);
           }
-        },
-      });
-      if (gate.ok === false) {
-        try { deps.kill(pid, "SIGTERM"); } catch { /* best effort */ }
-        throw new Error(`daemon started but FAILED the listener adoption gate: ${gate.reason}`);
-      }
-      // gate.ok === "indeterminate" falls through healthy: no evidence, no action.
+          assertChild();
+          return body;
+        })(),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("listener adoption gate")) throw err;
-    // A parse/probe hiccup on the gate read must not kill an otherwise healthy start;
-    // the gate acts only on POSITIVE evidence of a bad bind (never on its own failure).
-  }
-
-  const state: DaemonState = {
-    pid,
-    port,
-    // Persist the probe host (operator-explicit when set, loopback
-    // default otherwise) so subsequent status reads can reach the
-    // daemon regardless of whether tailscale was added at multi-bind.
-    host: probeHost,
-    db,
-    startedAt: new Date().toISOString(),
   };
 
-  deps.writeFile(STATE_FILE, JSON.stringify(state, null, 2));
-  return state;
+  try {
+    assertChild();
+    lock.recordChild(pid!);
+    let healthy = false;
+    let lastProbe = "health endpoint not responding";
+    for (let i = 0; i < HEALTHZ_RETRIES; i++) {
+      try {
+        const body = await readOwnedHealth(healthzUrl);
+        if (body) {
+          const bind = body.bind;
+          if (!bind || !["explicit", "default"].includes(bind.mode) || !Array.isArray(bind.hosts)
+            || bind.hosts.length === 0 || !bind.hosts.every((host) => typeof host === "string" && host.length > 0)
+            || typeof bind.tailscaleDetected !== "boolean") {
+            throw new StartupIdentityError(`Daemon startup listener identity unavailable for child PID ${pid}; state not published`);
+          }
+          const gate = await verifyRequiredListeners({ bind, port, probe: async (url) => {
+            try { return await readOwnedHealth(url) ? "healthy" : "unhealthy"; }
+            catch (error) {
+              if (error instanceof StartupIdentityError || childFailure) throw error;
+              const code = (error as { code?: string; cause?: { code?: string } }).code
+                ?? (error as { cause?: { code?: string } }).cause?.code;
+              return code === "ECONNREFUSED" ? "unhealthy" : "indeterminate";
+            }
+          } });
+          if (gate.ok === false) throw new StartupIdentityError(`Daemon child ${pid} FAILED the listener adoption gate: ${gate.reason}`);
+          if (gate.ok === true) { healthy = true; break; }
+          lastProbe = gate.reason;
+        }
+      } catch (error) {
+        assertChild();
+        if (error instanceof StartupIdentityError) throw error;
+        lastProbe = error instanceof Error ? error.message : String(error);
+      }
+      await Promise.race([new Promise((resolve) => setTimeout(resolve, HEALTHZ_DELAY_MS)), failed]);
+    }
+    if (!healthy) {
+      throw new Error(`${summarizeDaemonStartFailure(healthzUrl, deps.readFile(resolveLifecycleFile(deps, "daemon.log")))}. Last probe: ${lastProbe}`);
+    }
+    assertChild();
+    if (!deps.isProcessAlive(pid!)) throw new Error(`Daemon child ${pid} is no longer alive; state not published`);
+    const state: DaemonState = { pid: pid!, port, host: probeHost, db, startedAt: new Date().toISOString() };
+    deps.writeFile(STATE_FILE, JSON.stringify(state, null, 2));
+    assertChild();
+    return state;
+  } catch (error) {
+    // Only this launch's child may be cleaned up. A retained child also retains
+    // the reservation so a retry cannot run another pre-bind initialization.
+    if (pid && child.exitCode == null && child.signalCode == null && deps.isProcessAlive(pid)) {
+      try { deps.kill(pid, "SIGTERM"); } catch { /* confirm exit below */ }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const gone = await Promise.race([
+          exited.then(() => true),
+          new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), DAEMON_STOP_WAIT_MS); }),
+        ]);
+        if (!gone || deps.isProcessAlive(pid)) throw new StartupChildPendingError(`${error instanceof Error ? error.message : error}. Child PID ${pid} has not exited; startup reservation retained. Inspect daemon-start.lock and daemon.log before recovery.`);
+      } finally { if (timer) clearTimeout(timer); }
+    }
+    throw error;
+  } finally {
+    // A native spawn failure with no PID emits its error on the next turn.
+    if (pid !== undefined || childFailure) child.off("error", onError);
+    child.off("exit", onExit);
+  }
 }
 
 function readShutdownReceipt(deps: LifecycleDeps, stateFile: string) {
