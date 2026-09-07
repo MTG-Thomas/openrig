@@ -526,6 +526,7 @@ export async function runStuckSweep(deps: StuckSweepDeps): Promise<StuckSweepRes
           destinationSession: c.route,
           body: evidenceBody(deps.db, c),
           summary: `Stuck sweep: ${c.verificationTargets ? "successor-verification-required" : c.kind} on ${c.row.qitemId} (${c.ageMinutes} min)`,
+          evidenceRef: `rig queue show ${c.row.qitemId}`,
           tags: [STUCK_SWEEP_FINDING_TAG, dedupTag],
         });
         findings.push({ kind: c.kind, qitemId: c.row.qitemId, findingQitemId: created.qitemId, action: "created" });

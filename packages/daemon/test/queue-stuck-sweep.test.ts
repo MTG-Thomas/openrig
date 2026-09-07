@@ -157,6 +157,46 @@ describe("S02 standing stuck sweep — both halves, routed findings, quiet-but-o
     // Nobody holds an undelivered obligation — it routes to the owner's orchestrator.
     expect(findings[0]!.destinationSession).toBe("orch@r");
     expect(findings[0]!.body).toContain(row.qitemId);
+    expect(findings[0]!.evidenceRef).toBe(`rig queue show ${row.qitemId}`);
+  });
+
+  it.each(["human@host", "human-owner@kernel"])("a finding for %s carries real source evidence, stays unroutable, dedupes, and resolves", async (destinationSession) => {
+    // Disable the repository's pre-topology transport shortcut. Resolution is
+    // real; the injected transport must never receive these unknown addresses.
+    db.prepare("INSERT INTO rigs(id,name) VALUES ('fixture-rig','r')").run();
+    db.prepare("INSERT INTO nodes(id,rig_id,logical_id,runtime,profile) VALUES ('fixture-node','fixture-rig','worker','codex','none')").run();
+    const sent: string[] = [];
+    repo = new QueueRepository(db, new EventBus(db), {
+      validateRig: () => true,
+      loadHumanRegistry: () => ({ ok: true, entities: [] }),
+      transport: { send: async (destination) => { sent.push(destination); return { ok: true, verified: true }; } },
+    });
+    const source = await mkRow();
+    const row = await repo.create({
+      sourceSession: "sender@r", destinationSession, body: "An actual work row awaits a decision",
+      summary: "Fixture decision", evidenceRef: `rig queue show ${source.qitemId}`,
+    });
+    expect(row.lastNudgeResult).toMatch(/^unroutable:/);
+    const first = await runSweep();
+    expect(first.result.outcome).toBe("findings");
+    expect(first.status.snapshot()).toMatchObject({ lastOutcome: "findings", lastError: null });
+    const findings = await findingsFor(row.qitemId);
+    expect(findings).toHaveLength(1);
+    const finding = findings[0]!;
+    expect(finding.evidenceRef).toBe(`rig queue show ${row.qitemId}`);
+    expect(repo.getById(finding.evidenceRef!.slice("rig queue show ".length))?.body).toBe(row.body);
+    expect(finding.destinationSession).toBe(destinationSession);
+    expect(finding.lastNudgeResult).toMatch(/^unroutable:/);
+    expect(sent).toEqual([]);
+
+    expect((await runSweep()).result.findings).toContainEqual(expect.objectContaining({ findingQitemId: finding.qitemId, action: "refreshed" }));
+    expect(await findingsFor(row.qitemId)).toHaveLength(1);
+    await repo.update({ qitemId: row.qitemId, actorSession: row.sourceSession, state: "done", closureReason: "no-follow-on", transitionNote: "fixture resolved" });
+    expect((await runSweep()).result.findings).toContainEqual(expect.objectContaining({ findingQitemId: finding.qitemId, action: "closed" }));
+    expect(repo.getById(finding.qitemId)).toMatchObject({ state: "done", closureReason: "no-follow-on" });
+
+    await expect(repo.create({ sourceSession: "sender@r", destinationSession, body: "Missing evidence", summary: "Decision" }))
+      .rejects.toMatchObject({ code: "human_route_fields_required" });
   });
 
   it("DESTINATION-NOT-TAG: a completely tagless stuck row is found (the 0.5.3 lesson's exact shape)", async () => {

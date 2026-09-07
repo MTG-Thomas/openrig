@@ -86,6 +86,13 @@ Routes import these; services are Hono-free:
 - **`outbox-handler.ts`** — sender-side outbox: idempotent record, mark
   delivered/failed, list. Emits no event-bus events (pure audit).
 
+The standing detector in `queue-stuck-sweep.ts` creates findings through the
+queue repository, with `evidenceRef: rig queue show <source-qitem-id>` pointing
+to the underlying durable work row. This satisfies the existing human-route
+evidence contract without changing destination resolution: an admitted finding
+can still be unroutable. Repeated detections refresh the existing finding;
+when the source condition resolves, the sweep closes its own finding.
+
 ## 3. The hot-potato closure contract (where queue closure is enforced)
 
 `hot-potato-enforcer.ts` is the pure validator for the load-bearing API
