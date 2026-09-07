@@ -18,6 +18,27 @@ export interface ContentLine {
   segs?: Array<{ text: string; token?: Token; bold?: boolean; bg?: Token; inverse?: boolean }>;
 }
 
+/** Wrap prose and full references without losing a link's target. Graph/table rows
+ * retain their own layout; callers opt in only for detail pages. */
+export function wrapDetailLines(lines: ContentLine[], width: number): ContentLine[] {
+  const room = Math.max(8, width);
+  return lines.flatMap((line) => {
+    if (line.zones) return [line]; // tab hit zones retain the renderer's existing clipping rules
+    if (line.text.startsWith("  ──") && line.text.replace(/─+$/, "").length <= room) return [{ ...line, text: line.text.slice(0, room) }];
+    if (line.text.length <= room) return [line];
+    const result: ContentLine[] = [];
+    let text = line.text;
+    while (text.length > room) {
+      const space = text.lastIndexOf(" ", room);
+      const cut = space >= room / 2 ? space : room;
+      result.push({ text: text.slice(0, cut), ...(result.length === 0 && line.action ? { action: line.action } : {}) });
+      text = "    " + text.slice(cut).trimStart();
+    }
+    result.push({ text });
+    return result;
+  });
+}
+
 /** fixed label column — one rhythm across every detail page */
 export const LABEL_W = 12;
 const OPEN = "(open ▸)";

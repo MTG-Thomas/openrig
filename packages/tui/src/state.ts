@@ -12,6 +12,7 @@ import type {
   SectionDef,
   ViewState,
   ViewStateStore,
+  NavigationFrame,
 } from "./types.js";
 import { SECTION_REGISTRY } from "./sections.js";
 import { scopesExplorerRows } from "./scopes/scopes-model.js";
@@ -71,7 +72,12 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
   const listeners = new Set<(s: ViewState) => void>();
 
   function dispatch(action: Action): ViewState {
+    const previous = state;
     state = reduce(state, action, getSnapshot());
+    if (action.type === "jump") state.history = [];
+    else if (!["back", "execution-close"].includes(action.type) && !state.lastError && location(previous) !== location(state)) {
+      state.history = [...(previous.history ?? []), navigationFrame(previous)].slice(-50);
+    }
     for (const fn of listeners) fn(state);
     return state;
   }
@@ -90,6 +96,11 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewState {
   const next: ViewState = { ...state, lastError: null, notice: action.type === "notice" || action.type === "act" ? state.notice : null };
   switch (action.type) {
+    case "back": {
+      const history = [...(state.history ?? [])];
+      const frame = history.pop();
+      return frame ? { ...next, ...frame, history } : { ...next, notice: "No previous view" };
+    }
     case "noop":
       return next;
     case "error":
@@ -110,18 +121,19 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
     case "scopes-mission-open": {
       const key = `scopes-mission:${action.mission}`;
       const expanded = state.expanded.includes(key) ? state.expanded : [...state.expanded, key];
-      return resetContent({ ...next, section: "scopes", scopesMission: action.mission, scopesSelected: null, executionOpen: null, healthOpen: null, expanded });
+      return syncSelection(resetContent({ ...next, section: "scopes", drill: [], runningOf: null, viewTab: "table", filter: "", scopesMission: action.mission, scopesSelected: null, executionOpen: null, healthOpen: null, expanded }), snap);
     }
     case "scopes-open":
-      return resetContent({ ...next, section: "scopes", scopesMission: action.mission, scopesSelected: { mission: action.mission, slice: action.slice }, scopesNarrative: false, executionOpen: null, healthOpen: null });
+      return syncSelection(resetContent({ ...next, section: "scopes", drill: [], runningOf: null, viewTab: "table", filter: "", scopesMission: action.mission, scopesSelected: { mission: action.mission, slice: action.slice }, scopesNarrative: false, executionOpen: null, healthOpen: null }), snap);
     case "scopes-reqs":
       return { ...next, scopesCollapseReqs: !next.scopesCollapseReqs };
     case "scopes-narrative":
       return { ...next, scopesNarrative: !next.scopesNarrative };
     case "execution-open":
+      if (next.section !== "scopes" || !next.scopesMission) return { ...next, lastError: "Open a mission before following its workflow or work packet" };
       return resetContent({ ...next, executionOpen: action.key });
     case "execution-close":
-      return resetContent({ ...next, executionOpen: null });
+      return state.history?.length ? reduce(next, { type: "back" }, snap) : resetContent({ ...next, executionOpen: null });
     case "health-open":
       return { ...resetContent(next), healthOpen: action.findingId };
     case "health-close":
@@ -223,6 +235,15 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
   }
 }
 
+function location(s: ViewState): string {
+  return JSON.stringify([s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen]);
+}
+
+function navigationFrame(s: ViewState): NavigationFrame {
+  const { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded } = s;
+  return { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded };
+}
+
 function clearScopeCoordinatesOnSectionChange(previous: ViewState, next: ViewState): ViewState {
   return next.section === previous.section
     ? next
@@ -235,18 +256,20 @@ function resetContent(state: ViewState): ViewState {
 
 /** The founder scroll fix (class-(b) focus-model defect): on a SCROLLABLE spec
  *  detail the body IS the meaningful surface, so reflexive ↑↓ scroll it —
- *  regardless of which pane holds focus (focus resets to explorer on every
+ *  while the explorer holds focus (focus resets to explorer on every
  *  drill, which is why the reflexive keys used to drive the hidden tree). Gated
  *  on real scrollability (contentMaxOffset), so a non-overflowing spec detail
  *  keeps its link-hop / explorer behavior. The key ROUTING (input.ts) and the
  *  footer/indicator affordances (render.ts) both read this ONE predicate, so
  *  the hint can never again promise a gesture the keys don't perform. */
 export function specDetailArrowsScroll(state: ViewState): boolean {
-  return state.section === "specs" && state.drill.length > 0 && state.contentMaxOffset > 0;
+  return state.section === "specs" && state.drill.length > 0 && state.contentMaxOffset > 0 && state.focusedPane !== "content";
 }
 
 /** The explorer key for the state's current location (drill leaf or section). */
 export function locationKey(state: ViewState): string {
+  if (state.section === "scopes" && state.scopesSelected) return `scopes-slice:${state.scopesSelected.mission}/${state.scopesSelected.slice}`;
+  if (state.section === "scopes" && state.scopesMission) return `scopes-mission:${state.scopesMission}`;
   const names = new Map(state.drill.map((seg) => [seg.kind, seg.name]));
   const leaf = state.drill.at(-1);
   if (!leaf || state.runningOf) return `section:${state.section}`;
@@ -291,7 +314,7 @@ function agentMatches(snap: FleetSnapshot, name: string, target?: { host: string
     for (const rig of host.rigs)
       for (const pod of rig.pods)
         for (const agent of pod.agents)
-          if (agent.name === name && (!target || (host.name === target.host && (!target.rig || rig.name === target.rig) && (!target.pod || pod.name === target.pod))))
+          if ((agent.name === name || agent.session === name) && (!target || (host.name === target.host && (!target.rig || rig.name === target.rig) && (!target.pod || pod.name === target.pod))))
             matches.push({ host, rig, pod, agent });
   return matches;
 }
@@ -402,7 +425,7 @@ function drillTo(state: ViewState, resource: string, name: string, snap: FleetSn
         { kind: "host", name: found.host.name },
         { kind: "rig", name: found.rig.name },
         { kind: "pod", name: found.pod.name },
-        { kind: "agent", name: agentName },
+        { kind: "agent", name: found.agent.name },
       ];
       return { ...state, section: "topology", drill, selection: 0, runningOf: null };
     }

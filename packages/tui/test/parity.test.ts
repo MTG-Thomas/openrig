@@ -16,7 +16,7 @@ function fresh(id: string) {
 }
 
 function comparable(state: ViewState) {
-  const { instanceId: _i, sections: _s, ...rest } = state;
+  const { instanceId: _i, sections: _s, history: _history, ...rest } = state;
   return rest;
 }
 

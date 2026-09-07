@@ -227,7 +227,7 @@ describe("live visual regressions", () => {
       y: scrollY,
       action: { type: "content-scroll", delta: 10 },
     }));
-    view.dispatch({ type: "content-scroll", delta: 60 }); // clamps to max; content grew to ~3 lines/pod under the section vocabulary
+    view.dispatch({ type: "content-scroll", delta: initial.contentMaxOffset }); // reach the last section regardless of the detail header height
     const scrolled = renderScreen(view.get(), snap, { cols: 100, rows: 12 }).lines.join("\n");
     expect(scrolled).toContain("pod pod-17");
     expect(view.get().selection).toBe(selected);

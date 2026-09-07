@@ -1,3 +1,4 @@
+import { workflowOverview, workflowDetail } from "./workflow-model.js";
 // MISSION EXECUTION STORY — a pure presentation model over two shipped projections:
 // the scopes store (declared slice state, proof pairing) and the daemon's derived
 // execution view (lanes, sequencing, ladder, parks). It never reads PROGRESS text,
@@ -58,94 +59,6 @@ function clock(iso: unknown): string {
 
 function clip(text: string, room: number): string {
   return text.length > room ? `${text.slice(0, Math.max(room - 1, 0))}…` : text;
-}
-
-/** Keep lifecycle commands complete in the scrollable pane. Shell continuations make the
- * visual wrap usable as one command instead of turning the hidden suffix into guesswork. */
-function shellWords(command: string): string[] {
-  const words: string[] = [];
-  let word = "";
-  let quote: "'" | '"' | null = null;
-  let escaped = false;
-  for (const char of command) {
-    if (escaped) {
-      word += char;
-      escaped = false;
-    } else if (char === "\\" && quote !== "'") {
-      word += char;
-      escaped = true;
-    } else if ((char === "'" || char === '"') && (quote === null || quote === char)) {
-      word += char;
-      quote = quote === char ? null : char;
-    } else if (/\s/.test(char) && quote === null) {
-      if (word) words.push(word);
-      word = "";
-    } else {
-      word += char;
-    }
-  }
-  if (word) words.push(word);
-  return words;
-}
-
-function quoteShell(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
-
-/** Split only words emitted by the daemon's shellQuote helper. A continuation directly
- * between adjacent quoted chunks is one shell argument; option-to-option continuations
- * retain a separating space. */
-function splitQuotedWord(word: string, maxWidth: number): string[] | null {
-  if (!word.startsWith("'") || !word.endsWith("'")) return null;
-  const value = word.slice(1, -1).replaceAll(`'"'"'`, "'");
-  if (quoteShell(value) !== word) return null;
-  const chunks: string[] = [];
-  let chunk = "";
-  for (const char of value) {
-    if (chunk && quoteShell(chunk + char).length > maxWidth) {
-      chunks.push(quoteShell(chunk));
-      chunk = char;
-    } else {
-      chunk += char;
-    }
-  }
-  chunks.push(quoteShell(chunk));
-  return chunks;
-}
-
-function actionLines(action: string, width: number): ContentLine[] {
-  const firstIndent = "      action ";
-  const nextIndent = "        ";
-  const room = Math.max(width, 24);
-  const parts = shellWords(action);
-  const lines: ContentLine[] = [];
-  let current = `${firstIndent}${parts.shift() ?? ""}`;
-  for (let index = 0; index < parts.length; index++) {
-    const part = parts[index]!;
-    const more = index < parts.length - 1;
-    if (current && `${current} ${part}${more ? " \\" : ""}`.length <= room) {
-      current += ` ${part}`;
-      continue;
-    }
-    if (current) lines.push({ text: `${current} \\` });
-    const chunks = splitQuotedWord(part, room - 2);
-    if (chunks && `${nextIndent}${part}${more ? " \\" : ""}`.length > room) {
-      for (let chunkIndex = 0; chunkIndex < chunks.length - 1; chunkIndex++) {
-        lines.push({ text: `${chunks[chunkIndex]!}\\` });
-      }
-      const last = chunks[chunks.length - 1]!;
-      if (more) {
-        lines.push({ text: `${last} \\` });
-        current = "";
-      } else {
-        current = last;
-      }
-    } else {
-      current = `${nextIndent}${part}`;
-    }
-  }
-  if (current) lines.push({ text: current });
-  return lines;
 }
 
 type SemanticSeg = NonNullable<ContentLine["segs"]>[number];
@@ -552,7 +465,7 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
   const lines: ContentLine[] = [semantic([
     { text: execution.mission, token: "accentBright", bold: true },
     { text: " · ", token: "chrome" },
-    { text: missionState, token: missionToken, bold: true },
+    { text: execution.lifecycle_instances?.length ? `Slices: ${missionState}` : missionState, token: missionToken, bold: true },
     { text: " · ", token: "chrome" },
     { text: `${slices.length} slice${slices.length === 1 ? "" : "s"}`, token: "bright" },
   ], width)];
@@ -595,43 +508,7 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
   return lines;
 }
 
-function lifecycleLines(execution: ExecutionViewSnap, width: number): ContentLine[] {
-  const instances = execution.lifecycle_instances ?? [];
-  if (instances.length === 0) return [];
-  const lines: ContentLine[] = [{ text: "" }, sectionRule(`LIFECYCLE · ${instances.length} instance${instances.length === 1 ? "" : "s"}`, width)];
-  for (const raw of instances) {
-    const instance = record(raw);
-    const instanceId = str(instance["instance_id"], INDETERMINATE);
-    lines.push({ text: `  ${instanceId} · ${str(instance["status"], INDETERMINATE)} · key ${str(instance["operation_key"], INDETERMINATE)}` });
-    const source = record(instance["graph_source"]);
-    if (source["mode"]) lines.push({ text: `    boundary: ${str(source["mode"])} · ${str(source["profileSource"] ?? source["missionSource"])}` });
-    if (source["profileSource"] && source["missionSource"]) lines.push({ text: `    mission override: ${str(source["missionSource"])}` });
-    const obligations = Array.isArray(instance["boundary_obligations"]) ? instance["boundary_obligations"] as unknown[] : [];
-    for (const rawObligation of obligations) {
-      const obligation = record(rawObligation);
-      lines.push({ text: `    ${str(obligation["stepId"])} · ${obligation["required"] ? "required" : "extension"} · ${str(obligation["state"], INDETERMINATE)} · receipt ${str(obligation["receiptState"], INDETERMINATE)}` });
-      const receipt = record(obligation["receipt"]);
-      if (receipt["evidenceRef"]) lines.push({ text: `      ${str(receipt["evidenceRef"])} · recorded by ${str(receipt["actorSession"])}` });
-    }
-    const packets = Array.isArray(instance["frontier_packets"]) ? instance["frontier_packets"] as unknown[] : [];
-    for (const rawPacket of packets) {
-      const packet = record(rawPacket);
-      lines.push({ text: clip(`    ▸ ${str(packet["step_id"], INDETERMINATE)} · ${str(packet["owner"], INDETERMINATE)} · ${str(packet["queue_state"], INDETERMINATE)} · packet ${str(packet["packet_id"], INDETERMINATE)}`, width) });
-      if (packet["blocked_on"]) lines.push({ text: clip(`      blocked on ${str(packet["blocked_on"])}`, width) });
-      lines.push(...actionLines(str(packet["targeted_action"], INDETERMINATE), width));
-    }
-    const failures = Array.isArray(instance["failure_occurrences"]) ? instance["failure_occurrences"] as unknown[] : [];
-    for (const rawFailure of failures) {
-      const failure = record(rawFailure);
-      if (failure["status"] !== "unresolved") continue;
-      lines.push({ text: clip(`    ▲ ${str(failure["step_id"], INDETERMINATE)} · occurrence ${str(failure["occurrence_id"], INDETERMINATE)}${failure["failure_reason"] ? ` · ${str(failure["failure_reason"])}` : ""}`, width) });
-      lines.push(...actionLines(str(failure["targeted_action"], INDETERMINATE), width));
-    }
-    const unknowns = Array.isArray(instance["unknowns"]) ? instance["unknowns"] as unknown[] : [];
-    for (const unknown of unknowns) lines.push({ text: clip(`    ? ${str(unknown, INDETERMINATE)}`, width) });
-  }
-  return lines;
-}
+const lifecycleLines = workflowOverview;
 
 function waveDetail(execution: ExecutionViewSnap, scopes: readonly MissionScopesSnap[] | undefined, width: number, key: string): ContentLine[] | null {
   const wave = key.slice("group:wave:".length);
@@ -895,7 +772,9 @@ export function executionContentLines(
   }
   if (opened) {
     const slices = sliceFacts(execution, scopes);
-    const page = opened === "sources"
+    const page = opened.startsWith("workflow:") || opened.startsWith("packet:")
+      ? workflowDetail(execution, opened, width)
+      : opened === "sources"
       ? sourcesDetail(execution)
       : opened === "evidence"
         ? evidenceDetail(execution, slices, width)
@@ -935,6 +814,7 @@ export function executionSliceStripLines(
   return [
     { text: "" },
     sectionRule(`EXECUTION · ${problem ? stateWord(slice) : liveWord} · wave ${waveOf(slice)}`, width),
+    ...workflowOverview(execution, width),
     { text: `  declared    ${declaredWord} (slice file)` },
     actionRow(`evidence    ${evidence}`, open("evidence"), width),
     { text: `  assignment  ${slice.lane ? `${str(slice.lane["seat"])} · ${str(activity["activity"], INDETERMINATE)} (${str(activity["decided_by"], "?")})` : "none — no claimed lane"}`, ...(slice.lane ? { action: open(laneKey(slice.lane)) } : {}) },

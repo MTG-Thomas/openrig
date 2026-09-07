@@ -71,6 +71,9 @@ interface NodeInventoryRead {
   tmuxAttachCommand?: string | null;
   cwd?: string | null;
   resolvedSpecName: string | null;
+  profile?: string | null;
+  resolvedSpecVersion?: string | null;
+  resolvedSpecHash?: string | null;
   contextUsage?: {
     availability: "known" | "unknown";
     usedPercentage: number | null;
@@ -207,6 +210,9 @@ function toAgentRow(node: NodeInventoryRead): AgentRow {
     runtime: node.runtime ?? "unknown",
     model: node.model ?? null,
     spec: node.resolvedSpecName ?? "",
+    profile: node.profile ?? null,
+    specVersion: node.resolvedSpecVersion ?? null,
+    specHash: node.resolvedSpecHash ?? null,
     // honest-unknown: no value in the projection → null → renders "—"
     context: known && ctx.usedPercentage != null ? Math.round(ctx.usedPercentage) : null,
     tokens: known ? fmtTokens(ctx.totalInputTokens, ctx.totalOutputTokens) : null,
@@ -418,6 +424,7 @@ export async function hydrateSnapshot(
   const rigs = [];
   const rigsDown: FleetSnapshot["hostsDown"] = [];
   const rigSpecRefs = new Map<string, string[]>(); // rig-spec name → agentRefs
+  const rigConsumers = new Map<string, NonNullable<SpecEntry["consumers"]>>();
   // PULSE ◌ PARKED WITH BATON — the ps/activity side of the join, accumulated
   // across rigs from the SAME nodes read that feeds topology (no extra fetch):
   // one entry per agent seat WITH a canonical session (infra seats have none).
@@ -463,6 +470,7 @@ export async function hydrateSnapshot(
     const spec = wantsSpecs
       ? await safe<RigSpecJsonRead>(`rig-spec(${rig.name})`, () => client.rigSpec(rig.id))
       : null;
+    if (spec?.name) rigConsumers.set(spec.name, [...(rigConsumers.get(spec.name) ?? []), { rig: rig.name, host: instanceHealth?.selfHostId?.trim() || "local", status: rig.lifecycleState ?? "unknown" }]);
     if (spec?.pods) {
       const refs = spec.pods.flatMap((p) =>
         (p.members ?? [])
@@ -489,7 +497,8 @@ export async function hydrateSnapshot(
   async function specReview(entry: SpecLibraryRead): Promise<SpecLibraryReviewRead | null> {
     const key = `${entry.id}@${entry.updatedAt ?? ""}`;
     const cached = reviewCache?.get(key);
-    if (cached) return cached;
+    // Re-read the selected source: an on-disk edit need not update the library row.
+    if (cached && viewContext?.drill.at(-1)?.name !== entry.name) return cached;
     const review = await safe<SpecLibraryReviewRead>(`spec-review(${entry.name})`, () => client.specLibraryReview(entry.id));
     if (review && reviewCache) reviewCache.set(key, review);
     return review;
@@ -526,10 +535,12 @@ export async function hydrateSnapshot(
         sourcePath: entry.sourcePath,
         sourceType: entry.sourceType,
         relativePath: entry.relativePath,
+        consumers: entry.kind === "rig" ? rigConsumers.get(entry.name) ?? [] : entry.kind === "agent" ? localHost.rigs.flatMap((rig) => rig.pods.flatMap((pod) => pod.agents.filter((agent) => agent.spec === entry.name).map((agent) => ({ rig: rig.name, host: localHost.name, agent: agent.name, runtime: agent.runtime, model: agent.model, status: agent.status })))) : undefined,
       };
       const detail = reviewed.get(entry.id);
+      const sourceUnavailable = readErrors.find((error) => error.startsWith(`spec-review(${entry.name}):`)) ?? "source review unavailable";
       if (entry.kind === "rig") {
-        if (detail?.kind !== "rig") return { ...base, kind: "rig", agentRefs: allRigRefs.get(entry.name) ?? [] };
+        if (detail?.kind !== "rig") return { ...base, kind: "rig", sourceUnavailable, agentRefs: allRigRefs.get(entry.name) ?? [] };
         const pods = detail.format === "pod_aware"
           ? (detail.pods ?? []).map((pod) => ({
               ...pod,
@@ -542,6 +553,7 @@ export async function hydrateSnapshot(
         return {
           ...base,
           kind: "rig",
+          description: authoredDescription(detail.raw),
           sourceState: detail.sourceState,
           format: detail.format,
           agentRefs: allRigRefs.get(entry.name) ?? [],
@@ -565,6 +577,7 @@ export async function hydrateSnapshot(
         return {
           ...base,
           kind: "agent",
+          ...(!review ? { sourceUnavailable } : {}),
           usedByRigs,
           namespace: agentNamespace(entry.relativePath),
           sourceState: review?.sourceState,
@@ -637,4 +650,12 @@ export async function hydrateSnapshot(
     stream: (streamItems ?? []).map((s) => ({ tsEmitted: s.tsEmitted, sourceSession: s.sourceSession, body: s.body })),
     readErrors,
   };
+}
+
+function authoredDescription(raw?: string): string | undefined {
+  try {
+    const doc = parseYaml(raw ?? "") as { description?: unknown; metadata?: { description?: unknown } } | null;
+    const value = doc?.description ?? doc?.metadata?.description;
+    return typeof value === "string" ? value : undefined;
+  } catch { return undefined; }
 }

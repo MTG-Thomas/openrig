@@ -126,6 +126,7 @@ export function resolveEscapeAction(
   if (event.key !== "escape" || commandEditing) return null;
   if (state.healthOpen) return { type: "health-close" };
   if (state.filter) return { type: "filter", text: "" };
+  if (state.history?.length) return { type: "back" };
   if (state.section !== "scopes") return null;
   if (state.executionOpen) return { type: "execution-close" };
   return state.scopesSelected
@@ -149,8 +150,8 @@ export function resolveKeyAction(
   if (event.key === "up" || event.key === "down") {
     const delta = event.key === "down" ? 1 : -1;
     // Founder fix: on a scrollable spec detail the body is the meaningful
-    // surface — reflexive ↑↓ scroll it (one line per press), whichever pane
-    // holds focus. Non-scrolling spec details and every other view fall through
+    // surface — reflexive ↑↓ scroll it while explorer-focused. Right explicitly
+    // enters its links. Non-scrolling spec details and every other view fall through
     // to the unchanged explorer-move / content-select behavior.
     if (specDetailArrowsScroll(state)) return { type: "content-scroll", delta };
     if (state.focusedPane === "content") {

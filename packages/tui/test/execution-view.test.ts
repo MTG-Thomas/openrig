@@ -206,6 +206,15 @@ describe("mission execution story — readable rows over the shipped projections
     expect(executionKeys(lines).filter((key) => key.startsWith("slice:"))).toHaveLength(4);
   });
 
+  it("qualifies slice completion while a release workflow is still waiting", () => {
+    const fixture = executionFixture();
+    fixture.q1_lanes = [];
+    fixture.lifecycle_instances = [{ instance_id: "WF", status: "waiting", frontier_packets: [] }];
+    const body = text(executionContentLines(fixture, executionScopes(4, () => "done"), [], null, 160));
+    expect(body).toContain("Slices: COMPLETE");
+    expect(body).toContain("Mission lifecycle · waiting");
+  });
+
   it("renders every lifecycle frontier packet, unresolved occurrence, and named unknown", () => {
     const fixture = executionFixture();
     fixture.lifecycle_instances = [{
@@ -221,15 +230,18 @@ describe("mission execution story — readable rows over the shipped projections
       ],
       unknowns: ["frontier packet Q-GHOST has no queue row"],
     }];
-    const body = text(executionContentLines(fixture, executionScopes(), [], null, 200));
-    expect(body).toContain("LIFECYCLE · 1 instance");
-    expect(body).toContain("WF-LIFE · active · key release-op");
-    expect(body).toContain("left · left@rig · in-progress · packet Q-LEFT");
-    expect(body).toContain("right · right@rig · blocked · packet Q-RIGHT");
-    expect(body).toContain("blocked on gate-2");
-    expect(body).toContain("occurrence Q-FAILED · fixture red");
+    const overview = text(executionContentLines(fixture, executionScopes(), [], null, 200));
+    expect(overview).toContain("WORKFLOWS");
+    expect(overview).toContain("left · in-progress · left@rig");
+    expect(overview).toContain("right · blocked · right@rig");
+    expect(overview).not.toContain("--current-packet");
+    const body = text(executionContentLines(fixture, executionScopes(), [], "workflow:WF-LIFE", 200));
+    expect(body).toContain("fixture red");
     expect(body).toContain("--occurrence Q-FAILED");
-    expect(body).toContain("? frontier packet Q-GHOST has no queue row");
+    expect(body).toContain("frontier packet Q-GHOST has no queue row");
+    const work = text(executionContentLines(fixture, executionScopes(), [], "packet:Q-RIGHT", 200));
+    expect(work).toContain("gate-2");
+    expect(work).toContain("--current-packet Q-RIGHT");
   });
 
   it("shows the named project boundary and missing receipts before their frontier arrives", () => {
@@ -241,11 +253,13 @@ describe("mission execution story — readable rows over the shipped projections
         { stepId: "record-shipped", required: true, state: "closed", receiptState: "recorded", receipt: { evidenceRef: "proof/ship.md", actorSession: "orch@rig" } },
       ],
     }];
-    const body = text(executionContentLines(fixture, executionScopes(), [], null, 120));
-    expect(body).toContain("boundary: project-profile");
-    expect(body).toContain("exact-cut-substance · required · pending · receipt missing");
-    expect(body).toContain("record-shipped · required · closed · receipt recorded");
-    expect(body).toContain("proof/ship.md · recorded by orch@rig");
+    const body = text(executionContentLines(fixture, executionScopes(), [], "workflow:WF-PROFILE", 120));
+    expect(body).toContain("project-profile");
+    expect(body).toContain("exact cut substance · required · pending · receipt missing");
+    expect(body).toContain("record shipped · required · closed · receipt recorded");
+    expect(body).toContain("proof/ship.md");
+    expect(body).toContain("orch@rig");
+    expect(body).toContain("does not establish acceptance");
   });
 
   it("keeps a typed acceptance action usable at every production terminal width", () => {
@@ -278,6 +292,7 @@ describe("mission execution story — readable rows over the shipped projections
       const view = createViewState({ instanceId: "t", getSnapshot: () => snap });
       view.dispatch(parseCommand(":scopes"));
       view.dispatch({ type: "scopes-mission-open", mission: fixture.mission });
+      view.dispatch({ type: "execution-open", key: "packet:qitem-acceptance-packet" });
 
       let screen = renderScreen(view.get(), snap, size);
       view.dispatch({ type: "layout", contentMaxOffset: screen.contentMaxOffset, contentTargetCount: screen.contentTargets.length });
@@ -329,9 +344,10 @@ describe("mission execution story — readable rows over the shipped projections
       ],
       unknowns: [],
     }];
-    const body = text(executionContentLines(fixture, executionScopes(), [], null, 200));
-    expect(body).toContain("WF-ABORTED · aborted · key release-op");
-    expect(body).toContain("occurrence Q-FAILED · historical failure");
+    const body = text(executionContentLines(fixture, executionScopes(), [], "workflow:WF-ABORTED", 200));
+    expect(body).toContain("aborted");
+    expect(body).toContain("Q-FAILED");
+    expect(body).toContain("historical failure");
     expect(body).not.toContain("rig workflow resume");
   });
 

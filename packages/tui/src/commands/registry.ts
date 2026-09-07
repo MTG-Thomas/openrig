@@ -49,6 +49,10 @@ function drillEntry(resource: ResourceKind): CommandEntry {
 }
 
 export const COMMAND_REGISTRY: readonly CommandEntry[] = [
+  { name: "back", aliases: [], args: "", description: "return to the previous view, selection and scroll", context: "standard", sample: "back", build: () => ({ type: "back" }) },
+  { name: "mission", aliases: [], args: "<name>", description: "open a mission's work and workflows", context: "standard", sample: "mission release-demo", build: (name) => name ? { type: "scopes-mission-open", mission: name } : { type: "error", message: "mission needs a name" } },
+  { name: "workflow", aliases: [], args: "<instance-id>", description: "open a workflow in the selected mission", context: "standard", sample: "workflow example", build: (name) => name ? { type: "execution-open", key: `workflow:${name}` } : { type: "error", message: "workflow needs an instance id" } },
+  { name: "packet", aliases: [], args: "<qitem-id>", description: "open current workflow work in the selected mission", context: "standard", sample: "packet example", build: (name) => name ? { type: "execution-open", key: `packet:${name}` } : { type: "error", message: "packet needs a queue id" } },
   {
     name: ":",
     aliases: [],

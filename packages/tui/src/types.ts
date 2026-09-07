@@ -11,6 +11,9 @@ export interface AgentRow {
   /** effective served model; separate from runtime, null when not served */
   model?: string | null;
   spec: string;
+  profile?: string | null;
+  specVersion?: string | null;
+  specHash?: string | null;
   /** null = the projection has no value → renders honest-unknown, never fabricated (PIN 2) */
   context: number | null;
   tokens: string | null;
@@ -111,6 +114,9 @@ export interface SpecGraphData {
 }
 
 export interface SpecEntry {
+  sourceUnavailable?: string;
+  /** Runtime observations, separate from library declarations. */
+  consumers?: Array<{ rig: string; host: string; agent?: string; runtime?: string; model?: string | null; status?: string }>;
   name: string;
   kind: SpecKind;
   /** rig specs: member agent-refs, each clickable → that agent spec */
@@ -390,6 +396,7 @@ export interface DrillSegment {
 export type ViewTab = "table" | "recent" | "overview" | "graph" | "health" | "topology" | "configuration" | "yaml" | "pulse";
 
 export type Action =
+  | { type: "back" }
   | { type: "noop" }
   | { type: "error"; message: string }
   | { type: "jump"; section: string }
@@ -440,6 +447,7 @@ export interface SectionDef {
 }
 
 export interface ViewState {
+  history?: NavigationFrame[];
   /** Canonical health finding opened from any instance/rig/seat surface. */
   healthOpen: string | null;
   /** SCOPES view: the mission whose execution story is open (null = selector only). */
@@ -478,6 +486,8 @@ export interface ViewState {
   notice: string | null;
   lastError: string | null;
 }
+
+export type NavigationFrame = Pick<ViewState, "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded">;
 
 export interface ViewStateStore {
   instanceId: string;

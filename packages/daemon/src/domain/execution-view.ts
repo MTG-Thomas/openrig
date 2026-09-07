@@ -1,4 +1,5 @@
 import { lifecycleObligations, requiredLifecycleSteps } from "./lifecycle-obligations.js";
+import { QueueWakeRepository } from "./queue-wake-repository.js";
 // S27 (OPR.0.5.6.27) — the execution view: one JSON document answering the six
 // execution questions (who-where, sequencing, care-dial, done-ness-by-rung, park
 // honesty, parallelism health), EVERY field derived at read time.
@@ -310,6 +311,7 @@ function readLifecycleExecutions(db: Database.Database, mission: string): Array<
   ).all() as Array<Record<string, unknown>>;
   const hasBindings = hasTable(db, "workflow_frontier_bindings");
   const hasFailures = hasTable(db, "workflow_failure_occurrences");
+  const wakes = new QueueWakeRepository(db);
   const output: Array<Record<string, unknown>> = [];
   for (const row of rows) {
     const binding = parseJsonRecord(row["lifecycle_binding_json"]);
@@ -327,8 +329,19 @@ function readLifecycleExecutions(db: Database.Database, mission: string): Array<
         ? db.prepare(`SELECT * FROM workflow_frontier_bindings WHERE instance_id = ? AND packet_id = ?`).all(instanceId, packetId) as Array<Record<string, unknown>>
         : [];
       const packet = db.prepare(
-        `SELECT destination_session, state, blocked_on FROM queue_items WHERE qitem_id = ?`,
-      ).get(packetId) as { destination_session?: string; state?: string; blocked_on?: string | null } | undefined;
+        `SELECT * FROM queue_items WHERE qitem_id = ?`,
+      ).get(packetId) as Record<string, unknown> | undefined;
+      const transition = hasTable(db, "queue_transitions") ? db.prepare(
+        `SELECT ts, state, transition_note, actor_session FROM queue_transitions
+          WHERE qitem_id = ? ORDER BY transition_id DESC LIMIT 1`,
+      ).get(packetId) ?? null : null;
+      const wake = wakes.getStatus(packetId);
+      const blocker = typeof packet?.blocked_on === "string" ? db.prepare(
+        `SELECT qitem_id, summary, destination_session, state, evidence_ref FROM queue_items WHERE qitem_id = ?`,
+      ).get(packet.blocked_on) ?? null : null;
+      const schedule = wake && wake.kind !== "blocker" && hasTable(db, "watchdog_jobs") ? db.prepare(
+        `SELECT policy, interval_seconds, last_evaluation_at FROM watchdog_jobs WHERE job_id = ?`,
+      ).get(wake.ref) ?? null : null;
       if (matches.length !== 1) unknowns.push(`frontier packet ${packetId} has ${matches.length} step bindings`);
       if (!packet) unknowns.push(`frontier packet ${packetId} has no queue row`);
       const stepId = matches.length === 1 ? String(matches[0]!["step_id"]) : null;
@@ -340,11 +353,18 @@ function readLifecycleExecutions(db: Database.Database, mission: string): Array<
         owner: packet?.destination_session ?? INDETERMINATE,
         queue_state: packet?.state ?? INDETERMINATE,
         blocked_on: packet?.blocked_on ?? null,
+        blocker,
+        summary: packet?.summary ?? null,
+        evidence_ref: packet?.evidence_ref ?? null,
+        objective: step?.["objective"] ?? null,
+        latest_transition: transition,
+        wake,
+        wake_schedule: schedule,
         depends_on: step && Array.isArray(step["depends_on"]) ? step["depends_on"] : [],
         gate: step && isRecord(step["gate"]) ? step["gate"] : null,
         acceptance,
         targeted_action: matches.length === 1 && packet
-          ? lifecycleProjectAction({ instanceId, packetId, owner: packet.destination_session!, acceptance, receiptRequired: stepId !== null && requiredLifecycleSteps(binding).includes(stepId) })
+          ? lifecycleProjectAction({ instanceId, packetId, owner: String(packet.destination_session), acceptance, receiptRequired: stepId !== null && requiredLifecycleSteps(binding).includes(stepId) })
           : INDETERMINATE,
       };
     });
@@ -370,6 +390,10 @@ function readLifecycleExecutions(db: Database.Database, mission: string): Array<
       : [];
     output.push({
       instance_id: instanceId,
+      workflow_name: row["workflow_name"],
+      workflow_version: row["workflow_version"],
+      description: specRoot["description"] ?? null,
+      steps: steps.map((step) => ({ id: step["id"], objective: step["objective"] ?? null, next_hop: step["next_hop"] ?? null })),
       status: row["status"],
       operation_key: row["lifecycle_operation_key"],
       compiled_input_digest: row["compiled_input_digest"],

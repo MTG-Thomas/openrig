@@ -26,7 +26,7 @@ describe("founder-corrected Slice 4 entry point", () => {
     expect(escape).toEqual({ type: "key", key: "escape" });
 
     const action = resolveEscapeAction(escape!, view.get());
-    expect(action).toEqual({ type: "scopes-mission-open", mission });
+    expect(action).toEqual({ type: "back" });
     view.dispatch(action!);
     expect(view.get().scopesSelected).toBeNull();
     expect(view.get().scopesMission).toBe(mission);

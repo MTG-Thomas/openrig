@@ -578,3 +578,43 @@ describe("footer stream tail via the bounded latest-active projection", () => {
     expect([...first.readErrors, ...second.readErrors].filter((error) => error.startsWith("stream-tail"))).toEqual([]);
   });
 });
+
+describe("S05 authored source and observed consumers", () => {
+  it("separates library declarations from served rig and seat consumers", async () => {
+    const snap = await hydrateSnapshot(fixtureClient({}, { "/api/specs/library/a1/review": { ...(FIXTURES["/api/specs/library/a1/review"] as object), raw: "name: myrig\ndescription: Build and review software" } }));
+    const rig = snap.specs.find((s) => s.name === "myrig")!;
+    expect(rig.description).toBe("Build and review software");
+    expect(rig.consumers).toContainEqual(expect.objectContaining({ rig: "myrig", host: "mm2-openrig1" }));
+    const agent = snap.specs.find((s) => s.name === "implementer")!;
+    expect(agent.consumers).toEqual([expect.objectContaining({ agent: "dev.impl", rig: "myrig", runtime: "claude-code" })]);
+    const view = createViewState({ instanceId: "proof", getSnapshot: () => snap });
+    view.dispatch({ type: "jump", section: "specs" });
+    view.dispatch({ type: "filter", text: "implementer" });
+    view.dispatch({ type: "drill", resource: "spec", name: "implementer" });
+    view.dispatch({ type: "layout", contentMaxOffset: 60, contentTargetCount: 2 });
+    view.dispatch({ type: "content-scroll", delta: 6 });
+    const origin = view.get();
+    view.dispatch({ type: "drill", resource: "agent", name: "dev.impl", target: { host: "mm2-openrig1", rig: "myrig" } });
+    expect(view.get().lastError).toBeNull();
+    expect(view.get().filter).toBe("");
+    view.dispatch({ type: "back" });
+    expect(view.get()).toMatchObject({ drill: origin.drill, filter: "implementer", contentOffset: 6, viewTab: origin.viewTab });
+  });
+
+  it("refreshes the selected file even with the same library revision and does not hide a later failure behind its cache", async () => {
+    const cache = new Map();
+    const context = { section: "specs", viewTab: "configuration" as const, drill: [{ kind: "spec" as const, name: "myrig" }] };
+    await hydrateSnapshot(fixtureClient(), cache, undefined, undefined, undefined, context);
+    const changed = await hydrateSnapshot(fixtureClient({}, { "/api/specs/library/a1/review": { ...(FIXTURES["/api/specs/library/a1/review"] as object), raw: "description: Changed on disk" } }), cache, undefined, undefined, undefined, context);
+    expect(changed.specs.find((s) => s.name === "myrig")!.description).toBe("Changed on disk");
+    const failed = await hydrateSnapshot(fixtureClient({ "/api/specs/library/a1/review": { status: 404 } }), cache, undefined, undefined, undefined, context);
+    const view = createViewState({ instanceId: "proof", getSnapshot: () => failed });
+    view.dispatch({ type: "drill", resource: "spec", name: "myrig" });
+    const screen = renderScreen(view.get(), failed, { cols: 90, rows: 40 });
+    const body = screen.lines.join("\n");
+    expect(body).toContain("Source unavailable");
+    expect(body).not.toContain("0 pods");
+    expect(body).toContain("Observed consumers");
+    expect(screen.lines.every((line) => line.length <= 90)).toBe(true);
+  });
+});

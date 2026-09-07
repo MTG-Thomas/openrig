@@ -1,7 +1,7 @@
 # @openrig/tui — mission-control TUI
 
 The explorer / master-detail "k9s for rigs" surface: left Explorer (Topology ·
-Specs · Needs-You), right content pane, top command bar, ambient rig-stream
+Specs · Scopes · Needs-You), right content pane, top command bar, ambient rig-stream
 footer. OBSERVE / NAVIGATE / DRIVE-STRUCTURE only — ACT / PRODUCE /
 REVIEW-ARTIFACT surfaces live in Studio, not here. Zero runtime dependencies;
 it reads the daemon's EXISTING projections (two renderers, one projection —
@@ -28,10 +28,26 @@ terminal` primitive pointing at that command.
 ## Driving it (human or agent — same grammar, same state)
 
 Command bar / keyboard / mouse / control socket all mutate ONE view-state
-through ONE path. Safe-core grammar: `:topology` `:specs` `:needs` ·
+through ONE path. Safe-core grammar: `:topology` `:specs` `:scopes` `:needs` ·
 `/<filter>` · `host|rig|pod|agent|spec <name>` · `tab table|overview` ·
 `spec-of <agent>` · `running <spec>`. Keys: arrows + Enter navigate the
 explorer, `f` toggles the footer, `q` quits.
+
+In Scopes, select a mission or use `mission <name>`. Its workflow rows open the
+current work, owner, recorded waiting reason, wake mechanism, next action and
+bound sources. `workflow <instance-id>` and `packet <qitem-id>` address those
+pages within the selected mission. Release ceremony, post-release housekeeping
+and an authored successor remain separate. A receipt is an attributed record,
+not an automatic acceptance verdict; bound source hashes describe compilation,
+not an assertion that current source bytes are identical.
+
+Specs separates authored declarations from observed consumers. Open a consumer
+to inspect its served runtime and seat binding; missing source stays explicit.
+The selected source is re-read on refresh even if the library revision did not
+change. `back` or Escape returns to the previous selection, tab and scroll.
+Escape first cancels editing or clears an active filter. On long spec pages,
+Up/Down scroll by default; Right enters links, then Up/Down and Enter follow them.
+`rig tui commands --json` lists the shared command registry.
 
 Agents: `tmux send-keys` of any command is the always-available floor; the
 control socket is the addressable-screen API — one command per line, one JSON

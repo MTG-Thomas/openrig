@@ -22,7 +22,7 @@ import { runtimeMarkSegs } from "./topology/runtime-marks.js";
 import { barCells, flashActive, reducedMotion, spinnerFrame } from "./motion.js";
 import { explorerWidth, MOTION_FRAME_MS } from "./visual-layout.js";
 import type { ColorMode, Token } from "./theme.js";
-import { detailPage, fieldLine, sectionRule, listItem, alignedRow, LABEL_W } from "./detail.js";
+import { detailPage, fieldLine, sectionRule, listItem, alignedRow, LABEL_W, wrapDetailLines } from "./detail.js";
 import { healthAgentLines, healthDetailLines, healthListLines, healthSummaryLine } from "./health/health-model.js";
 import type { Action, FleetSnapshot, LoadState, NeedsItem, RecentTransitionSnap, RowFlash, Screen, ViewState } from "./types.js";
 
@@ -313,10 +313,16 @@ function agentDetailLines(
         ],
       },
       {
-        title: "SPEC",
+        title: "SPEC · effective seat binding",
         fields: [specInLibrary
           ? { label: "spec", value: agent.spec, link: { type: "cross", kind: "spec-of", name: agent.name, target: { host: found.host.name, rig: rig.name, pod: pod.name } } }
           : { label: "spec", value: agent.spec ? `${agent.spec}  (not in library)` : "—" }],
+        lines: [
+          ...wrapDetailValue("profile", agent.profile ?? "not served", contentWidth),
+          ...wrapDetailValue("version", agent.specVersion ?? "not served", contentWidth),
+          ...wrapDetailValue("source hash", agent.specHash ?? "not served", contentWidth),
+          ...wrapDetailValue("basis", "Served seat binding; the authored library may have changed since launch.", contentWidth),
+        ],
       },
     ]),
   ];
@@ -857,8 +863,23 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     if (leaf?.kind === "spec") {
       const spec = findSpec(snap, leaf.name);
       if (!spec) return [{ text: `spec "${leaf.name}" not in the current snapshot` }];
+      if (spec.kind === "rig") lines.push(specTabsLine(state, spec.name));
+      lines.push({ text: `${spec.kind} spec ${spec.name}` });
+      lines.push(fieldLine({ label: "purpose", value: spec.description ?? "not declared in the available source" }));
+      lines.push(fieldLine({ label: "provenance", value: `${sourceProvenance(spec)} · ${spec.sourceState ?? "source state not served"}` }));
+      lines.push(fieldLine({ label: "source", value: spec.sourcePath ?? "path unavailable" }));
+      lines.push({ text: "  Authored declaration. Resource availability is not the effective loadout of a running seat." });
+      lines.push(sectionRule("Observed consumers · open for effective runtime/configuration", contentWidth));
+      for (const consumer of spec.consumers ?? []) {
+        const resource = consumer.agent ? "agent" : "rig";
+        lines.push(listItem(`${consumer.agent ?? consumer.rig} · ${consumer.status ?? "unknown"}${consumer.runtime ? ` · ${consumer.runtime}` : ""}${consumer.model ? ` · ${consumer.model}` : ""}`, { type: "drill", resource, name: consumer.agent ?? consumer.rig, target: { host: consumer.host, rig: consumer.rig } }));
+      }
+      if (spec.consumers && !spec.consumers.length) lines.push({ text: "  No consumers observed in the available local inventory (remote seats are not enumerated)." });
+      if (spec.consumers === undefined) lines.push({ text: "  Consumer projection unavailable." });
+      for (const error of snap.readErrors.filter((error) => error.startsWith("nodes(") || error.startsWith("rig-spec(") || error.startsWith("rigs-summary:"))) lines.push({ text: `  Inventory incomplete: ${error}` });
+      lines.push(listItem("Back · Esc", { type: "back" }));
+      if (spec.sourceUnavailable) return wrapDetailLines([...lines, { text: `  Source unavailable: ${spec.sourceUnavailable}` }], contentWidth);
       if (spec.kind === "rig") {
-        lines.push(specTabsLine(state, spec.name));
         if (spec.sourcePath) lines.push(fieldLine({ label: "source", value: `${displayPath(spec.sourcePath, 56)} · ${sourceProvenance(spec)}` }));
         if (state.viewTab === "topology") {
           // ROUND-4 item 1: the established table treatment, not unformatted rows
@@ -869,7 +890,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
           lines.push({ text: "" });
           if (nodes.length === 0) {
             lines.push({ text: "  (topology projection is empty)" });
-            return lines;
+            return wrapDetailLines(lines, contentWidth);
           }
           lines.push({ text: `  ${alignedRow(NODE_COLS)}` });
           lines.push({ text: `  ${"─".repeat(NODE_COLS.reduce((n, [, w]) => n + w + 1, -1))}` });
@@ -880,11 +901,11 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
             lines.push(sectionRule("edges"));
             for (const edge of graphEdges) lines.push({ text: `  ${alignedRow([[edge.source, 16], ["→", 2], [edge.target, 20]])} (${edge.kind})` });
           }
-          return lines;
+          return wrapDetailLines(lines, contentWidth);
         }
         if (state.viewTab === "yaml") {
           for (const rawLine of (spec.raw ?? "# raw YAML unavailable").split("\n")) lines.push({ text: `  ${rawLine}` });
-          return lines;
+          return wrapDetailLines(lines, contentWidth);
         }
         const members = spec.pods?.reduce((count, pod) => count + pod.members.length, 0) ?? spec.legacyNodes?.length ?? 0;
         const edges = (spec.edges?.length ?? 0) + (spec.pods?.reduce((count, pod) => count + pod.edges.length, 0) ?? 0);
@@ -967,12 +988,12 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
               fields: [{ label: "source", value: spec.sourcePath ? `${displayPath(spec.sourcePath, 56)} · ${sourceProvenance(spec)}` : "—" }],
             },
             {
-              title: "where it runs",
+              title: "Declared rig references",
               fields: [
                 ...((spec.usedByRigs?.length ?? 0) === 0
-                  ? [{ label: "used by", value: "—" }]
+                  ? [{ label: "declared by", value: "—" }]
                   : (spec.usedByRigs ?? []).map((rig) => ({
-                      label: "used by",
+                      label: "declared by",
                       value: `rig ${rig}`,
                       link: { type: "drill", resource: "spec", name: rig } as Action,
                     }))),
@@ -986,7 +1007,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
           ]),
         );
       }
-      return lines;
+      return wrapDetailLines(lines, contentWidth);
     }
     lines.push({ text: "SPEC LIBRARY" });
     lines.push({ text: state.filter ? `/ filter specs: ${state.filter} · / replace · esc clear` : "/ filter specs…" });
@@ -1074,6 +1095,16 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     return lines;
   }
   if (state.section === "scopes") {
+    if (!state.scopesMission && snap.execution) {
+      const selected = snap.execution;
+      const instances = selected.lifecycle_instances;
+      return wrapDetailLines([
+        { text: "SCOPES · choose a mission in the explorer" },
+        listItem(`Default mission · ${selected.mission}`, { type: "scopes-mission-open", mission: selected.mission }),
+        { text: `  Workflows: ${instances ? instances.map((instance) => String(instance.status ?? "unknown")).join(", ") || "none bound" : "projection unavailable"}` },
+        { text: `  Execution snapshot: ${selected.derived_at ?? "time unavailable"}. Other missions load when selected.` },
+      ], contentWidth);
+    }
     // SCOPES owns both levels. Both mission-graph and Explorer slice routes land
     // on the same execution-backed canonical detail; store-direct content is
     // composed into that page instead of surviving as a competing destination.
