@@ -23,6 +23,8 @@ deprecations, and behavioral changes. Breaking changes are called out explicitly
 - Preserve context delivery and generation evidence; honor authored startup
   proof selection; improve exception routing, bounded shutdown receipts,
   startup child identity, and cross-host origin attribution.
+- Diagnosis `show`/`list --json` now return summaries; use `--full --json`
+  for complete evidence. Queue previews also print an exact full-read command.
 
 Root, CLI, daemon, and web UI are `0.5.11`; terminal TUI remains `0.1.0`.
 Migration head remains `079_workflow_lifecycle_parallel`.
