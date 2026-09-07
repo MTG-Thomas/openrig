@@ -8,6 +8,8 @@ import { realDeps } from "./daemon.js";
 import { enumArg, positiveIntArg } from "../cli-error.js";
 import type { StatusDeps } from "./status.js";
 import { resolveContextRef } from "../context-resolve.js";
+import { shellQuote } from "../cross-host-executor.js";
+import { omittedReadField, readView } from "../read-view.js";
 
 /**
  * `rig queue` — coordination primitive L3/inbox/outbox commands (PL-004 Phase A).
@@ -957,8 +959,8 @@ workspace home that is deferred/not-imminent belongs in its mission/slice.`)
   cmd
     .command("show <qitemId>")
     .description("Show one qitem (bounded body preview by default; --full for the complete body)")
-    .option("--full", "Show the complete body (no preview truncation) + chain fields")
-    .option("--json", "JSON output for agents")
+    .option("--full", "Complete original record; may be large (use --full --json for lossless JSON)")
+    .option("--json", "JSON preview with completeness, original byte size and exact full command")
     .action(async (qitemId: string, opts: { full?: boolean; json?: boolean }) => {
       const deps = getDeps();
       await withClient(deps, async (client) => {
@@ -976,10 +978,12 @@ workspace home that is deferred/not-imminent belongs in its mission/slice.`)
         const { preview, bodyBytes, bodyTruncated } = previewBody(item.body);
         // Append-only additions: keep `body` in place (now the preview) and add
         // the honest size + truncation flag. Object otherwise unchanged.
-        const transformed = { ...item, body: preview, bodyBytes, bodyTruncated };
+        const fullCommand = `rig queue show ${shellQuote(qitemId)} --full --json`;
+        const view = readView(item, fullCommand, bodyTruncated ? [omittedReadField("body (after preview)", item.body.slice(preview.length))] : []);
+        const transformed = { ...item, body: preview, bodyBytes, bodyTruncated, readView: view };
         printResult(json, transformed, res.status);
         if (!json && bodyTruncated) {
-          console.log(`… (bounded preview — complete body is ${bodyBytes} bytes; --full to display it)`);
+          console.log(`… (bounded preview — complete body is ${bodyBytes} bytes; full record ${view.fullJsonBytes} JSON bytes: ${fullCommand})`);
         }
       });
     });
@@ -1025,7 +1029,7 @@ Active states: pending, in-progress, blocked.
 History (-a adds): done, canceled, handed-off, failed, denied.
 Use --state <states> to select specific states explicitly.
 
-Depth: use 'rig queue show <qitemId>' for a single item in full.
+Depth: 'rig queue show <qitemId>' previews one body; add --full for the complete record.
 Frontier source: 'rig queue list' is the default status surface.
 
 Examples:

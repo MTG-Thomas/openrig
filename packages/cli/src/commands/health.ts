@@ -21,6 +21,55 @@ import {
 import { realDeps } from "./daemon.js";
 import { resolveIdentitySource } from "./whoami.js";
 import type { StatusDeps } from "./status.js";
+import { shellQuote } from "../cross-host-executor.js";
+import { omittedReadField, readView } from "../read-view.js";
+
+interface DiagnosisEntry {
+  row: Record<string, unknown> & { qitemId: string };
+  finding: HealthRecord;
+  packet: Record<string, unknown> & { instructions: string };
+  receipts: unknown[];
+  authority: Array<{ path: string; state: string; content?: string }>;
+  disposition: { verdict: string; causalStart: string | null; steering: string; uncertainty: string; evidenceRefs: string[] } | null;
+  humanDelivery: { qitemId: string; outcome: string } | null;
+  notificationReadiness?: { ready: boolean; reason: string } | null;
+}
+
+function diagnosisPreview(entry: DiagnosisEntry) {
+  const omitted: ReturnType<typeof omittedReadField>[] = [];
+  // ponytail: omit only known evidence payloads; keep current decisions and unknowns intact.
+  function without<T extends object>(record: T, keys: string[], prefix = ""): T {
+    const copy = { ...record } as Record<string, unknown>;
+    for (const key of keys) {
+      const value = copy[key];
+      if (value === undefined || value === null || value === "" || (Array.isArray(value) && !value.length)) continue;
+      omitted.push(omittedReadField(`${prefix}${key}`, value));
+      delete copy[key];
+    }
+    return copy as T;
+  }
+  const result = without(entry, ["receipts"]);
+  result.row = without(entry.row, ["body", "chainOfRecord"], "row.");
+  result.packet = without(entry.packet, ["finding", "authority", "instructions"], "packet.");
+  result.finding = without(entry.finding, ["evidence"], "finding.");
+  if (entry.finding.ceremony) {
+    result.finding.ceremony = { ...entry.finding.ceremony,
+      workflowReceipts: entry.finding.ceremony.workflowReceipts.map((receipt, index) => {
+        const envelope = without(receipt, ["evidence"], `finding.ceremony.workflowReceipts[${index}].`);
+        const evidence = receipt.evidence;
+        // These are the existing cut/acceptance identity spellings, not a verdict on the receipt.
+        const identity = evidence && typeof evidence === "object" && !Array.isArray(evidence)
+          ? Object.fromEntries(Object.entries(evidence).filter(([key, value]) =>
+            ["candidate", "candidateSha", "candidate_sha", "cutSha", "tree", "verdict", "evidenceRef", "evidence_ref"].includes(key)
+            && typeof value === "string"))
+          : {};
+        return { ...envelope, evidenceIdentity: identity };
+      }),
+    };
+  }
+  result.authority = entry.authority.map((ref, index) => without(ref, ["content"], `authority[${index}].`));
+  return { ...result, readView: readView(entry, `rig health diagnosis show ${shellQuote(entry.row.qitemId)} --full --json`, omitted) };
+}
 
 const HEALTH_ERROR_SCHEMA = "openrig.health-error/v0alpha1" as const;
 
@@ -261,7 +310,7 @@ export function healthCommand(depsOverride?: HealthDeps): Command {
     .addOption(new Option("--severity <severity>", "Filter by severity").choices([...HEALTH_SEVERITIES]))
     .addOption(new Option("--status <status>", "Filter by finding status").choices([...HEALTH_STATUSES]))
     .option("--limit <count>", "Maximum findings (1-200)", parseLimit, 100)
-    .option("--json", "Emit the canonical daemon health projection as JSON")
+    .option("--json", "JSON output; diagnosis list/show need --full for complete evidence")
     .option("--actor <name>", "Attribute explicit diagnosis writes when operating outside a managed seat")
     .addHelpText("after", `
 The default scope is the current seat. --instance without an ID is the bounded
@@ -336,22 +385,27 @@ list/explain never mutate. Diagnosis mutations use explicit subcommands; automat
       else renderExplanation(response.data);
     });
 
-  async function diagnosisRequest(path: string, options: { json?: boolean }, payload?: unknown) {
+  async function diagnosisRequest(path: string, options: { json?: boolean; full?: boolean }, payload?: unknown) {
     const json = Boolean(options.json || command.opts().json);
     const client = await readyClient(deps, json);
     if (!client) return;
     const response = await guardedRequest(() => payload === undefined ? client.get(`/api/health-diagnosis${path}`) : client.post(`/api/health-diagnosis${path}`, { ...(payload as object), actor: command.opts().actor }), json);
     if (!response) return;
     if (response.status >= 400) { console.error(JSON.stringify(response.data)); process.exitCode = 1; return; }
-    if (json || path === "/policy" || path === "/checkpoints" || path === "/evaluate" || path.endsWith("/notify")) {
-      console.log(JSON.stringify(response.data, null, json ? undefined : 2));
+    const occurrenceRead = payload === undefined && path !== "/policy" && path !== "/checkpoints";
+    if (options.full || json || path === "/policy" || path === "/checkpoints" || path === "/evaluate" || path.endsWith("/notify")) {
+      const data = occurrenceRead && !options.full
+        ? (Array.isArray(response.data) ? response.data.map((entry) => diagnosisPreview(entry as DiagnosisEntry)) : diagnosisPreview(response.data as DiagnosisEntry))
+        : response.data;
+      console.log(JSON.stringify(data, null, json ? undefined : 2));
     } else {
       const entries = Array.isArray(response.data) ? response.data : [response.data];
       if (!entries.length) console.log("No diagnostic occurrences. This is not a healthy assertion.");
-      for (const entry of entries as Array<{ row: { qitemId: string }; finding: HealthRecord; disposition: { verdict: string; causalStart: string | null; steering: string; uncertainty: string; evidenceRefs: string[] } | null; packet: { instructions: string }; humanDelivery: { qitemId: string; outcome: string } | null; notificationReadiness?: { ready: boolean; reason: string } | null; authority: Array<{ path: string; state: string }> }>) {
+      for (const entry of entries as DiagnosisEntry[]) {
         console.log(`${entry.row.qitemId}  ${entry.finding.status}  ${entry.finding.detector}`);
         console.log(`  Disposition: ${entry.disposition?.verdict ?? "awaiting agent investigation"}`);
         if (path) {
+          console.log(`  Queue: ${entry.row.state ?? "unknown"}  Owner: ${entry.row.destinationSession ?? "unknown"}  Blocker: ${entry.row.blockedOn ?? "none recorded"}`);
           if (entry.notificationReadiness) console.log(`  Human readiness: ${entry.notificationReadiness.ready ? "ready" : "unavailable"} — ${entry.notificationReadiness.reason}`);
           if (entry.humanDelivery) console.log(`  Human delivery: ${entry.humanDelivery.outcome} (${entry.humanDelivery.qitemId})`);
           console.log(`  Finding: ${entry.finding.id}  Policy: ${entry.finding.policyVersion ?? "unreported"}`);
@@ -360,8 +414,10 @@ list/explain never mutate. Diagnosis mutations use explicit subcommands; automat
           console.log(`  Steering: ${entry.disposition?.steering ?? "not yet recorded"}`);
           console.log(`  Uncertainty: ${entry.disposition?.uncertainty ?? entry.finding.indeterminateReason ?? "diagnosis pending"}`);
           for (const ref of entry.authority) console.log(`  Authority (${ref.state}): ${ref.path}`);
-          console.log(`  ${entry.packet.instructions}`);
-          console.log("  Use --json for retained evidence, authority bytes, and transition receipts.");
+          if (occurrenceRead) {
+            const view = diagnosisPreview(entry).readView;
+            console.log(`  Evidence preview; full record ${view.fullJsonBytes} JSON bytes: ${view.fullCommand}`);
+          } else console.log(`  ${entry.packet.instructions}`);
         }
       }
     }
@@ -380,8 +436,14 @@ list/explain never mutate. Diagnosis mutations use explicit subcommands; automat
   command.command("diagnose").description("Preview policy admission; --apply creates or re-presents bounded diagnostic context")
     .option("--apply").option("--json").action(async (o: { apply?: boolean; json?: boolean }) => diagnosisRequest("/evaluate", o, { apply: Boolean(o.apply) }));
   const diagnosis = command.command("diagnosis").description("Read occurrences and record agent-owned dispositions");
-  diagnosis.command("list").option("--json").action(async (o: { json?: boolean }) => diagnosisRequest("", o));
-  diagnosis.command("show <qitem-id>").option("--json").action(async (id: string, o: { json?: boolean }) => diagnosisRequest(`/${encodeURIComponent(id)}`, o));
+  diagnosis.command("list").description("List occurrence summaries; evidence payloads require --full")
+    .option("--json", "Summary array with explicit omitted fields and per-occurrence expansion commands")
+    .option("--full", "Complete records including all evidence and receipts; may be large")
+    .action(async (o: { json?: boolean; full?: boolean }) => diagnosisRequest("", o));
+  diagnosis.command("show <qitem-id>").description("Inspect current state and decisions; expand retained evidence deliberately")
+    .option("--json", "Summary JSON with omitted fields, original byte size and exact full command")
+    .option("--full", "Complete original record; use --full --json for lossless JSON (may be large)")
+    .action(async (id: string, o: { json?: boolean; full?: boolean }) => diagnosisRequest(`/${encodeURIComponent(id)}`, o));
   diagnosis.command("record <qitem-id>").requiredOption("--file <path>", "Disposition JSON with verdict, causalStart, steering, uncertainty, evidenceRefs").option("--json")
     .action(async (id: string, o: { file: string; json?: boolean }) => diagnosisRequest(`/${encodeURIComponent(id)}/disposition`, o, { value: fromFile(o.file) }));
   diagnosis.command("notify <qitem-id>").description("Explicitly request human delivery under policy and verified connector readiness").option("--json")

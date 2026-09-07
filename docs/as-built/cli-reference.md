@@ -141,6 +141,25 @@ not implicitly delivered or replayed by registration.
 
 System Health diagnosis, policy, checkpoints, and dispositions are documented in
 [Agent-operated System Health diagnosis](../reference/health-diagnosis.md).
+Diagnosis `show`/`list --json` are summaries; use `--full --json` for the previous
+complete evidence payload. Their defaults identify omitted fields and the exact
+expansion command. Workflow human views remain summaries; workflow `--json`
+continues to return the complete API payload.
+
+For raw JSON evidence files, CLI read defaults cannot intercept `cat` or a Node
+print. Inspect size and keys before selecting needed fields; retain full evidence
+on disk. For example:
+
+```sh
+wc -c < receipt.json
+jq 'keys' receipt.json
+jq '{gate, judge, cutSha, surfaceCount, overallPackageVerdict}' receipt.json
+```
+
+Select the actual fields present in that file. Redirect intentional full CLI
+output to a file before inspecting selected fields; use `set -o pipefail` when
+piping a command so a formatter cannot hide its failing exit.
+
 
 - Binary: `rig`
 - Top-level command groups: `64`
@@ -1260,7 +1279,7 @@ Subcommands:
   - Pipeline use must enable `set -o pipefail`; otherwise the shell reports only the downstream formatter's status and can mask a nonzero `rig` read such as a timeout.
   - `--destination <s>` / `--source <s>` / `--state <csv>` keep working and compose with the new flags.
   - The four axes (scope × history × field-breadth × encoding) are orthogonal and composable. The bare unscoped firehose that aggregated cross-rig + full-history (~64,000 tokens on the live host) is retired as a default — opt-in via `-A -a --full`.
-  - Use `rig queue show <qitemId>` for the full single-item view (kubectl `describe` / docker `inspect` pattern).
+  - Use `rig queue show <qitemId>` for the body preview; `rig queue show <qitemId> --full --json` returns the original complete record. Preview JSON adds `readView` with completeness, omitted content, full JSON byte size and the exact expansion command.
 - `overdue [--json]` — in-progress qitems past closure_required_at
 - `inbox-drop <destinationSession> --sender <session> (--body <text> | --body-file <path>) [--tags <csv>] [--urgency <u>] [--audit <pointer>] [--id <inboxId>] [--json]`
 - `inbox-absorb <inboxId> --receiver <session> [--json]` — promote a pending inbox entry to a queue_item

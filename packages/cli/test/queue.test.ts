@@ -1337,7 +1337,8 @@ describe("rig queue CLI", () => {
       expect(printed.bodyBytes).toBe(1000);
       expect(Array.from(printed.body).length).toBe(512);
       // marker line on its OWN line, with the honest total byte size
-      expect(logs.join("\n")).toContain("bounded preview — complete body is 1000 bytes; --full to display it");
+      expect(logs.join("\n")).toContain("bounded preview — complete body is 1000 bytes; full record");
+      expect(logs.join("\n")).toContain("rig queue show 'qitem-1' --full --json");
       expect(logs.join("\n")).not.toMatch(/\btruncated\b/i);
     });
 

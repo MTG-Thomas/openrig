@@ -19,6 +19,32 @@ rig health diagnosis list
 rig health diagnosis show <qitem-id>
 ```
 
+`diagnosis list` and `diagnosis show` default to summaries in both text and
+JSON. The detailed text summary shows queue state, owner, blocker, disposition,
+uncertainty, finding identity and authority references. Summary JSON also keeps
+the ceremony basis and current receipt identities. It keeps its object/array
+shape and adds `readView`: `complete`, `omittedFields` (paths,
+JSON byte counts and array counts), `fullJsonBytes`, and the exact `fullCommand`.
+Packet copies, authority contents, evidence arrays and the diagnostic receipt ledger
+are omitted explicitly. Current workflow-receipt envelopes remain, with
+`evidenceIdentity` carrying recognized cut/candidate, verdict and evidence-reference
+strings; their opaque evidence is omitted. These identity labels do not validate
+a receipt. A summary is not the complete evidence. Byte counts describe
+compact JSON serialization without the trailing newline, not model token counts.
+
+For investigation or existing consumers that need the former complete JSON:
+
+```sh
+rig health diagnosis show <qitem-id> --full --json > diagnosis.json
+rig health diagnosis list --full --json > diagnoses.json
+```
+
+`--full` without `--json` prints the complete record as formatted JSON. These
+expansions may be large. Plain `--json` no longer includes all evidence fields;
+migrate consumers of those fields to `--full --json`. HTTP API responses and
+mutation-result JSON are unchanged. Full context remains necessary before an
+agent acts on a diagnosis; the generated investigation packet names that command.
+
 The daemon checks enabled policy once per minute. `health policy` reports whether
 that check is scheduled and its last result, including errors. Ordinary `health`
 list/explain commands remain observational. Diagnosis defaults to disabled;
