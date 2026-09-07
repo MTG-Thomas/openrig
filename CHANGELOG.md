@@ -8,6 +8,30 @@ deprecations, and behavioral changes. Breaking changes are called out explicitly
 
 ---
 
+## [0.5.11] - 2026-09-07
+
+**Status**: release candidate; final verification and publication remain pending.
+
+- Start useful repository work with the focused `first-project` owner/checker
+  team and an attachable shared kernel TUI.
+- Inspect workflow owners and waits, declared spec purpose, effective instance
+  configuration, and human connection state in the ordinary TUI.
+- Navigate with command completion, readable Recent activity, and persistent
+  timezone selection. Unverified daemon probes no longer read as confirmed down.
+- Reuse project release profiles that retain both the release ceremony and the
+  actual post-release boundary, independently of successor scope.
+- Preserve context delivery and generation evidence; honor authored startup
+  proof selection; improve exception routing, bounded shutdown receipts,
+  startup child identity, and cross-host origin attribution.
+
+Root, CLI, daemon, and web UI are `0.5.11`; terminal TUI remains `0.1.0`.
+Migration head remains `079_workflow_lifecycle_parallel`.
+
+The health-agent experiment remains a POC, and the Herdr journey requires no
+plugin. Neither is a new cold-agent architecture or a plugin/adoption claim.
+See [the full release notes](docs/releases/v0.5.11.md) for operational guidance
+and the retained verification limits.
+
 ## [0.5.7] - 2026-09-01
 
 **Status**: release-cut candidate. Final release-wide verification and public
