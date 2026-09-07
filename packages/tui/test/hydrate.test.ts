@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { DaemonClient } from "../src/daemon-client.js";
 import { hydrateSnapshot } from "../src/hydrate.js";
@@ -580,6 +582,31 @@ describe("footer stream tail via the bounded latest-active projection", () => {
 });
 
 describe("S05 authored source and observed consumers", () => {
+  it("shows the shipped first-project summary as its purpose", async () => {
+    const raw = readFileSync(new URL("../../daemon/specs/rigs/launch/first-project/rig.yaml", import.meta.url), "utf8");
+    const { summary } = parseYaml(raw) as { summary: string };
+    expect(summary).toContain("Two Codex seats");
+    const snap = await hydrateSnapshot(fixtureClient({}, {
+      "/api/specs/library/a1/review": { ...(FIXTURES["/api/specs/library/a1/review"] as object), raw },
+    }));
+    expect(snap.specs.find((s) => s.name === "myrig")!.description).toBe(summary);
+  });
+
+  it.each([
+    ["summary: Rig purpose\ndescription: Old purpose\nmetadata:\n  description: Older purpose", "Rig purpose"],
+    ["description: Legacy purpose\nmetadata:\n  description: Older purpose", "Legacy purpose"],
+    ["metadata:\n  description: Metadata purpose", "Metadata purpose"],
+    ["summary: '  '\ndescription: Legacy purpose", "Legacy purpose"],
+    ["summary: 123\ndescription: Legacy purpose", "Legacy purpose"],
+    ["name: myrig", undefined],
+    ["summary: '  '", undefined],
+  ])("keeps authored purpose precedence and absence honest: %s", async (raw, expected) => {
+    const snap = await hydrateSnapshot(fixtureClient({}, {
+      "/api/specs/library/a1/review": { ...(FIXTURES["/api/specs/library/a1/review"] as object), raw },
+    }));
+    expect(snap.specs.find((s) => s.name === "myrig")!.description).toBe(expected);
+  });
+
   it("separates library declarations from served rig and seat consumers", async () => {
     const snap = await hydrateSnapshot(fixtureClient({}, { "/api/specs/library/a1/review": { ...(FIXTURES["/api/specs/library/a1/review"] as object), raw: "name: myrig\ndescription: Build and review software" } }));
     const rig = snap.specs.find((s) => s.name === "myrig")!;
@@ -605,14 +632,16 @@ describe("S05 authored source and observed consumers", () => {
     const cache = new Map();
     const context = { section: "specs", viewTab: "configuration" as const, drill: [{ kind: "spec" as const, name: "myrig" }] };
     await hydrateSnapshot(fixtureClient(), cache, undefined, undefined, undefined, context);
-    const changed = await hydrateSnapshot(fixtureClient({}, { "/api/specs/library/a1/review": { ...(FIXTURES["/api/specs/library/a1/review"] as object), raw: "description: Changed on disk" } }), cache, undefined, undefined, undefined, context);
+    const changed = await hydrateSnapshot(fixtureClient({}, { "/api/specs/library/a1/review": { ...(FIXTURES["/api/specs/library/a1/review"] as object), raw: "summary: Changed on disk" } }), cache, undefined, undefined, undefined, context);
     expect(changed.specs.find((s) => s.name === "myrig")!.description).toBe("Changed on disk");
-    const failed = await hydrateSnapshot(fixtureClient({ "/api/specs/library/a1/review": { status: 404 } }), cache, undefined, undefined, undefined, context);
+    const failed = await hydrateSnapshot(fixtureClient({ "/api/specs/library/a1/review": { status: 404 } }, { "/api/specs/library": [{ ...(FIXTURES["/api/specs/library"] as object[])[0], summary: "Stale index purpose" }] }), cache, undefined, undefined, undefined, context);
     const view = createViewState({ instanceId: "proof", getSnapshot: () => failed });
     view.dispatch({ type: "drill", resource: "spec", name: "myrig" });
     const screen = renderScreen(view.get(), failed, { cols: 90, rows: 40 });
     const body = screen.lines.join("\n");
     expect(body).toContain("Source unavailable");
+    expect(body).not.toContain("Stale index purpose");
+    expect(failed.specs.find((s) => s.name === "myrig")!.description).toBeUndefined();
     expect(body).not.toContain("0 pods");
     expect(body).toContain("Observed consumers");
     expect(screen.lines.every((line) => line.length <= 90)).toBe(true);

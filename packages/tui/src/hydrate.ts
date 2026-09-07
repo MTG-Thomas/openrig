@@ -665,8 +665,9 @@ export async function hydrateSnapshot(
 
 function authoredDescription(raw?: string): string | undefined {
   try {
-    const doc = parseYaml(raw ?? "") as { description?: unknown; metadata?: { description?: unknown } } | null;
-    const value = doc?.description ?? doc?.metadata?.description;
-    return typeof value === "string" ? value : undefined;
+    const doc = parseYaml(raw ?? "") as { summary?: unknown; description?: unknown; metadata?: { description?: unknown } } | null;
+    // RigSpec summary takes precedence over legacy authored descriptions.
+    return [doc?.summary, doc?.description, doc?.metadata?.description]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0);
   } catch { return undefined; }
 }
