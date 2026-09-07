@@ -657,11 +657,12 @@ export function createApp(deps: AppDeps): Hono {
     // floor (escalation view + daemon-health); same additive contract.
     const wakeLadder = deps.wakeLadderStatus ? { wakeLadder: deps.wakeLadderStatus.snapshot() } : {};
     if (!monitor) {
-      return c.json({ status: "ok", ...stamp, ...selfHost, ...slowOperations, ...bind, ...stuckSweep, ...wakeLadder });
+      return c.json({ status: "ok", pid: process.pid, ...stamp, ...selfHost, ...slowOperations, ...bind, ...stuckSweep, ...wakeLadder });
     }
     const eventLoop = monitor.snapshot();
     return c.json({
       status: "ok",
+      pid: process.pid,
       ...stamp,
       ...selfHost,
       eventLoop,

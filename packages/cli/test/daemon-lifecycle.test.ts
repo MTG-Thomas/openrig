@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import {
   startDaemon,
@@ -31,36 +32,38 @@ function neverFetch(): Promise<{ ok: boolean }> {
   return new Promise(() => {});
 }
 
+function startupHealth() {
+  return { ok: true, json: async () => ({ pid: 12345, bind: { mode: "explicit", hosts: ["127.0.0.1"], tailscaleDetected: false } }) };
+}
+
 function mockDeps(overrides?: Partial<LifecycleDeps>): LifecycleDeps {
+  const child = Object.assign(new EventEmitter(), { pid: 12345, exitCode: null as number | null, signalCode: null, unref: vi.fn() });
   return {
-    spawn: vi.fn(() => ({ pid: 12345, unref: vi.fn() }) as unknown as ChildProcess),
+    acquireStartLock: () => ({ recordChild: vi.fn(), release: vi.fn() }),
+    spawn: vi.fn(() => child as unknown as ChildProcess),
     fetch: vi.fn(async () => ({ ok: true })),
-    kill: vi.fn(() => true),
+    kill: vi.fn(() => { child.exitCode = 0; child.emit("exit", 0, "SIGTERM"); return true; }),
     readFile: vi.fn(() => null),
     writeFile: vi.fn(),
     removeFile: vi.fn(),
     exists: vi.fn(() => false),
     mkdirp: vi.fn(),
     openForAppend: vi.fn(() => 3),
-    isProcessAlive: vi.fn(() => true),
+    isProcessAlive: vi.fn(() => child.exitCode === null),
     ...overrides,
   };
 }
 
 function startableDeps(overrides?: Partial<LifecycleDeps>): LifecycleDeps {
   let spawned = false;
-  const spawn = overrides?.spawn ?? vi.fn(() => {
-    spawned = true;
-    return { pid: 12345, unref: vi.fn() } as unknown as ChildProcess;
+  const deps = mockDeps(overrides);
+  const spawn = deps.spawn;
+  deps.spawn = vi.fn((...args) => { spawned = true; return spawn(...args); });
+  deps.fetch = overrides?.fetch ?? vi.fn(async () => {
+    if (!spawned) throw new Error("refused");
+    return startupHealth();
   });
-  return mockDeps({
-    ...overrides,
-    spawn,
-    fetch: overrides?.fetch ?? vi.fn(async () => {
-      if (!spawned) throw new Error("refused");
-      return { ok: true };
-    }),
-  });
+  return deps;
 }
 
 function writtenState(deps: LifecycleDeps): DaemonState {
@@ -744,7 +747,7 @@ describe("Daemon Lifecycle", () => {
       fetch: vi.fn(async () => {
         fetchCount++;
         if (fetchCount === 1) throw new Error("connection refused");
-        return { ok: true };
+        return startupHealth();
       }),
     });
 

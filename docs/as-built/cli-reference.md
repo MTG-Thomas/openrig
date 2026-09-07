@@ -221,8 +221,29 @@ Notes:
   path. Direct daemon first start uses the same initializer. Existing files are
   preserved and wrong-type managed paths are refused before any write. See
   `docs/reference/instance-layout.md`.
+- Startup uses a local `daemon-start.lock` reservation before instance initialization,
+  shared by `daemon start`, `start`, and `up`. A concurrent supported launch fails
+  without spawning another daemon or running its pre-bind database initialization.
+  Success requires the spawned child's numeric PID from `/healthz` at every required
+  listener and a live child through atomic `daemon.json` publication. Missing or
+  mismatched process identity, an invalid listener plan, child exit, and unresolved
+  probes cannot publish success. Use a matching CLI/daemon pair; a legacy endpoint
+  without PID evidence is insufficient. This local reservation does not serialize
+  old binaries or direct execution of the daemon entrypoint.
+- Startup checks physical liveness after the synchronous state writer as well as
+  before it; queued child events alone cannot prove that boundary. If publication
+  fails verification, startup rejects and withdraws only state matching this
+  launch's PID, start time, listener and DB. It never removes a replacement owner.
+- Failed process inspection is uncertainty, not proof that a child exited. Cleanup
+  waits for the owned child's exit evidence; an error event is insufficient.
+- Failed startup signals only its own child and waits boundedly for its exit. If
+  cleanup cannot be confirmed, the reservation remains and the error names the PID.
+  An interrupted launcher can also leave `daemon-start.lock`. Inspect its recorded
+  launcher/child PIDs, `daemon.json`, and `daemon.log`; only after proving both
+  processes absent, archive that reservation before retrying. There is no timed
+  takeover: a dead launcher may have left a live, unbound child.
 - `logs` reads daemon log output and can follow it.
-- **Deploy identity (v0.4.4, OPR.0.4.4.11 FR-6/7)**: a PACKAGED build (built via `scripts/build-package.sh`) is stamped with `{semver, commit, dirty, builtAt}`; the daemon's `/healthz` payload carries the four stamp fields additively and `rig --version` renders `<semver> (<commit8>[, dirty])`. A source/dev run has NO stamp and adds NOTHING (never an invented SHA) — `/healthz` keeps its legacy body and `--version` prints the plain semver. This is the 30-second stale-deploy diagnostic: an unstamped or old-commit `/healthz` on a long-running host means you are looking at an older deployed build, not the source tree. Source: `packages/{daemon,cli}/src/build-info.ts` (`stampFields`), `packages/daemon/src/server.ts` (`/healthz`), `packages/cli/src/version.ts`.
+- **Deploy identity (v0.4.4, OPR.0.4.4.11 FR-6/7)**: a PACKAGED build (built via `scripts/build-package.sh`) is stamped with `{semver, commit, dirty, builtAt}`; the daemon's `/healthz` payload carries the four stamp fields additively and `rig --version` renders `<semver> (<commit8>[, dirty])`. A source/dev run has no build stamp (never an invented SHA); `/healthz` still reports its runtime PID and `--version` prints the plain semver. This is the 30-second stale-deploy diagnostic: an unstamped or old-commit `/healthz` on a long-running host means you are looking at an older deployed build, not the source tree. Source: `packages/{daemon,cli}/src/build-info.ts` (`stampFields`), `packages/daemon/src/server.ts` (`/healthz`), `packages/cli/src/version.ts`.
 
 ### `rig status`
 

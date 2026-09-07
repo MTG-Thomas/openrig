@@ -1,5 +1,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { acquireDaemonStartLock } from "../daemon-start-lock.js";
 import { execFileSync, spawn } from "node:child_process";
 import { fetchWithTimeout } from "../fetch-with-timeout.js";
 import {
@@ -10,6 +12,7 @@ import {
   tailLogs,
   type LifecycleDeps,
   OPENRIG_DIR,
+  STATE_FILE,
   resolveBindIntent,
 } from "../daemon-lifecycle.js";
 
@@ -49,6 +52,7 @@ export function realDeps(): LifecycleDeps {
   });
 
   return {
+    acquireStartLock: () => acquireDaemonStartLock(OPENRIG_DIR),
     spawn: (cmd, args, opts) => spawn(cmd, args, opts as Parameters<typeof spawn>[2]),
     fetch: async (url) => {
       const res = await fetchWithTimeout(globalThis.fetch, url, {}, {
@@ -61,7 +65,16 @@ export function realDeps(): LifecycleDeps {
     },
     kill: (pid, signal) => { process.kill(pid, signal as NodeJS.Signals); return true; },
     readFile: (p) => { try { return fs.readFileSync(p, "utf-8"); } catch { return null; } },
-    writeFile: (p, content) => fs.writeFileSync(p, content, "utf-8"),
+    writeFile: (p, content) => {
+      if (p !== STATE_FILE) { fs.writeFileSync(p, content, "utf-8"); return; }
+      const temporary = `${p}.${randomUUID()}.tmp`;
+      try {
+        fs.writeFileSync(temporary, content, { encoding: "utf-8", flag: "wx" });
+        fs.renameSync(temporary, p);
+      } finally {
+        try { fs.unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+    },
     removeFile: (p) => { try { fs.unlinkSync(p); } catch { /* ignore */ } },
     exists: (p) => fs.existsSync(p),
     mkdirp: (p) => fs.mkdirSync(p, { recursive: true }),
@@ -76,6 +89,7 @@ export function realDeps(): LifecycleDeps {
       }
     },
     openForAppend: (p) => fs.openSync(p, "a"),
+    closeFile: (fd) => fs.closeSync(fd),
     isProcessAlive,
     // RULING 1ae863d2 — sibling-home scan (home-resolution honesty).
     listDir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
@@ -89,6 +103,7 @@ export function daemonCommand(depsOverride?: LifecycleDeps): Command {
   cmd
     .command("start")
     .description("Start the daemon")
+    .addHelpText("after", "\nStartup reserves this local instance before initialization and verifies the spawned child PID on every required listener.\nMissing/mismatched identity or child exit fails startup; failed publication withdraws only this launch's matching state. Use a matching CLI/daemon installation.\nA concurrent start fails without spawning another child. Inspect daemon-start.lock for launcher/child PIDs after an interrupted start;\nonly archive an abandoned reservation after proving both processes absent. A failed cleanup retains it and reports the child PID.\n")
     .option("--port <port>", "Port to listen on")
     .option("--host <host>", "Host to bind on")
     .option("--db <path>", "Database path")
