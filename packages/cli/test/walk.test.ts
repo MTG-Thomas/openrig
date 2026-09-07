@@ -277,6 +277,7 @@ describe("rig walk — per-piece consumption verification (RED-first, mechanics-
     { type: "assistant", uuid: "answer", parentUuid: "input", message: { role: "assistant", content: "done" } },
     { type: "system", subtype: "turn_duration", uuid: "closed", parentUuid: parent },
   ].map(r => JSON.stringify(r)).join("\n") + "\n";
+  const reverseRecords = (text: string) => text.trimEnd().split("\n").reverse().join("\n") + "\n";
   const codexTurn = (text: string, endId = "turn-1") => [
     { type: "event_msg", payload: { type: "task_started", turn_id: "turn-1" } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } },
@@ -286,6 +287,12 @@ describe("rig walk — per-piece consumption verification (RED-first, mechanics-
 
   it.each([
     ["complete Claude", linkedClaude(longPiece), true],
+    ["Claude closure flushed before user", reverseRecords(linkedClaude(longPiece)), true],
+    ["out-of-order unrelated Claude closure", reverseRecords(linkedClaude(longPiece, "other-answer")), false],
+    ["out-of-order Claude head only", reverseRecords(linkedClaude(longPiece.slice(0, 115))), false],
+    ["cyclic Claude ancestry", reverseRecords(linkedClaude(longPiece).replace('"parentUuid":"input"', '"parentUuid":"closed"')), false],
+    ["Claude closure crosses a different user input", linkedClaude(longPiece).replace('"parentUuid":"input"', '"parentUuid":"other-input"')
+      + JSON.stringify({ type: "user", uuid: "other-input", parentUuid: "input", message: { role: "user", content: "another piece" } }) + "\n", false],
     ["CRLF and outside whitespace", linkedClaude("\n" + longPiece.replace(/\n/g, "\r\n") + "\n"), true],
     ["head only", linkedClaude(longPiece.slice(0, 115)), false],
     ["middle loss", linkedClaude(longPiece.replace("middle must survive\n", "")), false],

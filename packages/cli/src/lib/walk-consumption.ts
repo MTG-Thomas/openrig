@@ -7,16 +7,19 @@ export function analyzeWalkSuffix(suffix: string, content: string): { consumed: 
   const textOf = (value: unknown): string => typeof value === "string" ? value
     : Array.isArray(value) ? value.map(b => (b?.type === "text" || b?.type === "input_text") && typeof b.text === "string" ? b.text : "").join("") : "";
   let consumed = false;
-  const descendants = new Set<string>();
-  let sawAssistant = false;
+  type Record = {
+    type?: string; subtype?: string; uuid?: string; parentUuid?: string; isSidechain?: boolean; isMeta?: boolean;
+    message?: { role?: string; content?: unknown };
+    payload?: { type?: string; role?: string; content?: unknown; turn_id?: string };
+  };
+  const claudeRecords = new Map<string, Record>();
+  const matchedInputs = new Set<string>();
+  const isPrompt = (rec: Record) => rec.type === "user" && rec.message?.role === "user" && !rec.isMeta
+    && !(Array.isArray(rec.message.content) && rec.message.content.some(b => b?.type === "tool_result"));
   let activeTurn: string | undefined;
   let matchedTurn: string | undefined;
   for (const line of suffix.split("\n").slice(0, -1)) { // unfinished appends are not evidence
-    let rec: {
-      type?: string; subtype?: string; uuid?: string; parentUuid?: string; isSidechain?: boolean; isMeta?: boolean;
-      message?: { role?: string; content?: unknown };
-      payload?: { type?: string; role?: string; content?: unknown; turn_id?: string };
-    };
+    let rec: Record;
     try { rec = JSON.parse(line); } catch { continue; }
     if (!rec || rec.isSidechain) continue;
     if (rec.type === "compacted") return { consumed, turnClosed: false };
@@ -34,25 +37,29 @@ export function analyzeWalkSuffix(suffix: string, content: string): { consumed: 
       if (matchedTurn && activeTurn === matchedTurn && p.turn_id === matchedTurn) return { consumed: true, turnClosed: true };
       if (p.turn_id === activeTurn) activeTurn = undefined;
     }
-    if (rec.type === "user" && rec.message?.role === "user") {
-      const value = rec.message.content;
-      const toolResult = Array.isArray(value) && value.some(b => b?.type === "tool_result");
-      if (!toolResult && !rec.isMeta) {
-        descendants.clear();
-        sawAssistant = false;
-        if (expected && canonical(textOf(value)) === expected) {
-          consumed = true;
-          if (typeof rec.uuid === "string") descendants.add(rec.uuid);
-        }
-        continue;
-      }
+    if (typeof rec.uuid === "string") claudeRecords.set(rec.uuid, rec);
+    if (isPrompt(rec) && expected && canonical(textOf(rec.message?.content)) === expected) {
+      consumed = true;
+      if (typeof rec.uuid === "string") matchedInputs.add(rec.uuid);
     }
-    // Claude tool results and hook summaries also carry parentUuid, so walk the actual
-    // ancestry rather than blessing the next turn_duration in append order.
-    if (typeof rec.uuid === "string" && rec.parentUuid && descendants.has(rec.parentUuid)) {
-      descendants.add(rec.uuid);
+  }
+  // Native Claude can flush the assistant and closure before the user record.
+  // Follow UUID ancestry after collecting the suffix; append order is not turn order.
+  for (const closure of claudeRecords.values()) {
+    if (closure.type !== "system" || closure.subtype !== "turn_duration") continue;
+    const visited = new Set<string>();
+    let parent = closure.parentUuid;
+    let sawAssistant = false;
+    while (parent && !visited.has(parent)) {
+      visited.add(parent);
+      const rec = claudeRecords.get(parent);
+      if (!rec) break;
+      if (isPrompt(rec)) {
+        if (sawAssistant && matchedInputs.has(parent)) return { consumed: true, turnClosed: true };
+        break; // Another input's completion cannot certify this piece.
+      }
       if (rec.type === "assistant" && rec.message?.role === "assistant") sawAssistant = true;
-      if (sawAssistant && rec.type === "system" && rec.subtype === "turn_duration") return { consumed: true, turnClosed: true };
+      parent = rec.parentUuid;
     }
   }
   return { consumed, turnClosed: false };
