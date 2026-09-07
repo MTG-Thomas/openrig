@@ -44,6 +44,22 @@ host, use the host's normal operator ceremony. On a recovery-friendly build VM,
 the orchestrator may adopt a tested runtime directly, but still observes each
 step and stops on unexplained drift.
 
+## When recovery crosses an instance boundary
+
+Before either lane changes runtime state, record one host-qualified executor and
+explicitly select the queue store that owns the recovery ruling. State whether
+the original owner continues, waits, or transfers; an open obligation in another
+store is not exclusive custody of this ruling. If the original store is down,
+retain its owner's disposition in the surviving ruling and communicate it to
+that owner before a competing executor acts.
+
+A refused claim means reconcile ownership with the ruling owner before any
+further runtime action; it does not authorize continuing under a separate older
+row. A return names the full executor address and deliberately selected store.
+Read the resulting row there, including source, destination, body, and the
+original owner's disposition, before resuming. Receipt creation alone does not
+establish that a waiting lane received or accepted the transfer.
+
 ## The loop
 
 For every step:
