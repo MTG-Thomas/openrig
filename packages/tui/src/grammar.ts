@@ -2,8 +2,7 @@
 // <resource> <name> drill · spec-of / running cross-nav. k9s-primary taxonomy.
 // parseCommand is pure text → action; target existence is validated by
 // dispatch, so every input adapter shares one failure surface.
-// Richer grammar (compound commands, prefixes, history/completion) was
-// RETIRED by the Phase-0 kill-criterion — see the spike verdict.
+// Completion proposes text from the registry; compound-command parsing stays out of scope.
 //
 // REGISTRY I1 (ruling 64f1dbdf): the verb table is DERIVED from the ONE command
 // registry (commands/registry.ts) — an unregistered verb cannot parse, so an

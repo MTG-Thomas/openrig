@@ -76,6 +76,7 @@ export interface RiggedConfig {
   // Preview Terminal v0 (PL-018) — UI-side preferences for the live
   // terminal preview pane.
   ui: {
+    timezone: string;
     preview: {
       refreshIntervalSeconds: number;
       maxPins: number;
@@ -238,6 +239,7 @@ const DEFAULTS = {
   files: { allowlist: "" },
   progress: { scanRoots: "" },
   ui: {
+    timezone: "America/Los_Angeles",
     preview: {
       refreshIntervalSeconds: 3,
       maxPins: 4,
@@ -374,6 +376,7 @@ export const VALID_KEYS = [
   "ui.preview.refresh_interval_seconds",
   "ui.preview.max_pins",
   "ui.preview.default_lines",
+  "ui.timezone",
   "recovery.auto_drive_provider_prompts",
   "recovery.provider_auth_env_allowlist",
   // V1 Phase 4 SC-29 exception — allowlist-only additions.
@@ -467,6 +470,7 @@ export const ENV_MAP: Record<ValidKey, { primary: string; legacy?: string }> = {
   "progress.scan_roots": { primary: "OPENRIG_PROGRESS_SCAN_ROOTS" },
   "ui.preview.refresh_interval_seconds": { primary: "OPENRIG_UI_PREVIEW_REFRESH_INTERVAL_SECONDS" },
   "ui.preview.max_pins": { primary: "OPENRIG_UI_PREVIEW_MAX_PINS" },
+  "ui.timezone": { primary: "OPENRIG_UI_TIMEZONE" },
   "ui.preview.default_lines": { primary: "OPENRIG_UI_PREVIEW_DEFAULT_LINES" },
   "recovery.auto_drive_provider_prompts": { primary: "OPENRIG_RECOVERY_AUTO_DRIVE_PROVIDER_PROMPTS" },
   "recovery.provider_auth_env_allowlist": { primary: "OPENRIG_RECOVERY_PROVIDER_AUTH_ENV_ALLOWLIST" },
@@ -546,6 +550,7 @@ const KEY_TO_PATH: Record<ValidKey, string[]> = {
   "progress.scan_roots": ["progress", "scanRoots"],
   "ui.preview.refresh_interval_seconds": ["ui", "preview", "refreshIntervalSeconds"],
   "ui.preview.max_pins": ["ui", "preview", "maxPins"],
+  "ui.timezone": ["ui", "timezone"],
   "ui.preview.default_lines": ["ui", "preview", "defaultLines"],
   "recovery.auto_drive_provider_prompts": ["recovery", "autoDriveProviderPrompts"],
   "recovery.provider_auth_env_allowlist": ["recovery", "providerAuthEnvAllowlist"],
@@ -759,6 +764,12 @@ function percentageConstraint(key: string) {
 }
 
 const KEY_CONSTRAINTS: Partial<Record<ValidKey, (raw: string, coerced: string | number | boolean) => void>> = {
+  "ui.timezone": (_raw, value) => {
+    try {
+      if (typeof value !== "string" || !value || /^[+-]/.test(value)) throw new Error();
+      new Intl.DateTimeFormat("en-US", { timeZone: value });
+    } catch { throw new Error("Invalid ui.timezone: use an IANA timezone such as America/Los_Angeles or Europe/London"); }
+  },
   "health.context_pressure.warning_percent": percentageConstraint("health.context_pressure.warning_percent"),
   "health.context_pressure.critical_percent": percentageConstraint("health.context_pressure.critical_percent"),
   "policies.idle_gate_qitem.scan_interval_seconds": positiveIntegerConstraint("policies.idle_gate_qitem.scan_interval_seconds"),
@@ -988,6 +999,7 @@ export class ConfigStore {
         scanRoots: v("progress.scan_roots") as string,
       },
       ui: {
+        timezone: v("ui.timezone") as string,
         preview: {
           refreshIntervalSeconds: v("ui.preview.refresh_interval_seconds") as number,
           maxPins: v("ui.preview.max_pins") as number,

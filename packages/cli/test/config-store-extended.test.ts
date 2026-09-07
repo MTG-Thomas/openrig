@@ -131,7 +131,7 @@ describe("ConfigStore — extended namespaces (User Settings v0)", () => {
       "health.context_pressure.warning_percent",
       "health.context_pressure.critical_percent",
       "files.allowlist", "progress.scan_roots",
-      "ui.preview.refresh_interval_seconds", "ui.preview.max_pins", "ui.preview.default_lines",
+      "ui.preview.refresh_interval_seconds", "ui.preview.max_pins", "ui.preview.default_lines", "ui.timezone",
       "recovery.auto_drive_provider_prompts",
       "recovery.provider_auth_env_allowlist",
       // V1 attempt-3 Phase 4 — Advisor/Operator placeholders.

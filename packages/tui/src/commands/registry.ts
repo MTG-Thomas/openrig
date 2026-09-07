@@ -6,7 +6,39 @@
 // query — I2-I4) are SERIALIZED projections of these entries, never hand-maintained
 // (PM pin 2). `context` is the honest-availability qualifier (PM pin 3): "always"
 // renders in every state; "standard" requires the normal daemon-up shell.
-import type { Action, ResourceKind, SectionDef } from "../types.js";
+import type { Action, ResourceKind, SectionDef, FleetSnapshot, ViewState, ViewTab } from "../types.js";
+
+import { GRAPH_STYLE_NAMES } from "../topology/render-graph.js";
+
+export interface CompletionContext { state: ViewState; snapshot: FleetSnapshot }
+
+export function availableTabs(state: ViewState, snap: FleetSnapshot): ViewTab[] {
+  const rigSpec = state.section === "specs" && state.drill.at(-1)?.kind === "spec"
+    && snap.specs.find((s) => s.name === state.drill.at(-1)?.name)?.kind === "rig";
+  return [...(rigSpec ? ["topology", "configuration", "yaml"] : state.section === "topology" ? ["table", "recent", "overview", "graph", "health"] : []), "pulse"] as ViewTab[];
+}
+
+function resourceNames(resource: ResourceKind, snap: FleetSnapshot): string[] {
+  if (resource === "spec") return snap.specs.map((s) => s.name);
+  if (resource === "host") return snap.hosts.map((h) => h.name);
+  const entries: Array<{ name: string; qualified: string }> = [];
+  for (const h of snap.hosts) for (const r of h.rigs) {
+    if (resource === "rig") entries.push({ name: r.name, qualified: `${h.name}/${r.name}` });
+    for (const p of r.pods) {
+      if (resource === "pod") entries.push({ name: p.name, qualified: `${h.name}/${r.name}/${p.name}` });
+      if (resource === "agent") for (const a of p.agents) entries.push({ name: a.name, qualified: `${h.name}/${r.name}/${p.name}/${a.name}` });
+    }
+  }
+  return entries.map((entry) => entries.filter((e) => e.name === entry.name).length > 1 ? entry.qualified : entry.name);
+}
+
+function workflowArgs(ctx: CompletionContext, packets: boolean): string[] {
+  const ex = ctx.snapshot.execution;
+  if (!ctx.state.scopesMission || ex?.mission !== ctx.state.scopesMission) return [];
+  return (ex.lifecycle_instances ?? []).flatMap((instance) => packets
+    ? (Array.isArray(instance.frontier_packets) ? instance.frontier_packets : []).map((p: { packet_id?: unknown }) => p.packet_id).filter((v): v is string => typeof v === "string")
+    : typeof instance.instance_id === "string" ? [instance.instance_id] : []);
+}
 
 export interface CommandEntry {
   /** Canonical verb (or prefix glyph for prefix-form commands). */
@@ -24,6 +56,7 @@ export interface CommandEntry {
   sample: string;
   /** Build the action from the argument remainder (verb commands only). */
   build?: (name: string, ctx: BuildCtx) => Action;
+  complete?: (ctx: CompletionContext) => readonly string[];
 }
 
 export interface BuildCtx {
@@ -41,6 +74,7 @@ function drillEntry(resource: ResourceKind): CommandEntry {
     description: `drill into the named ${resource}`,
     context: "standard",
     sample: `${resource} x`,
+    complete: ({ snapshot }) => resourceNames(resource, snapshot),
     build: (name) =>
       name
         ? { type: "drill", resource, name }
@@ -49,11 +83,13 @@ function drillEntry(resource: ResourceKind): CommandEntry {
 }
 
 export const COMMAND_REGISTRY: readonly CommandEntry[] = [
+  { name: "timezone", aliases: [], args: "", description: "show local time setting and persistent rig config instructions", context: "standard", sample: "timezone", build: () => ({ type: "timezone" }) },
+  { name: "recent", aliases: [], args: "<transition-id>", description: "inspect an original event from the served Recent window", context: "standard", sample: "recent 1", complete: ({ snapshot }) => (snapshot.recentTransitions ?? []).map((r) => String(r.transitionId)), build: (id) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) ? { type: "recent-open", transitionId: Number(id) } : { type: "error", message: "recent needs a transition id from the served window" } },
   { name: "connections", aliases: [], args: "", description: "inspect effective settings, running services and human routes (passive)", context: "standard", sample: "connections", build: () => ({ type: "jump", section: "connections" }) },
   { name: "back", aliases: [], args: "", description: "return to the previous view, selection and scroll", context: "standard", sample: "back", build: () => ({ type: "back" }) },
-  { name: "mission", aliases: [], args: "<name>", description: "open a mission's work and workflows", context: "standard", sample: "mission release-demo", build: (name) => name ? { type: "scopes-mission-open", mission: name } : { type: "error", message: "mission needs a name" } },
-  { name: "workflow", aliases: [], args: "<instance-id>", description: "open a workflow in the selected mission", context: "standard", sample: "workflow example", build: (name) => name ? { type: "execution-open", key: `workflow:${name}` } : { type: "error", message: "workflow needs an instance id" } },
-  { name: "packet", aliases: [], args: "<qitem-id>", description: "open current workflow work in the selected mission", context: "standard", sample: "packet example", build: (name) => name ? { type: "execution-open", key: `packet:${name}` } : { type: "error", message: "packet needs a queue id" } },
+  { name: "mission", aliases: [], args: "<name>", description: "open a mission's work and workflows", context: "standard", sample: "mission release-demo", complete: ({ snapshot }) => (snapshot.scopes ?? []).map((m) => m.mission), build: (name) => name ? { type: "scopes-mission-open", mission: name } : { type: "error", message: "mission needs a name" } },
+  { name: "workflow", aliases: [], args: "<instance-id>", description: "open a workflow in the selected mission", context: "standard", sample: "workflow example", complete: (ctx) => workflowArgs(ctx, false), build: (name) => name ? { type: "execution-open", key: `workflow:${name}` } : { type: "error", message: "workflow needs an instance id" } },
+  { name: "packet", aliases: [], args: "<qitem-id>", description: "open current workflow work in the selected mission", context: "standard", sample: "packet example", complete: (ctx) => workflowArgs(ctx, true), build: (name) => name ? { type: "execution-open", key: `packet:${name}` } : { type: "error", message: "packet needs a queue id" } },
   {
     name: ":",
     aliases: [],
@@ -79,6 +115,7 @@ export const COMMAND_REGISTRY: readonly CommandEntry[] = [
     description: "switch the content-pane view tab",
     context: "standard",
     sample: "tab table",
+    complete: ({ state, snapshot }) => availableTabs(state, snapshot),
     build: (name) =>
       (TABS as readonly string[]).includes(name)
         ? { type: "tab", tab: name as Extract<Action, { type: "tab" }>["tab"] }
@@ -104,6 +141,7 @@ export const COMMAND_REGISTRY: readonly CommandEntry[] = [
     description: "set the graph render style (validated by dispatch against the style registry)",
     context: "standard",
     sample: "style hatchet",
+    complete: () => GRAPH_STYLE_NAMES,
     build: (name) =>
       name ? { type: "style", name } : { type: "error", message: 'style needs a name (e.g. "style hatchet")' },
   },
@@ -114,6 +152,7 @@ export const COMMAND_REGISTRY: readonly CommandEntry[] = [
     description: "scroll the content pane",
     context: "standard",
     sample: "scroll down",
+    complete: () => ["up", "down"],
     build: (name) =>
       name === "up" || name === "down"
         ? { type: "content-scroll", delta: name === "down" ? 10 : -10 }
@@ -168,6 +207,7 @@ export const COMMAND_REGISTRY: readonly CommandEntry[] = [
     description: "cross-navigate to the spec of the named agent",
     context: "standard",
     sample: "spec-of dev.driver",
+    complete: ({ snapshot }) => resourceNames("agent", snapshot),
     build: (name) =>
       name
         ? { type: "cross", kind: "spec-of", name }
@@ -180,6 +220,7 @@ export const COMMAND_REGISTRY: readonly CommandEntry[] = [
     description: "cross-navigate to agents running the named spec",
     context: "standard",
     sample: "running driver-agent",
+    complete: ({ snapshot }) => resourceNames("spec", snapshot),
     build: (name) =>
       name
         ? { type: "cross", kind: "running", name }

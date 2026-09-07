@@ -127,13 +127,13 @@ export function stylizeLines(screen: Screen, s: Style): string[] {
   if (s.mode === "none") return screen.lines;
   // focus is read from the chrome itself (the bracketed pane title) — no
   // second source of truth to drift
-  const explorerFocused = (screen.lines[1] ?? "").includes("{ EXPLORER }");
+  const explorerFocused = (screen.lines.find((line) => line.includes("╋")) ?? "").includes("{ EXPLORER }");
 
   return screen.lines.map((line, index) => {
     if (index === 0) {
-      const m = line.match(/^cmd ▸ (.*?)(▊?)( *)$/);
+      const m = line.match(/^cmd ▸ (.*)(▊)(.*)$/);
       if (m)
-        return `${s.paint("accent", "cmd ▸", { bold: true })} ${s.paint("bright", m[1] ?? "")}${m[2] ? s.paint("accent", "▊", reducedMotion() ? {} : { blink: true }) : ""}${m[3] ?? ""}`;
+        return `${s.paint("accent", "cmd ▸", { bold: true })} ${s.paint("bright", m[1] ?? "")}${m[2] ? s.paint("accent", "▊", reducedMotion() ? {} : { blink: true }) : ""}${s.paint("dim", m[3] ?? "")}`;
       return line;
     }
     if (/^[─━┌┐└┘├┤┬┴┼╋]/.test(line) && /[─━]{4}/.test(line)) return paintRule(line, s);

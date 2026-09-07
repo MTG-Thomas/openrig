@@ -55,7 +55,24 @@ Fresh kernel terminals start `rig tui` automatically. Older terminals, or a
 terminal where the TUI was quit, retain their shell: run `rig tui` there once.
 The kernel view uses TUI instance `kernel`; standalone uses its ordinary
 instance. `rig tui commands --json` exposes the command registry for agent
-control. See [the first-use journey](../reference/getting-started.md).
+control. In the ordinary shell, Tab completes command names/aliases, section
+jumps and arguments from the current snapshot. Ambiguous prefixes show candidates;
+keep typing and press Tab again. No match preserves the text. Enter executes;
+Escape clears. Free-text filters are not completed. Bracketed paste is text, never
+an implicit command submission.
+
+Recent shows ordered, wrapped queue changes. Enter on an event opens the original
+record (including its raw timestamp); Escape returns to the previous view/scroll.
+Recorded changes remain attributed claims, including attempts and failures.
+
+Absolute TUI times use `ui.timezone`, default `America/Los_Angeles`, with native
+daylight-saving rules. Run `timezone` in the TUI for the current value and settings
+guidance. `rig config set ui.timezone Europe/London` persists an alternative;
+`rig config reset ui.timezone` restores the default. Reopen the TUI after changing
+it. `OPENRIG_UI_TIMEZONE` overrides the file setting. Invalid settings produce a
+visible fallback notice. Relative ages and stored source timestamps are unchanged.
+
+See [the first-use journey](../reference/getting-started.md).
 
 ## Daemon shutdown
 

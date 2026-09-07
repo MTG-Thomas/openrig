@@ -1,3 +1,4 @@
+import { DEFAULT_TIME_ZONE, displayTime } from "./time.js";
 import { connectionsLines } from "./connections/connections-model.js";
 // Hand-rolled ANSI renderer (Phase-0 substrate decision). Pure function:
 // (state, snapshot) → {lines, hitMap, explorerRows}. BOTH panes emit hit
@@ -222,6 +223,7 @@ function agentDetailLines(
   snap: FleetSnapshot,
   found: NonNullable<ReturnType<typeof findAgent>>,
   contentWidth: number,
+  timeZone = DEFAULT_TIME_ZONE,
 ): ContentLine[] {
   const { agent, rig, pod } = found;
   const session = agent.session;
@@ -278,7 +280,7 @@ function agentDetailLines(
           ...(activityReason ? [{ label: "reason", value: activityReason }] : []),
           ...(agent.activity?.decidedBy ? [{ label: "decided by", value: agent.activity.decidedBy }] : []),
           ...(agent.activity?.signalSource || agent.activity?.signalReason ? [{ label: "signal", value: `${agent.activity.signalSource ?? "unknown"} · ${agent.activity.signalReason ?? "no reason"}` }] : []),
-          ...(agent.activity?.eventAt ? [{ label: "changed", value: agent.activity.eventAt }] : []),
+          ...(agent.activity?.eventAt ? [{ label: "changed", value: displayTime(agent.activity.eventAt, timeZone) }] : []),
         ],
       },
       {
@@ -350,12 +352,6 @@ function tabsLine(state: ViewState, suffix: string): ContentLine[] {
   return [{ text, zones }];
 }
 
-function localClock(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "??:??";
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
 function queueRows(snap: FleetSnapshot): FleetSnapshot["attention"] {
   return [...snap.attention, ...snap.blocked, ...snap.inProgress, ...snap.pending, ...snap.recentlyFinished];
 }
@@ -401,51 +397,58 @@ function recentScopeMatches(snap: FleetSnapshot, scope: RecentScope): boolean {
   return scope.kind === "instance" || (served.kind === "rig" && served.rig === scope.rig);
 }
 
-function recentLines(snap: FleetSnapshot, scope: RecentScope, width: number, expanded: boolean): ContentLine[] {
+function recentLines(snap: FleetSnapshot, scope: RecentScope, width: number, expanded: boolean, timeZone: string): ContentLine[] {
   if (!recentScopeMatches(snap, scope) || snap.recentTransitions == null) return [];
-  const timeW = 5;
   const rows = expanded ? snap.recentTransitions : snap.recentTransitions.slice(-5);
   const lines: ContentLine[] = [
     ...(expanded ? [] : [{ text: "" }]),
-    sectionRule(`RECENT · ${scope.kind === "instance" ? "instance" : `rig ${scope.rig}`} · material queue transitions · newest last`, width),
+    sectionRule(`RECENT · ${scope.kind === "instance" ? "instance" : `rig ${scope.rig}`}`, width),
+    { text: "  Recorded queue changes · oldest to newest · Enter inspects" },
   ];
   if (rows.length === 0) return [...lines, { text: "  No recorded transitions in the current window." }];
-  if (width < 78) {
-    const rigW = scope.kind === "instance" ? 9 : 0;
-    const changeW = Math.max(16, width - timeW - rigW - 2);
-    lines.push({ text: alignedRow([["TIME", timeW], ...(rigW ? [["RIG", rigW] as [string, number]] : []), ["CHANGE", changeW]]) });
-    for (const row of rows) {
-      const action = recentTargetAction(snap, row);
-      lines.push({
-        text: alignedRow([[localClock(row.ts), timeW], ...(rigW ? [[pad(row.rig ?? "?", rigW), rigW] as [string, number]] : []), [pad(row.change, changeW), changeW]]).slice(0, width),
-        ...(action ? { action } : {}),
-      });
-      lines.push({ text: `      ${pad(row.actorSession, Math.max(8, width - 8))}`.slice(0, width), ...(action ? { action } : {}) });
-      lines.push({ text: `      → ${row.target}`.slice(0, width), ...(action ? { action } : {}) });
-      lines.push(...wrapDetailValue("work", recentWorkText(snap, row), width)
-        .map((line) => ({ ...line, ...(action ? { action } : {}) })));
-    }
-    return lines;
-  }
-  const rigW = scope.kind === "instance" ? Math.min(16, Math.max(9, Math.floor(width * 0.13))) : 0;
-  const actorW = Math.min(26, Math.max(16, Math.floor(width * 0.21)));
-  const changeW = Math.min(36, Math.max(20, Math.floor(width * 0.28)));
-  const targetW = Math.max(10, width - timeW - rigW - actorW - changeW - (scope.kind === "instance" ? 4 : 3));
-  lines.push({ text: alignedRow([["TIME", timeW], ...(scope.kind === "instance" ? [["RIG", rigW] as [string, number]] : []), ["ACTOR", actorW], ["CHANGE", changeW], ["TARGET", targetW]]) });
   for (const row of rows) {
-    const action = recentTargetAction(snap, row);
-    const text = alignedRow([
-      [localClock(row.ts), timeW],
-      ...(scope.kind === "instance" ? [[pad(row.rig ?? "?", rigW), rigW] as [string, number]] : []),
-      [pad(row.actorSession, actorW), actorW],
-      [pad(row.change, changeW), changeW],
-      [pad(row.target, targetW), targetW],
-    ]).slice(0, width);
-    lines.push({ text, ...(action ? { action } : {}) });
-    lines.push(...wrapDetailValue("work", recentWorkText(snap, row), width)
-      .map((line) => ({ ...line, ...(action ? { action } : {}) })));
+    lines.push(listItem(`${displayTime(row.ts, timeZone)} · #${row.transitionId}`, { type: "recent-open", transitionId: row.transitionId }),
+      { text: `    ${row.actorSession || "actor unknown"} · ${row.change || "change unknown"}` },
+      { text: `    ${recentWorkText(snap, row)}` },
+      { text: `    ${row.targetKind}: ${row.target}${scope.kind === "instance" ? ` · rig ${row.rig ?? "unknown"}` : ""}` },
+      { text: "" });
   }
-  return lines;
+  return wrapDetailLines(lines, width);
+}
+
+function recentDetailLines(state: ViewState, snap: FleetSnapshot, width: number): ContentLine[] {
+  const row = state.recentOpen!;
+  const target = recentTargetAction(snap, row);
+  return wrapDetailLines([
+    { text: `Recent event #${row.transitionId} · Esc returns` },
+    fieldLine({ label: "when", value: displayTime(row.ts, state.timeZone) }),
+    fieldLine({ label: "actor", value: row.actorSession || "unknown" }),
+    fieldLine({ label: "change", value: row.change || "unknown" }),
+    fieldLine({ label: "work", value: recentWorkText(snap, row) }),
+    fieldLine({ label: "target", value: `${row.targetKind}: ${row.target}` }),
+    fieldLine({ label: "rig", value: row.rig ?? "not served" }),
+    fieldLine({ label: "queue item", value: row.qitemId }),
+    fieldLine({ label: "raw time", value: row.ts }),
+    { text: "  This is the recorded change, not an independent check of its outcome." },
+    ...(target ? [listItem("Related work / owner", target)] : [{ text: "  Related work is outside the current snapshot." }]),
+    listItem("Back · Esc", { type: "back" }),
+  ], width);
+}
+
+function timeZoneLines(state: ViewState, width: number): ContentLine[] {
+  return wrapDetailLines([
+    { text: "Local time · presentation setting" },
+    fieldLine({ label: "timezone", value: state.timeZone }),
+    ...(state.timeZoneWarning ? [{ text: `  ${state.timeZoneWarning}` }] : []),
+    { text: "  Absolute times include date and zone. Daylight saving follows the named zone. Elapsed ages stay relative; source timestamps are unchanged." },
+    { text: "" },
+    { text: "  Change the persistent setting from the shell, then reopen this TUI:" },
+    { text: "  rig config set ui.timezone Europe/London" },
+    { text: "  rig config reset ui.timezone" },
+    { text: "  rig config get ui.timezone --show-source" },
+    { text: "  Default: America/Los_Angeles. OPENRIG_UI_TIMEZONE overrides the file setting on this TUI's instance." },
+    listItem("Back · Esc", { type: "back" }),
+  ], width);
 }
 
 function specTabsLine(state: ViewState, name: string): ContentLine {
@@ -546,7 +549,7 @@ function instanceContentLines(
   const scope = { kind: "instance", local: host === snap.hosts[0] } as const;
   if (state.viewTab === "health") return [...lines, { text: "" }, ...healthListLines(snap, scope, contentWidth)];
   if (state.viewTab === "recent") {
-    const recent = recentLines(snap, scope, contentWidth, true);
+    const recent = recentLines(snap, scope, contentWidth, true, state.timeZone);
     return recent.length > 0
       ? [...lines, ...recent]
       : [...lines, { text: "" }, { text: motion.loading ? `${motion.frame} instance RECENT read pending` : "(instance RECENT window not served)" }];
@@ -653,7 +656,7 @@ function instanceContentLines(
     }
   }
   lines.push({ text: "" }, { text: `${host.rigs.length} rigs · ${seatCount} seats · ${workingCount} working · ${attentionCount} need attention · ${openCount} open rows` });
-  lines.push(...recentLines(snap, scope, contentWidth, false));
+  lines.push(...recentLines(snap, scope, contentWidth, false, state.timeZone));
   return lines;
 }
 
@@ -661,8 +664,10 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
   const contentWidthForGraph = contentWidth;
   void contentWidthForGraph;
   const lines: ContentLine[] = [];
-  if (state.section === "connections") return connectionsLines(snap, contentWidth);
-  if (state.healthOpen) return healthDetailLines(snap, state.healthOpen, contentWidth);
+  if (state.timeZoneHelp) return timeZoneLines(state, contentWidth);
+  if (state.recentOpen) return recentDetailLines(state, snap, contentWidth);
+  if (state.section === "connections") return connectionsLines(snap, contentWidth, state.timeZone);
+  if (state.healthOpen) return healthDetailLines(snap, state.healthOpen, contentWidth, state.timeZone);
   // PULSE is a FULL-WIDTH view handled by an early return in renderScreen
   // (renderPulseScreen) — it never reaches the sidebar+content layout below.
   if (state.section === "topology") {
@@ -691,7 +696,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       const podName = state.drill.find((part) => part.kind === "pod")?.name;
       const found = hostName ? findAgent(snap, leaf.name, { host: hostName, rig: rigName, pod: podName }) : findAgent(snap, leaf.name);
       if (!found) return [{ text: `agent "${leaf.name}" not in the current snapshot` }];
-      return agentDetailLines(snap, found, contentWidth);
+      return agentDetailLines(snap, found, contentWidth, state.timeZone);
     }
     const hostName = state.drill.find((d) => d.kind === "host")?.name;
     const host = (hostName ? snap.hosts.find((candidate) => candidate.name === hostName) : snap.hosts[0]);
@@ -722,7 +727,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     const healthScope = { kind: "rig" as const, rigId: rig.id ?? rig.name, rigName: rig.name, local: host === snap.hosts[0] };
     if (state.viewTab === "health") return [...lines, { text: "" }, ...healthListLines(snap, healthScope, contentWidth)];
     if (state.viewTab === "recent") {
-      const recent = recentLines(snap, { kind: "rig", rig: rig.name }, contentWidth, true);
+      const recent = recentLines(snap, { kind: "rig", rig: rig.name }, contentWidth, true, state.timeZone);
       return recent.length > 0
         ? [...lines, ...recent]
         : [...lines, { text: "" }, { text: motion.loading ? `${motion.frame} rig RECENT read pending` : "(rig RECENT window not served)" }];
@@ -858,7 +863,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     const working = rows.filter((agent) => ["active", "working", "running"].includes(agent.status)).length;
     const attention = rows.filter((agent) => /attention|needs|blocked|unknown|failed/.test(agent.status)).length;
     lines.push({ text: `${rows.length} seats · ${working} working · ${attention} need attention · ${rows.reduce((n, agent) => n + queueFacts(snap, agent.session).count, 0)} open rows` });
-    if (!podFilter) lines.push(...recentLines(snap, { kind: "rig", rig: rig.name }, contentWidth, false));
+    if (!podFilter) lines.push(...recentLines(snap, { kind: "rig", rig: rig.name }, contentWidth, false, state.timeZone));
     return lines;
   }
   if (state.section === "specs") {
@@ -1105,7 +1110,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
         { text: "SCOPES · choose a mission in the explorer" },
         listItem(`Default mission · ${selected.mission}`, { type: "scopes-mission-open", mission: selected.mission }),
         { text: `  Workflows: ${instances ? instances.map((instance) => String(instance.status ?? "unknown")).join(", ") || "none bound" : "projection unavailable"}` },
-        { text: `  Execution snapshot: ${selected.derived_at ?? "time unavailable"}. Other missions load when selected.` },
+        { text: `  Execution snapshot: ${displayTime(selected.derived_at, state.timeZone)}. Other missions load when selected.` },
       ], contentWidth);
     }
     // SCOPES owns both levels. Both mission-graph and Explorer slice routes land
@@ -1121,16 +1126,16 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       return executionContentLines(execution, snap.scopes, snap.readErrors, state.executionOpen, contentWidth, false, snap.sliceDetail, {
         collapseReqs: state.scopesCollapseReqs,
         narrative: state.scopesNarrative,
-      });
+      }, state.timeZone);
     }
     if (detail && execution) {
       return executionContentLines(execution, snap.scopes, snap.readErrors, `slice:${detail.id ?? detail.dirName}`, contentWidth, false, snap.sliceDetail, {
         collapseReqs: state.scopesCollapseReqs,
         narrative: state.scopesNarrative,
-      });
+      }, state.timeZone);
     }
     if (!detail && missionName) {
-      const lines = executionContentLines(execution, snap.scopes, snap.readErrors, state.executionOpen, contentWidth, !snap.hydratedAt || snap.executionMission !== missionName);
+      const lines = executionContentLines(execution, snap.scopes, snap.readErrors, state.executionOpen, contentWidth, !snap.hydratedAt || snap.executionMission !== missionName, undefined, undefined, state.timeZone);
       return execution ? lines : [{ text: `  ${missionName} EXECUTION` }, ...lines];
     }
     return scopesContentLines(detail, missionName, {
@@ -1146,6 +1151,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
 export interface RenderOptions {
   /** I5 — the live command context (from the C3 detector); default "standard". */
   commandContext?: string;
+  completion?: { candidates: string[]; message: string } | null;
   cols?: number;
   rows?: number;
   /** wall-clock ms for time-driven motion (spinner frames, flash windows);
@@ -1303,7 +1309,12 @@ function renderPulseScreen(state: ViewState, snap: FleetSnapshot, options: Rende
   const flashRows: number[] = [];
   let flashAck = false;
 
-  lines.push(pad(`cmd ▸ ${inputLine}▊`, cols));
+  lines.push(pad(`cmd ▸ ${inputLine}▊${inputLine ? "" : "  Tab complete · ? help · timezone"}`, cols));
+  if (options.completion) {
+    lines.push(pad(options.completion.message, cols));
+    for (const candidate of options.completion.candidates.slice(0, 4)) lines.push(pad(`  ${candidate}`, cols));
+    if (options.completion.candidates.length > 4) lines.push(pad("  … keep typing to narrow matches", cols));
+  }
   // REGISTRY I3 — the palette overlay: fuzzy rows over the ONE registry; unavailable
   // entries render DIMMED-WITH-REASON, never hidden (PM pin); bounded height.
   if (state.palette) {
@@ -1326,7 +1337,7 @@ function renderPulseScreen(state: ViewState, snap: FleetSnapshot, options: Rende
   const contentWidth = Math.max(cols - explW - 2, 0);
   const model = buildPulseModel(snap, nowMs);
   const chromeRows = 3; // bottom rule + hint bar + status line
-  const bodyRows = Math.max(rows - 2 - chromeRows, 1);
+  const bodyRows = Math.max(rows - lines.length - chromeRows, 1);
 
   const maxContentOffset = Math.max(renderPulseView(model).length - bodyRows, 0);
   const contentStart = Math.min(state.contentOffset, maxContentOffset);
@@ -1416,7 +1427,7 @@ function renderPulseScreen(state: ViewState, snap: FleetSnapshot, options: Rende
   const loadTag = loading ? `  ${frame} loading` : "";
   lines.push(
     pad(
-      `[${state.instanceId}] ${state.section}${drillPath ? " · " + drillPath : ""}${state.lastError ? "  ✗ " + state.lastError : ""}${state.notice ? "  ▸ " + state.notice : ""}${readWarn}${loadTag}`,
+      `[${state.instanceId}] ${state.section}${drillPath ? " · " + drillPath : ""}${state.lastError ? "  ✗ " + state.lastError : ""}${state.notice ? "  ▸ " + state.notice : ""}${readWarn}${loadTag}${state.timeZoneWarning ? " · ⚠ timezone; run timezone" : ""}`,
       cols,
     ),
   );
@@ -1580,7 +1591,12 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
   // shell accepts typing from the empty state, so the honest readiness
   // affordance must show BEFORE the first key (no new focus state; stylize
   // gives the cell SGR blink; zero effect on hit geometry).
-  lines.push(pad(`cmd ▸ ${inputLine}▊`, cols));
+  lines.push(pad(`cmd ▸ ${inputLine}▊${inputLine ? "" : "  Tab complete · ? help · timezone"}`, cols));
+  if (options.completion) {
+    lines.push(pad(options.completion.message, cols));
+    for (const candidate of options.completion.candidates.slice(0, 4)) lines.push(pad(`  ${candidate}`, cols));
+    if (options.completion.candidates.length > 4) lines.push(pad("  … keep typing to narrow matches", cols));
+  }
   // REGISTRY I3 — the palette overlay: fuzzy rows over the ONE registry; unavailable
   // entries render DIMMED-WITH-REASON, never hidden (PM pin); bounded height.
   if (state.palette) {
@@ -1619,7 +1635,7 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
   const liveFlashes = (options.rowFlashes ?? []).filter((f) => flashActive(f.at, nowMs, 600, reduced));
   const ackFlashes = (options.rowFlashes ?? []).filter((f) => flashActive(f.at, nowMs, 600, false));
   const chromeRows = footer ? 4 : 3; // bottom rule + hint bar + status line (+ footer)
-  const bodyRows = Math.max(rows - 2 - chromeRows, 1);
+  const bodyRows = Math.max(rows - lines.length - chromeRows, 1);
   const explorerStart = Math.min(
     Math.max(state.selection - bodyRows + 1, 0),
     Math.max(explorer.length - bodyRows, 0),
@@ -1699,14 +1715,14 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
     if (rowSegs) segRows[y] = rowSegs;
   }
 
-  if (footer) lines.push(pad(`≋ ${footer.tsEmitted.slice(11, 16)} ${footer.sourceSession}: ${footer.body}`, cols));
+  if (footer) lines.push(pad(`≋ ${displayTime(footer.tsEmitted, state.timeZone)} ${footer.sourceSession}: ${footer.body}`, cols));
   const drillPath = state.drill.map((d) => d.name).join(" → ");
   const readWarn = snap.readErrors.length > 0 ? `  ⚠ ${snap.readErrors.length} read(s) failed: ${snap.readErrors[0]}` : "";
   lines.push(paneRule(cols, explW, "bottom"));
   lines.push(pad(keybindHints(state), cols));
   lines.push(
     pad(
-      `[${state.instanceId}] ${state.section}${drillPath ? " · " + drillPath : ""}${state.lastError ? "  ✗ " + state.lastError : ""}${state.notice ? "  ▸ " + state.notice : ""}${readWarn}`,
+      `[${state.instanceId}] ${state.section}${drillPath ? " · " + drillPath : ""}${state.lastError ? "  ✗ " + state.lastError : ""}${state.notice ? "  ▸ " + state.notice : ""}${readWarn}${state.timeZoneWarning ? " · ⚠ timezone; run timezone" : ""}`,
       cols,
     ),
   );

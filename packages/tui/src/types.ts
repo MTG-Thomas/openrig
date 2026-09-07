@@ -402,6 +402,8 @@ export interface DrillSegment {
 export type ViewTab = "table" | "recent" | "overview" | "graph" | "health" | "topology" | "configuration" | "yaml" | "pulse";
 
 export type Action =
+  | { type: "timezone" }
+  | { type: "recent-open"; transitionId: number }
   | { type: "back" }
   | { type: "noop" }
   | { type: "error"; message: string }
@@ -453,6 +455,10 @@ export interface SectionDef {
 }
 
 export interface ViewState {
+  timeZone: string;
+  timeZoneWarning: string | null;
+  timeZoneHelp: boolean;
+  recentOpen: RecentTransitionSnap | null;
   history?: NavigationFrame[];
   /** Canonical health finding opened from any instance/rig/seat surface. */
   healthOpen: string | null;
@@ -493,7 +499,7 @@ export interface ViewState {
   lastError: string | null;
 }
 
-export type NavigationFrame = Pick<ViewState, "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded">;
+export type NavigationFrame = Pick<ViewState, "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen">;
 
 export interface ViewStateStore {
   instanceId: string;
@@ -561,8 +567,9 @@ export interface Screen {
 }
 
 export type InputEvent =
+  | { type: "paste"; text: string }
   | { type: "char"; ch: string }
   | { type: "key"; key: "up" | "down" | "left" | "right" | "pageup" | "pagedown"; action: Action }
   | { type: "key"; key: "enter"; action: Action }
-  | { type: "key"; key: "backspace" | "escape" }
+  | { type: "key"; key: "backspace" | "escape" | "tab" }
   | { type: "mouse"; button: number; x: number; y: number };

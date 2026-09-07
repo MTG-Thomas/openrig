@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { completeCommand } from "./commands/completion.js";
+import { resolveTimeZone } from "./time.js";
 // Entry: wires the four input adapters (command bar / keyboard / mouse /
 // control socket) onto ONE instance-scoped view-state (PIN 1). tmux send-keys
 // against this process is the drivability floor and needs no adapter at all —
@@ -9,7 +11,7 @@ import { createViewState, computeExplorerRows, emptySnapshot } from "./state.js"
 import { parseCommand } from "./grammar.js";
 import { filterPalette, paletteExecuteLine } from "./commands/palette.js";
 import { COMMAND_REGISTRY, currentCommandContext } from "./commands/registry.js";
-import { createInputDecoder, resolveEscapeAction, resolveKeyAction, resolveMouseAction, MOUSE_ENABLE, MOUSE_DISABLE, ALT_SCREEN_ON, ALT_SCREEN_OFF } from "./input.js";
+import { createInputDecoder, resolveEscapeAction, resolveKeyAction, resolveMouseAction, MOUSE_ENABLE, MOUSE_DISABLE, ALT_SCREEN_ON, ALT_SCREEN_OFF, PASTE_ENABLE, PASTE_DISABLE } from "./input.js";
 import { renderScreen } from "./render.js";
 import { createStyle, detectColorMode } from "./theme.js";
 import { stylizeLines } from "./stylize.js";
@@ -43,10 +45,20 @@ async function run(): Promise<void> {
   // snapshot (honest-empty until the first read answers; failed reads surface
   // as named readErrors in the status line, never fabricated content).
   let snapshot: FleetSnapshot = demo ? demoSnapshot() : emptySnapshot();
-  const view = createViewState({ instanceId, getSnapshot: () => snapshot });
+  let timeReadWarning = false;
+  const timeSetting = await new Promise<unknown>((resolve) => {
+    execFile("rig", ["config", "get", "ui.timezone", "--json"], { timeout: 5000, maxBuffer: 8192 }, (err, stdout, stderr) => {
+      timeReadWarning = !!err || stderr.includes("ui.timezone");
+      if (err) return resolve(null);
+      try { resolve(JSON.parse(stdout).value); } catch { resolve(null); }
+    });
+  });
+  const timezone = resolveTimeZone(timeSetting, timeReadWarning);
+  const view = createViewState({ instanceId, getSnapshot: () => snapshot, timeZone: timezone.timeZone, timeZoneWarning: timezone.warning });
   const client = demo ? null : new DaemonClient({ baseUrl: argOf(args, "--url") });
 
   let inputLine = "";
+  let completion: ReturnType<typeof completeCommand> | null = null;
   let lastScreen: Screen | null = null;
   // 5.2 crash-cart: the daemon-down verdict (probed from the `rig crash-cart --json` verb). Empty ⇒
   // normal fleet views; DOWN ⇒ the recovery cockpit; UNVERIFIED ⇒ the cannot-verify screen.
@@ -101,7 +113,7 @@ async function run(): Promise<void> {
     const rows = process.stdout.rows ?? 32;
     const nowMs = Date.now();
     if (live) snapshot = { ...live.snapshot(), launchingCli: process.env["OPENRIG_TUI_CLI_IDENTITY"]?.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) };
-    const opts = { cols, rows, nowMs, colorMode: style.mode, commandContext: currentCommandContext(crashCartOpts.daemonState ?? null), ...crashCartOpts, restoreScroll: restoreScrollOffset, ...(live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
+    const opts = { cols, rows, nowMs, completion, colorMode: style.mode, commandContext: currentCommandContext(crashCartOpts.daemonState ?? null), ...crashCartOpts, restoreScroll: restoreScrollOffset, ...(live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
     lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     if (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length) {
       view.dispatch({ type: "layout", contentMaxOffset: lastScreen.contentMaxOffset, contentTargetCount: lastScreen.contentTargets.length });
@@ -109,7 +121,9 @@ async function run(): Promise<void> {
     }
     // styling is a zero-width post-pass over the tested plain layer — the
     // hitMap coordinates always match what is on screen
-    process.stdout.write("\x1b[H" + stylizeLines(lastScreen, style).map((l) => "\x1b[2K" + l).join("\r\n"));
+    // The renderer owns line breaks. Wide pasted characters must not wrap a
+    // padded row and scroll the entire frame; restore normal wrapping after paint.
+    process.stdout.write("\x1b[?7l\x1b[H" + stylizeLines(lastScreen, style).map((l) => "\x1b[2K" + l).join("\r\n") + "\x1b[?7h");
     if (motionTimer) clearTimeout(motionTimer);
     motionTimer = lastScreen.motionActive ? setTimeout(draw, MOTION_FRAME_MS) : null;
   }
@@ -274,7 +288,7 @@ async function run(): Promise<void> {
     if (motionTimer) clearTimeout(motionTimer);
     live?.close();
     unsubscribeCopyMode();
-    process.stdout.write(MOUSE_DISABLE + ALT_SCREEN_OFF);
+    process.stdout.write(PASTE_DISABLE + MOUSE_DISABLE + ALT_SCREEN_OFF);
     await socket.close();
     activityEvents?.close();
     process.exit(0);
@@ -286,17 +300,19 @@ async function run(): Promise<void> {
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   function handleInput(events: ReturnType<typeof inputDecoder.write>): void {
     for (const ev of events) {
+      if (!(ev.type === "key" && ev.key === "tab")) completion = null;
       // REGISTRY I3 — palette mode captures input while open. Execution is BYTE-EQUAL to
       // direct typing: an argless selection runs perform(parseCommand(line)) — the exact
       // BR-9 one-resolver path the command bar uses; argful selections PRE-FILL the bar.
       const pal = view.get().palette;
       if (pal) {
+        if (ev.type === "paste") { view.dispatch({ type: "palette-query", query: pal.query + ev.text }); continue; }
         if (ev.type === "char") {
           view.dispatch({ type: "palette-query", query: pal.query + ev.ch });
           continue;
         }
         if (ev.type === "key" && ev.key === "backspace") {
-          view.dispatch({ type: "palette-query", query: pal.query.slice(0, -1) });
+          view.dispatch({ type: "palette-query", query: [...pal.query].slice(0, -1).join("") });
           continue;
         }
         if (ev.type === "key" && (ev.key === "up" || ev.key === "down")) {
@@ -364,6 +380,17 @@ async function run(): Promise<void> {
             continue; // swallowed while the fleet restores
         }
       }
+      if (ev.type === "paste") {
+        inputLine += ev.text;
+        continue;
+      }
+      if (ev.type === "key" && ev.key === "tab") {
+        if (!crashCartOpts.daemonState) {
+          completion = completeCommand(inputLine, { state: view.get(), snapshot }, currentCommandContext(crashCartOpts.daemonState ?? null));
+          inputLine = completion.line;
+        }
+        continue;
+      }
       if (ev.type === "char") {
         if (ev.ch === "v" && inputLine === "") {
           perform(parseCommand("select-text", view.get().sections));
@@ -398,7 +425,7 @@ async function run(): Promise<void> {
         }
         inputLine += ev.ch;
       } else if (ev.type === "key" && ev.key === "backspace") {
-        inputLine = inputLine.slice(0, -1);
+        inputLine = [...inputLine].slice(0, -1).join("");
       } else if (ev.type === "key" && ev.key === "escape") {
         if (pendingRestoreConfirm) {
           // H2 — cancel the armed restore confirm (no fresh-prime happens). Clear the cockpit banner.
@@ -463,7 +490,7 @@ async function run(): Promise<void> {
     handleInput(inputDecoder.flush());
   });
 
-  process.stdout.write(ALT_SCREEN_ON + MOUSE_ENABLE);
+  process.stdout.write(ALT_SCREEN_ON + MOUSE_ENABLE + PASTE_ENABLE);
   // round-5 (guard): the FIRST terminal frame draws the honest in-flight
   // state — the refresh starts after entering the alt screen, never before,
   // so loading is VISIBLE instead of awaited behind a blank terminal
@@ -478,7 +505,7 @@ async function run(): Promise<void> {
 }
 
 run().catch((err: unknown) => {
-  process.stdout.write(MOUSE_DISABLE + ALT_SCREEN_OFF);
+  process.stdout.write(PASTE_DISABLE + MOUSE_DISABLE + ALT_SCREEN_OFF);
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

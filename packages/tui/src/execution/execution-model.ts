@@ -1,3 +1,4 @@
+import { DEFAULT_TIME_ZONE, displayTime } from "../time.js";
 import { workflowOverview, workflowDetail } from "./workflow-model.js";
 // MISSION EXECUTION STORY — a pure presentation model over two shipped projections:
 // the scopes store (declared slice state, proof pairing) and the daemon's derived
@@ -15,7 +16,7 @@ import { workflowOverview, workflowDetail } from "./workflow-model.js";
 // Every row opens a page built from the projections' own values; `esc` returns.
 import type { Action, SliceDetailSnap } from "../types.js";
 import type { Token } from "../theme.js";
-import { detailPage, listItem, sectionRule, type ContentLine, type Section } from "../detail.js";
+import { wrapDetailLines, detailPage, listItem, sectionRule, type ContentLine, type Section } from "../detail.js";
 import { scopeContractLines, scopeIdentityLines, type MissionScopesSnap, type SliceScopeSnap } from "../scopes/scopes-model.js";
 
 export interface ExecutionViewSnap {
@@ -51,10 +52,6 @@ function str(value: unknown, fallback = "?"): string {
 
 function shortSha(value: unknown): string {
   return typeof value === "string" ? value.slice(0, 9) : "?";
-}
-
-function clock(iso: unknown): string {
-  return typeof iso === "string" && iso.length >= 19 ? `${iso.slice(11, 19)}Z` : "";
 }
 
 function clip(text: string, room: number): string {
@@ -416,10 +413,10 @@ function collectIndeterminate(execution: ExecutionViewSnap, slices: SliceFacts[]
   return [...groups.values()].sort((a, b) => b.members.length - a.members.length);
 }
 
-function evidenceDetail(execution: ExecutionViewSnap, slices: SliceFacts[], width: number): ContentLine[] {
+function evidenceDetail(execution: ExecutionViewSnap, slices: SliceFacts[], width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
   const gitBasis = str(record(execution.sources?.["git"])["basis"], "(no git source cell)");
   const lines: ContentLine[] = [
-    { text: `${execution.mission} · evidence gap · derived ${clock(execution.derived_at) || "?"}` },
+    { text: `${execution.mission} · evidence gap · derived ${displayTime(execution.derived_at, timeZone) || "?"}` },
     { text: "" },
     { text: "  Declared state comes from each slice file. Evidence rungs come from the daemon's" },
     { text: "  execution projection, which needs a reachable repository to confirm reviewed, merged" },
@@ -439,7 +436,7 @@ function evidenceDetail(execution: ExecutionViewSnap, slices: SliceFacts[], widt
 
 // ---- overview ----------------------------------------------------------------------
 
-function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionScopesSnap[] | undefined, width: number): ContentLine[] {
+function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionScopesSnap[] | undefined, width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
   const slices = sliceFacts(execution, scopes);
   const live = slices.filter((slice) => stateWord(slice) === "working").length;
   const problems = slices.filter((slice) => problemText(slice)).length;
@@ -487,18 +484,18 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
     ], sliceAction(execution, first), width));
   }
   const provenanceAction = unknown > 0 ? open("evidence") : open("sources");
-  const provenance: SemanticSeg[] = width < 70 && unknown > 0
-    ? [{ text: "  provenance · ", token: "dim" }, { text: `evidence gap ${unknown}/${slices.length}`, token: "warn" }]
-    : [
-        { text: "  provenance ", token: "dim" },
-        { text: "·", token: "chrome" },
-        { text: ` ${clock(execution.derived_at) || "?"} · build ${build}`, token: "dim" },
-        ...(unknown > 0 ? [
-          { text: " · ", token: "chrome" as Token },
-          { text: `evidence gap ${unknown}/${slices.length} unknown`, token: "warn" as Token },
-        ] : []),
-      ];
-  lines.push(semanticAction(provenance, provenanceAction, width));
+  const provenance: SemanticSeg[] = [
+    { text: "  provenance · ", token: "dim" },
+    { text: unknown > 0 ? `evidence gap ${unknown}/${slices.length} unknown` : `build ${build}`, token: unknown > 0 ? "warn" : "dim" },
+  ];
+  const localTime = displayTime(execution.derived_at, timeZone);
+  if (provenance.reduce((n, s) => n + s.text.length, 0) + localTime.length + 3 <= width) {
+    provenance.push({ text: ` · ${localTime}`, token: "dim" });
+    lines.push(semanticAction(provenance, provenanceAction, width));
+  } else {
+    lines.push(semanticAction(provenance, provenanceAction, width));
+    lines.push(...wrapDetailLines([{ text: `  derived ${localTime}` }], width));
+  }
   lines.push(...lifecycleLines(execution, width));
 
   const waves = new Map<string, SliceFacts[]>();
@@ -580,7 +577,7 @@ function wrappedCardField(label: string, value: string, width: number): ContentL
   return chunks.map((chunk, index) => ({ text: `${index === 0 ? prefix : continuation}${chunk}` }));
 }
 
-function touchedRows(detail: SliceDetailSnap | null, width: number): ContentLine[] {
+function touchedRows(detail: SliceDetailSnap | null, width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
   if (!detail) return [cardField("served data", "slice detail not loaded for this selection")];
   const latest = new Map<string, SliceDetailSnap["story"]["events"][number]>();
   for (const event of detail.story.events) if (event.actorSession) latest.set(event.actorSession, event);
@@ -590,18 +587,18 @@ function touchedRows(detail: SliceDetailSnap | null, width: number): ContentLine
   return [
     ...shown.flatMap(([actor, event]) => [
       ...wrappedCardField("actor", actor, width),
-      ...wrappedCardField("last change", `${clock(event.ts) || event.ts} · ${event.kind}${event.qitemId ? ` · ${event.qitemId}` : ""}`, width),
+      ...wrappedCardField("last change", `${displayTime(event.ts, timeZone) || event.ts} · ${event.kind}${event.qitemId ? ` · ${event.qitemId}` : ""}`, width),
     ]),
     cardField("history", `${latest.size} served actor${latest.size === 1 ? "" : "s"} · latest ${shown.length} shown`),
   ];
 }
 
-function rulingRows(detail: SliceDetailSnap | null, width: number): ContentLine[] {
+function rulingRows(detail: SliceDetailSnap | null, width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
   if (!detail) return [cardField("served data", "slice detail not loaded for this selection")];
   const latest = [...detail.decisions.rows].sort((a, b) => b.ts.localeCompare(a.ts))[0];
   if (!latest) return [cardField("decision", "none in the served slice decision history")];
   return [
-    ...wrappedCardField("actor", `${latest.actor} · ${clock(latest.ts) || latest.ts} · ${latest.verb}`, width),
+    ...wrappedCardField("actor", `${latest.actor} · ${displayTime(latest.ts, timeZone) || latest.ts} · ${latest.verb}`, width),
     ...wrappedCardField("qitem", latest.qitemId, width),
     ...wrappedCardField("decision", latest.reason ?? "no decision reason served", width),
     cardField("history", `${detail.decisions.rows.length} served decision${detail.decisions.rows.length === 1 ? "" : "s"} · latest shown`),
@@ -615,6 +612,7 @@ function sliceDetail(
   width: number,
   richDetail?: SliceDetailSnap | null,
   scopeOpts: { collapseReqs: boolean; narrative: boolean } = { collapseReqs: false, narrative: false },
+  timeZone = DEFAULT_TIME_ZONE,
 ): ContentLine[] | null {
   const slice = slices.find((item) => item.id === id || item.dir === id);
   if (!slice) return null;
@@ -676,9 +674,9 @@ function sliceDetail(
   return [
     ...identity,
     { text: "" }, ...card("OWNERSHIP", ownership, width),
-    { text: "" }, ...card("TOUCHED", touchedRows(detail, width), width),
+    { text: "" }, ...card("TOUCHED", touchedRows(detail, width, timeZone), width),
     { text: "" }, ...card(`EVIDENCE · declared ${declaredText(slice)} · ${evidenceText(slice.cells, slice.rank)}`, evidence, width),
-    { text: "" }, ...card("RULING", rulingRows(detail, width), width),
+    { text: "" }, ...card("RULING", rulingRows(detail, width, timeZone), width),
     { text: "" }, ...card("NEEDS YOU", [cardField("state", needs ?? "none on current projection")], width),
     { text: "" }, ...card("TYPED ROWS", typedRows, width),
     { text: "" }, ...card("DEPENDENCIES", dependencies, width),
@@ -738,8 +736,8 @@ function laneDetail(execution: ExecutionViewSnap, key: string): ContentLine[] | 
   return [...detailPage({ text: heading }, sections), { text: "" }, back()];
 }
 
-function sourcesDetail(execution: ExecutionViewSnap): ContentLine[] {
-  const lines: ContentLine[] = [{ text: `sources behind ${execution.mission} · derived ${clock(execution.derived_at) || "?"}` }];
+function sourcesDetail(execution: ExecutionViewSnap, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
+  const lines: ContentLine[] = [{ text: `sources behind ${execution.mission} · derived ${displayTime(execution.derived_at, timeZone) || "?"}` }];
   for (const [name, raw] of Object.entries(execution.sources ?? {})) {
     const cell = record(raw);
     lines.push({ text: "" });
@@ -761,6 +759,7 @@ export function executionContentLines(
   pending = false,
   sliceDetailRead?: SliceDetailSnap | null,
   scopeOpts: { collapseReqs: boolean; narrative: boolean } = { collapseReqs: false, narrative: false },
+  timeZone = DEFAULT_TIME_ZONE,
 ): ContentLine[] {
   if (!execution) {
     const failure = readErrors.find((entry) => entry.startsWith("execution:"));
@@ -773,21 +772,21 @@ export function executionContentLines(
   if (opened) {
     const slices = sliceFacts(execution, scopes);
     const page = opened.startsWith("workflow:") || opened.startsWith("packet:")
-      ? workflowDetail(execution, opened, width)
+      ? workflowDetail(execution, opened, width, timeZone)
       : opened === "sources"
-      ? sourcesDetail(execution)
+      ? sourcesDetail(execution, timeZone)
       : opened === "evidence"
-        ? evidenceDetail(execution, slices, width)
+        ? evidenceDetail(execution, slices, width, timeZone)
       : opened.startsWith("group:wave:")
         ? waveDetail(execution, scopes, width, opened)
       : opened.startsWith("slice:")
-        ? sliceDetail(execution, slices, opened.slice("slice:".length), width, sliceDetailRead, scopeOpts)
+        ? sliceDetail(execution, slices, opened.slice("slice:".length), width, sliceDetailRead, scopeOpts, timeZone)
         : opened.startsWith("lane:") || opened.startsWith("park:")
           ? laneDetail(execution, opened)
           : null;
     return page ?? [{ text: `  ${opened} is not in the current snapshot (it may have closed or been re-derived)` }, { text: "" }, back()];
   }
-  return overviewLines(execution, scopes, width);
+  return overviewLines(execution, scopes, width, timeZone);
 }
 
 /** Compact source-grounded execution strip embedded in the existing rich SCOPES
