@@ -162,6 +162,17 @@ describe("A3 proof-5 — fragments -> generated projection; re-project; hand-edi
     expect(readFileSync(path, "utf8")).toBe(handEdited);
   });
 
+  it("passive reads validate a compatible legacy projection without rewriting it", () => {
+    addHumanFragment(fragment({ entityId: "mike" }), home);
+    const path = projectionPath(home);
+    const legacy = readFileSync(path, "utf8").replace(
+      /# Projection format: v2 content-addressed\n# projection-body-sha256: [a-f0-9]{64}\n/, "",
+    );
+    writeFileSync(path, legacy);
+    expect(loadHumanRegistry(home, { readOnly: true }).ok).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(legacy);
+  });
+
   it("accepts a canonical legacy projection once and rewrites it to the content-addressed format", () => {
     addHumanFragment(fragment({ entityId: "mike" }), home);
     const path = projectionPath(home);

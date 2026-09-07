@@ -777,7 +777,7 @@ function canonicalProjectionSnapshot(body: string, expectedEntityBody: string): 
  *  the fragments are truth, so identities always come from a fresh fragment projection.
  *  A canonical snapshot from an adopted projection format is compatible and is
  *  rewritten atomically; malformed/non-canonical bytes remain a loud error. */
-export function loadHumanRegistry(home: string = getOpenRigHome()): LoadResult {
+export function loadHumanRegistry(home: string = getOpenRigHome(), opts: { readOnly?: boolean } = {}): LoadResult {
   const proj = projectHumans(home);
   if (!proj.ok) return { ok: false, error: proj.error };
   const path = projectionPath(home);
@@ -793,6 +793,7 @@ export function loadHumanRegistry(home: string = getOpenRigHome()): LoadResult {
         error: `registry projection HAND-EDITED or drifted at ${path}: ${snapshot.error}. The fragment files remain identity truth; repair by re-projecting them, never by re-adding an existing human or editing the generated file`,
       };
     }
+    if (opts.readOnly) return { ok: true, entities: proj.entities };
     const repaired = atomicWrite(path, proj.body);
     if (!repaired.ok) {
       return { ok: false, error: `registry projection drift at ${path}: fragment truth was valid, but atomic re-projection failed: ${repaired.error}` };

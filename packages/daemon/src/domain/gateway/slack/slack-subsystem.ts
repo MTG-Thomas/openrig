@@ -12,6 +12,7 @@
 // the relay's history IS the subsystem's history — enabling the subsystem replays nothing the
 // relay already delivered (the enable-time backlog rule survives the cutover by construction).
 
+import { channelStateDigest } from "../channel-operations.js";
 import path from "node:path";
 import fs from "node:fs";
 import { buildInProcessWire, type GatewayWire, type SubsystemDeliverFn } from "../gateway-subsystem.js";
@@ -213,7 +214,7 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
       deliver: async () => ({ ok: false, class: "slack-not-configured", detail: missing }),
       log,
     });
-    return { ...inert, status: () => ({ platform: "slack", outboundReady: false, inboundReady: false, inbound: { state: "not-configured" } }) };
+    return { ...inert, status: () => ({ platform: "slack", configurationDigest: channelStateDigest(cfg), outboundReady: false, inboundReady: false, inbound: { state: "not-configured" } }) };
   }
 
   const registrySurface: RegistrySurface = opts.registry ?? { loadHumanRegistry, resolveSlackHandle };
@@ -554,7 +555,7 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
       baseStop();
     },
     status: () => ({
-      platform: "slack",
+      platform: "slack", configurationDigest: channelStateDigest(cfg),
       outboundReady,
       inboundReady,
       inbound: inboundHandle?.status() ?? { state: inboundReady ? "not-started" : "not-configured", generation: 0, reconnects: 0 },

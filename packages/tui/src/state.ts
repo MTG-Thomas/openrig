@@ -74,7 +74,8 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
   function dispatch(action: Action): ViewState {
     const previous = state;
     state = reduce(state, action, getSnapshot());
-    if (action.type === "jump") state.history = [];
+    // Connections is a side trip from work, including explorer/palette entry.
+    if (action.type === "jump" && action.section !== "connections" && previous.section !== "connections") state.history = [];
     else if (!["back", "execution-close"].includes(action.type) && !state.lastError && location(previous) !== location(state)) {
       state.history = [...(previous.history ?? []), navigationFrame(previous)].slice(-50);
     }

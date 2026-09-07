@@ -25,6 +25,25 @@ This document reflects the current `rig` surface as shipped. Where live help tex
 
 ## Terminal dashboard entry
 
+The TUI's **Connections** section (`connections` or `:connections`) shows
+running daemon and launching CLI identity, selected instance settings with
+source, observed rigs and authored Specs, Slack configuration and running wire
+state, and registered humans with primary/secondary bindings. `back` restores
+the work view that opened Connections. The view supplies supported CLI guidance;
+it does not enable a connector, change settings, or send a test message.
+
+Connections reads the passive `GET /api/gateway/connections` projection. It
+selects safe fields from settings, config, the human registry and gateway status;
+secret values/references and raw errors are omitted. Current config is compared
+with the wire's activation digest when available. Last Slack verification comes
+from at most 64 KiB of the existing channel-operation audit tail, matched to the
+current configuration and labeled with its time/actor. It is historical scope
+and channel-membership evidence, not current reachability, credential identity,
+delivery or readership. Missing, failed, incomplete and changed observations
+remain distinct; an older daemon without the projection reads as unavailable.
+Use the displayed guidance on that instance; `rig slack verify --json` explicitly
+contacts Slack. Ordinary navigation/refresh does not.
+
 `rig tui` opens an independent TUI through the same front door as bare `rig`.
 `rig tui --shared` requires interactive input/output and a loopback daemon
 connection. It resolves the kernel's bound `operator.human` terminal and

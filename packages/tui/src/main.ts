@@ -100,7 +100,7 @@ async function run(): Promise<void> {
     const cols = process.stdout.columns ?? 120;
     const rows = process.stdout.rows ?? 32;
     const nowMs = Date.now();
-    if (live) snapshot = live.snapshot();
+    if (live) snapshot = { ...live.snapshot(), launchingCli: process.env["OPENRIG_TUI_CLI_IDENTITY"]?.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) };
     const opts = { cols, rows, nowMs, colorMode: style.mode, commandContext: currentCommandContext(crashCartOpts.daemonState ?? null), ...crashCartOpts, restoreScroll: restoreScrollOffset, ...(live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
     lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     if (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length) {

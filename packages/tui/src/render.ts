@@ -1,3 +1,4 @@
+import { connectionsLines } from "./connections/connections-model.js";
 // Hand-rolled ANSI renderer (Phase-0 substrate decision). Pure function:
 // (state, snapshot) → {lines, hitMap, explorerRows}. BOTH panes emit hit
 // targets — explorer rows AND content-pane surfaces (table rows, view tabs,
@@ -660,6 +661,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
   const contentWidthForGraph = contentWidth;
   void contentWidthForGraph;
   const lines: ContentLine[] = [];
+  if (state.section === "connections") return connectionsLines(snap, contentWidth);
   if (state.healthOpen) return healthDetailLines(snap, state.healthOpen, contentWidth);
   // PULSE is a FULL-WIDTH view handled by an early return in renderScreen
   // (renderPulseScreen) — it never reaches the sidebar+content layout below.
@@ -770,6 +772,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       lines.push({ text: `  style: ${state.graphStyle} · style hatchet|braille|braille-fallback rides the command bar` });
       return lines;
     }
+    lines.push(listItem("Configuration and human routes", { type: "jump", section: "connections" }));
     lines.push(healthSummaryLine(snap, healthScope, contentWidth));
     lines.push({ text: state.filter ? `/ filter agents: ${state.filter} · / replace · esc clear` : "/ filter agents…" });
     if (state.viewTab === "overview") {

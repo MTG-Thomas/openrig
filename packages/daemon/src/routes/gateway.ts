@@ -7,6 +7,8 @@
 //     config. Returns the honest online-status line.
 //   POST /api/gateway/slack/disable — flip enabled=false and restart (the wire becomes inert).
 
+import { connectionsProjection } from "../domain/gateway/connections-projection.js";
+import type { SettingsStore } from "../domain/user-settings/settings-store.js";
 import { Hono } from "hono";
 import path from "node:path";
 import type { QueueRepository } from "../domain/queue-repository.js";
@@ -31,6 +33,14 @@ export function gatewayRoutes(opts: {
 } = {}): Hono {
   const app = new Hono();
   let adminTail: Promise<unknown> = Promise.resolve();
+
+  app.get("/connections", (c) => {
+    const subsystem = c.get("gatewaySubsystem" as never) as SubsystemHandle | undefined;
+    let status: Record<string, unknown> | null = null;
+    try { status = subsystem?.status() ?? null; } catch { /* unavailable is preserved */ }
+    return c.json(connectionsProjection(opts.home ?? OPENRIG_HOME, status,
+      c.get("settingsStore" as never) as SettingsStore | undefined));
+  });
 
   app.get("/human/:entityId/readiness", async (c) => {
     const entityId = c.req.param("entityId");

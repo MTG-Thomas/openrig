@@ -59,6 +59,7 @@ export interface PodNode {
 }
 
 export interface RigNode {
+  authoredSpecName?: string;
   /** daemon rig id; absent only in static demo fixtures */
   id?: string;
   name: string;
@@ -179,6 +180,7 @@ export interface HostDown {
  * no synthesis). `body` is present for the NEEDS-YOU subject fallback
  * (summary → body head). */
 export interface QueueRead {
+  sourceSession?: string | null;
   qitemId: string;
   state: string;
   destinationSession: string;
@@ -321,6 +323,10 @@ export interface HealthSnapshot {
 }
 
 export interface FleetSnapshot {
+  connections?: import("./connections/connections-model.js").ConnectionsRead | null;
+  controlPlane?: import("./connections/connections-model.js").ControlPlaneRead | null;
+  daemonTarget?: string;
+  launchingCli?: string;
   /** Canonical daemon health records. Absent on old/demo snapshots. */
   health?: HealthSnapshot;
   /** SCOPES view (d64d2f5c): store-direct mission/slice projections; absent on old daemons (honest-empty). */

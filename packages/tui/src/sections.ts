@@ -17,6 +17,7 @@ export const SECTION_REGISTRY: readonly SectionDef[] = [
     sourceRead: "GET /api/scopes?detail=1 + /api/views/execution?mission= (existing projections)",
     drillShape: "mission>execution-row>slice/source",
   },
+  { name: "connections", sourceRead: "GET /healthz + /api/gateway/connections (passive projection)", drillShape: "instance>human/routes>work" },
   {
     name: "needs",
     sourceRead: "GET /api/review/fleet + /api/queue/list?attention=1 (existing)",

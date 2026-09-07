@@ -91,6 +91,8 @@ export class DaemonClient {
   }
 
   /** Running daemon identity. `selfHostId` may be absent on an older daemon. */
+  connections() { return this.get("/api/gateway/connections"); }
+
   health() {
     return this.get("/healthz");
   }

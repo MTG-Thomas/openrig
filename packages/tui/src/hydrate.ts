@@ -11,6 +11,7 @@
 //     by construction: identity/summary/evidence/threshold render verbatim.
 //   - host/rig-down composes BESIDE the items (hostsDown), never into them.
 //   - A failed read leaves its portion honest-empty and records a NAMED error.
+import type { ConnectionsRead, ControlPlaneRead } from "./connections/connections-model.js";
 import { DaemonClient } from "./daemon-client.js";
 import { parse as parseYaml } from "yaml";
 import type { AgentRow, FleetSnapshot, HealthRecord, HostNode, NeedsItem, PodNode, QueueRead, RecentTransitionSnap, SeatActivitySummary, SliceDetailSnap, SpecEntry, ViewState } from "./types.js";
@@ -28,7 +29,7 @@ interface RigStatusRead {
   seatsTotal?: number;
   seatsRunning?: number;
 }
-interface InstanceHealthRead {
+interface InstanceHealthRead extends ControlPlaneRead {
   selfHostId?: string | null;
 }
 interface HealthProjectionRead {
@@ -164,6 +165,7 @@ interface StreamItemRead {
 // The served queue-item fields the PULSE joins consume (camelCase QueueItem,
 // queue-repository.ts). Both reads return this shape; the TUI maps + presents.
 interface QueueItemRead {
+  sourceSession?: string | null;
   qitemId: string;
   state: string;
   destinationSession: string;
@@ -180,6 +182,7 @@ interface QueueItemRead {
 function toQueueRead(item: QueueItemRead): QueueRead {
   return {
     qitemId: item.qitemId,
+    sourceSession: item.sourceSession,
     state: item.state,
     destinationSession: item.destinationSession,
     blockedOn: item.blockedOn,
@@ -358,17 +361,18 @@ export async function hydrateSnapshot(
   }
 
   const topologyLeaf = viewContext?.section === "topology" ? viewContext.drill.at(-1) : undefined;
+  const wantsConnections = viewContext?.section === "connections";
   const wantsSpecs = !viewContext || viewContext.section === "specs" || topologyLeaf?.kind === "agent";
   const wantsTopologyScope = !viewContext || viewContext.section === "topology";
   const wantsRecent = wantsTopologyScope && (!topologyLeaf || topologyLeaf.kind === "host" || topologyLeaf.kind === "rig");
   const wantsGraph = wantsTopologyScope && (!viewContext || viewContext.viewTab === "graph");
 
-  const [instanceHealth, healthProjection, agg, summaries, library, review, streamItems, attention, blocked, inProgress, pending, recentlyFinished, scopesRead, executionRead, sliceDetailRead] = await Promise.all([
+  const [instanceHealth, healthProjection, agg, summaries, library, review, streamItems, attention, blocked, inProgress, pending, recentlyFinished, scopesRead, executionRead, sliceDetailRead, connectionsRead] = await Promise.all([
     safe<InstanceHealthRead>("health", () => client.health()),
     safe<HealthProjectionRead>("health-findings", () => client.healthFindings()),
     safe<AttentionAggregateRead>("attention-aggregate", () => client.attentionAggregate()),
     safe<RigSummaryRead[]>("rigs-summary", () => client.rigsSummary()),
-    wantsSpecs ? safe<SpecLibraryRead[]>("specs-library", () => client.specsLibrary()) : Promise.resolve(null),
+    (wantsSpecs || wantsConnections) ? safe<SpecLibraryRead[]>("specs-library", () => client.specsLibrary()) : Promise.resolve(null),
     safe<ReviewFleetRead>("review-fleet", () => client.reviewFleet()),
     safe<StreamItemRead[]>("stream-tail", () => client.streamLatest()),
     // PULSE ▲ NEEDS YOU + ⧗ BLOCKED + ◌ PARKED — the shipped queue reads (increments 2/2b)
@@ -383,6 +387,7 @@ export async function hydrateSnapshot(
     sliceDetailName
       ? safe<SliceDetailSnap>(`slice-detail(${sliceDetailName})`, () => client.sliceDetail(sliceDetailName))
       : Promise.resolve(null),
+    wantsConnections ? safe<ConnectionsRead>("connections", () => client.connections()) : Promise.resolve(null),
   ]);
 
   const agentSpecNames = new Set((library ?? []).filter((entry) => entry.kind === "agent").map((entry) => entry.name));
@@ -449,13 +454,15 @@ export async function hydrateSnapshot(
     const graph = wantsGraph && (topologyLeaf?.kind === "host" || recentTransitionsRig === rig.name)
       ? await safe<import("./topology/graph-types.js").RigGraph>(`graph(${rig.name})`, () => client.rigGraph(rig.id))
       : null;
-    rigs.push({
+    const rigRow = {
       id: rig.id,
       name: rig.name,
       pods: nodes ? groupPods(nodes) : [],
       ...(graph ? { graph } : {}),
       ...(rig.lifecycleState ? { lifecycleState: rig.lifecycleState } : {}),
-    });
+      authoredSpecName: undefined as string | undefined,
+    };
+    rigs.push(rigRow);
     if (rig.lifecycleState && rig.lifecycleState !== "running") {
       // rig-down leg (§4.A): summary lifecycleState verbatim, enriched by the
       // rig-status projection where it answers — composed BESIDE the items.
@@ -467,9 +474,10 @@ export async function hydrateSnapshot(
         ...(seatDetail ? { error: seatDetail } : {}),
       });
     }
-    const spec = wantsSpecs
+    const spec = (wantsSpecs || wantsConnections)
       ? await safe<RigSpecJsonRead>(`rig-spec(${rig.name})`, () => client.rigSpec(rig.id))
       : null;
+    rigRow.authoredSpecName = spec?.name;
     if (spec?.name) rigConsumers.set(spec.name, [...(rigConsumers.get(spec.name) ?? []), { rig: rig.name, host: instanceHealth?.selfHostId?.trim() || "local", status: rig.lifecycleState ?? "unknown" }]);
     if (spec?.pods) {
       const refs = spec.pods.flatMap((p) =>
@@ -506,7 +514,7 @@ export async function hydrateSnapshot(
 
   const reviewed = new Map<string, SpecLibraryReviewRead>();
   await Promise.all(
-    (library ?? []).filter((entry) => entry.kind !== "workflow").map(async (entry) => {
+    (wantsSpecs ? library ?? [] : []).filter((entry) => entry.kind !== "workflow").map(async (entry) => {
       const detail = await specReview(entry);
       if (detail) reviewed.set(entry.id, detail);
     }),
@@ -613,6 +621,9 @@ export async function hydrateSnapshot(
   const execution = (executionRead?.rows?.[0] ?? null) as FleetSnapshot["execution"];
 
   return {
+    connections: connectionsRead,
+    controlPlane: instanceHealth,
+    daemonTarget: (() => { try { const u = new URL(client.baseUrl); return `${u.protocol}//${u.host}${u.pathname}`; } catch { return "unreported"; } })(),
     health: healthProjection
       ? {
           availability: "loaded",
