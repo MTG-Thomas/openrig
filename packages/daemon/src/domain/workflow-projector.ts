@@ -842,10 +842,10 @@ export class WorkflowProjector {
             // FAC-1 (arch Q3 — routing uniformity, bounded): declared
             // preferred_targets stay the override; a bound instance's
             // orchestrator-role dial position falls through to a
-            // NON-THROWING capability pick on the bound rig (null →
+            // capability pick on the bound rig (evidenced no-match →
             // registered-human selection, with an explicit error if no
-            // human can be selected). Fresh decision per episode;
-            // not a replay concern.
+            // human can be selected). Evidence-read failures propagate
+            // and roll back the close. Fresh decision per episode.
             resolveRoleTarget: (role) =>
               spec.roles?.[role]?.preferred_targets?.[0] ??
               tryResolveRoleByCapability(roleCtx, role),

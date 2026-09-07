@@ -9,6 +9,8 @@ import { ALL_MIGRATIONS } from "../src/db/all-migrations.js";
 import { EventBus } from "../src/domain/event-bus.js";
 import { OutboxHandler } from "../src/domain/outbox-handler.js";
 import { QueueRepository, QueueRepositoryError } from "../src/domain/queue-repository.js";
+import { RigRepository } from "../src/domain/rig-repository.js";
+import { PodRepository } from "../src/domain/pod-repository.js";
 import { WorkflowRuntime } from "../src/domain/workflow-runtime.js";
 import { resolveWorkflowHumanDestination } from "../src/domain/workflow-human-destination.js";
 import { addHumanFragment, writeProjection, projectionPath, type HumanFragment } from "../src/domain/gateway/human-registry.js";
@@ -126,4 +128,70 @@ describe("workflow registered-human selection at the actual runtime callers", ()
     expect(spy).toHaveBeenCalledTimes(1);
     expect(exceptions()).toHaveLength(0);
   });
+  it.each(["project", "overdue"] as const)("%s preserves capability, preferred and no-match routing while exposing read faults", async (channel) => {
+    add("owner-one");
+    const rigs = new RigRepository(db);
+    const pod = new PodRepository(db).createPod("r", "dev", "dev");
+    const node = rigs.addNode("r", "dev.orch", { role: "orch", runtime: "codex", cwd: dir,
+      podId: pod.id, agentRef: "local:agents/fixture", profile: "default" });
+    db.prepare("INSERT INTO sessions(id,node_id,session_name,status) VALUES('orch-session',?,'dev-orch@rig','running')").run(node.id);
+    const boundSpec = spec.replace("  roles:", "  target: { rig: rig }\n  roles:\n    orch: {}")
+      + "  exception_routing:\n    orchestrator_role: orch\n";
+    const app = new Hono();
+    app.use("*", async (c, next) => { c.set("workflowRuntime" as never, runtime as never); c.set("eventBus" as never, bus as never); await next(); });
+    app.route("/workflow", workflowRoutes());
+    const ensure = makeEnsureStuckExceptionItem({ db, queueRepo: queue,
+      resolveRoute: (n, v, c, r) => runtime.resolveExceptionRouteFor(n, v, c, r) });
+    for (const mode of ["capability", "preferred", "no-match", "read-fault", ...(channel === "overdue" ? ["binding-read-fault"] as const : [])] as const) {
+      const faultExpected = mode === "read-fault" || mode === "binding-read-fault";
+      writeFileSync(specPath, boundSpec.replace("registered-human-test", `read-proof-${mode}`)
+        .replace("orch: {}", mode === "preferred" ? "orch: { preferred_targets: [dev-orch@rig] }" : "orch: {}"));
+      db.prepare("UPDATE sessions SET status = ? WHERE id = 'orch-session'").run(mode === "no-match" ? "exited" : "running");
+      const i = await start();
+      if (channel === "overdue") db.prepare("UPDATE queue_items SET ts_created = '2020-01-01T00:00:00Z' WHERE qitem_id = ?").run(i.entryQitemId);
+      const snapshot = () => ({ instance: runtime.instanceStore.getByIdOrThrow(i.instance.instanceId),
+        packet: queue.getById(i.entryQitemId),
+        transitions: db.prepare("SELECT * FROM queue_transitions").all(),
+        trails: db.prepare("SELECT * FROM workflow_step_trails").all(),
+        events: db.prepare("SELECT * FROM events").all() });
+      const before = snapshot();
+      const previousExceptions = exceptions().length;
+      const prepare = db.prepare.bind(db);
+      let faultHits = 0;
+      const readFault = Object.assign(new Error("fixture capability evidence read failed"), { code: "SQLITE_IOERR" });
+      const spy = vi.spyOn(db, "prepare").mockImplementation((sql) => {
+        if (((mode === "read-fault" || mode === "preferred") && sql === "SELECT id FROM rigs WHERE name = ? ORDER BY created_at LIMIT 1")
+          || (mode === "binding-read-fault" && sql === "SELECT bound_rig FROM workflow_instances WHERE instance_id = ?")) {
+          faultHits += 1;
+          throw readFault;
+        }
+        return prepare(sql);
+      });
+      try {
+        if (channel === "project") {
+          const response = await app.request("/workflow/project", { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ instanceId: i.instance.instanceId, currentPacketId: i.entryQitemId, actorSession: "worker@rig", exit: "failed" }) });
+          expect(response.status).toBe(faultExpected ? 500 : 200);
+          if (faultExpected) expect(await response.json()).toMatchObject({ error: "internal_error", message: readFault.message });
+        } else {
+          const pending = ensure({ workflowName: i.instance.workflowName, workflowVersion: i.instance.workflowVersion,
+            createdBySession: "ops@rig", verdict: runtime.inspect(i.instance.instanceId).frontier[0]!.deadline });
+          if (faultExpected) await expect(pending).rejects.toBe(readFault);
+          else expect((await pending).outcome).toBe("created");
+        }
+      } finally { spy.mockRestore(); }
+      if (faultExpected) {
+        expect(faultHits).toBe(1);
+        expect(exceptions()).toHaveLength(previousExceptions);
+        expect(snapshot()).toEqual(before);
+      } else {
+        expect(faultHits).toBe(0);
+        expect(exceptions()).toHaveLength(previousExceptions + 1);
+        expect(exceptions().at(-1)).toMatchObject(mode === "no-match"
+          ? { destination_session: "owner-one@external", tier: "human-gate" }
+          : { destination_session: "dev-orch@rig", tier: "mode2" });
+      }
+    }
+  });
+
 });

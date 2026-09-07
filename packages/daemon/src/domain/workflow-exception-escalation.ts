@@ -103,19 +103,15 @@ export function makeEnsureStuckExceptionItem(deps: StuckExceptionDeps): EnsureSt
 
     // OPR.0.4.6.FAC1 (arch Q3): each exception item is a FRESH routing
     // decision at its own detection moment — read the stuck instance's
-    // bound rig NOW (defensive to a pre-052 fixture db: absent column
-    // reads as unbound, the shipped behavior).
+    // bound rig NOW. A failed read cannot establish an unbound instance:
+    // propagate it before any routing or queue write.
     let detectionBoundRig: string | null = null;
     const stuckInstanceId = exception.deadlineEvidence?.instanceId;
     if (stuckInstanceId) {
-      try {
-        const row = deps.db
-          .prepare(`SELECT bound_rig FROM workflow_instances WHERE instance_id = ?`)
-          .get(stuckInstanceId) as { bound_rig: string | null } | undefined;
-        detectionBoundRig = row?.bound_rig ?? null;
-      } catch {
-        detectionBoundRig = null;
-      }
+      const row = deps.db
+        .prepare(`SELECT bound_rig FROM workflow_instances WHERE instance_id = ?`)
+        .get(stuckInstanceId) as { bound_rig: string | null } | undefined;
+      detectionBoundRig = row?.bound_rig ?? null;
     }
     const route =
       deps.resolveRoute(input.workflowName, input.workflowVersion, "stuck_overdue", detectionBoundRig) ?? {

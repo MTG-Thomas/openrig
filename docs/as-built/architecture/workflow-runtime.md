@@ -373,6 +373,11 @@ and the flow resumes from where it stopped.
   keepalive's existing owner nudge and evaluation notes; later detection retries.
   A registered destination still uses the gateway's ordinary delivery rules and
   receipt ledger. Admission is not proof of posting or readership.
+  A capability inventory or detector instance-binding read failure propagates
+  instead of becoming a no-match:
+  failed projection returns HTTP 500 and rolls back its packet, instance and
+  history writes; overdue detection surfaces the read error without an exception
+  item. An evidenced no-match still uses registered-human selection.
 - **`resume`** (`POST /api/workflow/:id/resume`, runtime `resume()`,
   `rig workflow resume`): redrive semantics in ONE scribe transaction —
   failed→active REBOUND to the recorded failed step; the owner is

@@ -77,12 +77,10 @@ export function roleResolutionContext(
 }
 
 /**
- * NON-THROWING capability pick (arch Q3 — the exception-routing
- * uniformity extension, bounded): resolve `role` on the bound rig or
- * return null. A null pick falls through to registered-human selection,
- * which reports an error if no human can be selected. Each exception
- * item is a fresh decision at its own
- * detection moment (not a replay concern).
+ * Resolve `role` on the bound rig, returning null for an evidenced no-match
+ * or an unbound/vanished rig. Evidence-read failures propagate: they cannot
+ * establish that no eligible agent exists and must not select a human.
+ * Each exception item uses a fresh snapshot at its detection moment.
  */
 export function tryResolveRoleByCapability(
   ctx: RoleResolutionContext | undefined,
@@ -90,13 +88,9 @@ export function tryResolveRoleByCapability(
   harness?: string,
 ): string | null {
   if (!ctx) return null;
-  try {
-    const candidates = ctx.candidatesForRig();
-    if (!candidates) return null;
-    return selectRoleSeat({ role, harness, candidates }).seat;
-  } catch {
-    return null;
-  }
+  const candidates = ctx.candidatesForRig();
+  if (!candidates) return null;
+  return selectRoleSeat({ role, harness, candidates }).seat;
 }
 
 /**
