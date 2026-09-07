@@ -41,9 +41,9 @@ The orchestration pod is responsible for:
 - **Status lives in the queue, not panes** (`status-not-chat-orchestrator`): `rig ps --nodes --json` + `rig queue` are your status source; do NOT reconstruct fleet-state by capturing panes (pane `rig capture` is high-bandwidth *within your own pod* — that's fine; it is not how you track cross-pod/fleet state). *(`rig ps --nodes` is YOUR rig's seats only — bare `rig ps` lists ALL rigs on the host; don't mistake a narrow node read for the whole world.)*
 - **The watchdog is your clock** (`watchdog`): configure `rig watchdog` to wake you (~3 min); between wakes, idle (zero tokens) — no self-run sleep-loop re-reading panes at steady-state. Prefer one workflow-watchdog + targeted exception handling over many per-seat nag loops.
 - **On each wake — cheap sweep:** `rig queue` + a *filtered* `rig ps` (see "Read cheap" below) first; ONLY for a seat that looks idle/suspicious, `rig capture <session>` last few lines (never a full pane, never huge chunks); **active owner → no-op.**
-- **Read cheap — every status command has a token cost; project to the question.** The queue-first rule is about *where* status lives; this is about *how much you pay to read it*. The token bomb is the broad unfiltered dump, not the pane capture: an unfiltered fleet-wide `rig ps --nodes --json` emits ~77k tokens — for a one-rig or one-qitem question that is almost all waste, and at watchdog cadence it burns the shared account fast.
+- **Read cheap — every status command has a token cost; project to the question.** The queue-first rule is about *where* status lives; this is about *how much you pay to read it*. The token bomb is the broad unfiltered dump, not the pane capture: a broad fleet response can overwhelm a one-rig or one-qitem question. Select the scope and fields before returning output to the agent.
   - **Scope the read to the question.** Specific item → `rig queue show <qitem> --json`. One rig's frontier → filter + project only the fields you need, e.g. `rig ps --nodes --json | jq '.[] | select(.rigName=="<rig>") | {session:.canonicalSessionName, state:.agentActivity.state, hasAssignedWork, pendingWorkCount}'` (prefer a native rig/session filter if one exists). Never pull whole-fleet JSON to answer a narrow rig/qitem question.
-  - **Pane capture / transcript = last resort for one named stale owner,** not a status-polling loop — **re-capturing an unchanged pane returns no new information and is the measured token-burn failure** (the unit of monitoring is an event — a wake, a queue transition, an activity signal — never elapsed time or a repeat count).
+  - **Pane capture / transcript = last resort for one named stale owner,** not a status-polling loop — **re-capturing an unchanged pane returns no new information** (the unit of monitoring is an event — a wake, a queue transition, an activity signal — never elapsed time or a repeat count).
   - **Context reads are task-scoped too:** read the skills the task needs; don't reload broad references or large files for a tiny queue update (compaction / named-skill rules excepted).
   - **Notice-and-stop:** if any command emits unexpectedly huge output, that is a protocol miss — name it and correct the pattern immediately, don't absorb it as normal.
   - **Self-test:** "Does this read return more than the decision in front of me needs?" If yes, narrow it before running.
@@ -115,36 +115,28 @@ When an agent looks stuck:
 
 Do not call a blocked agent "in progress" forever.
 
-## Capacity — a seat is never the bottleneck (fork to unblock)
+## Capacity and assignment
 
-Seat capacity is **elastic**, so a blocked or overloaded lane is a **policy** problem, not a capacity
-fact — *"the seat is busy"* is never a real constraint. You have **standing authority to fork any
-agent** to unblock a lane; no escalation.
+A busy seat may be the current constraint. First check available owners, retained
+context and the work's independent-review requirements. Reassign, defer, or add
+capacity only within the declared scope and current provider/host limits.
 
-- **`rig fork <source-session>`** clones a live seat *with its context window* into a new seat (`--rig`
-  / `--pod` to place it; it composes the shipped agent-image fork path). **Claude is supported today;
-  Codex fork is pending a research spike — don't rely on it until that lands.**
-- **The pattern:** fork → the fork does the task → **salvage its result as markdown** → **retire the
-  fork** → return the rig to its spec's steady state. Short-lived forks are safe because seats carry
-  **distinguished names** (a fork is never mistaken for the seat it came from — see
-  `seat-continuity-and-handover`).
-- **The ladder, and whose call each rung is:** fork an agent *(yours, standing)* → onboard a new seat
-  → clone / stand up a whole rig → stand up a host on a VPS. **Rig- and host-level spin-up belong to
-  the oversight / owner altitude, not the orchestrator's** — fork is your rung.
-- **What's actually scarce:** with seats elastic, the real constraints reduce to **humans** (the
-  owner's attention, the operator slot), **money** (provider limits — account switching is the relief
-  valve), and **compute** (host limits). Protect *those*; never let a lane sit blocked on a "busy seat."
+`rig fork` can compose a new occupant from retained context when the installed
+runtime and source support it. Check current help and actual source availability;
+this skill grants no standing permission to fork, change accounts, or launch rigs
+or hosts. A selected temporary fork needs a bounded outcome, durable return,
+continuity disposition and an authorized retirement path. Distinct names alone
+do not prove safe or correct lifecycle behavior.
 
-See `session-source-fork` for the fork primitive's mechanics and `delegating-work` for choosing fork
-vs. subagent vs. route-to-a-context-holder.
+See `session-source-fork` for continuity semantics. Choose a context holder or an
+ephemeral subagent according to whether the acquired knowledge needs to persist.
 
 ## Topology settlement
 
 **Your rig's roster is a fact you READ, never one this skill asserts.** Get the actual team
 from `rig ps --nodes --json` at settlement time — a skill that hardcodes a specific topology
 goes stale exactly like a stale boot overlay, and a cleared or fresh seat has no context to
-doubt it (field case: a seven-node demo roster taught as "the expected team" sent a
-fourteen-seat rig's seats waiting for nodes that did not exist).
+doubt it. A starter roster is an example, not a live inventory.
 
 - Settle **what the current atom needs**, not the whole declared roster: dispatch when the
   seats THIS work requires are up. **Never park the rig waiting for absent nodes** — a
@@ -173,10 +165,10 @@ An availability report is enough. Do not create obligations to improve utilizati
 
 ## Communication modes
 
-Use direct `rig send` when:
-- you are assigning one agent or one pod
-- you need a specific answer from one seat
-- you are sending a scoped task packet
+Use a durable queue handoff for assigned work with an owner and closure condition.
+Use direct `rig send` for information or a scoped nudge that creates no new
+obligation. Confirm durable custody and delivery separately; neither proves the
+recipient understood or completed the work.
 
 Use the chatroom when:
 - the whole rig should see the status
@@ -213,37 +205,27 @@ The orchestrator does NOT relay messages between them. They communicate directly
 
 On gated atoms, never send impl a "Go" without explicitly stating the FIRST action is to send a pre-edit to QA — impl will race through an entire task list if given a general "Go." On ungated atoms, a general "Go" is correct; do not smuggle the gate back in through dispatch phrasing.
 
-## Dogfood fix loop
+## Dogfood and review ownership
 
-When QA is dogfooding (testing existing features), QA works solo with full autonomy:
-- QA finds issues AND fixes them in a loop
-- QA tests the fix, then moves to the next issue
-- QA only escalates architecture-level concerns
-- Do not dispatch QA to "test and report" — dispatch to "dogfood, fix what you find, re-test"
-- The orchestrator does NOT fix things — QA and impl fix things
+A dogfood assignment may authorize the outcome owner to diagnose, fix and retest
+bounded issues. Say that scope explicitly. A read-only evaluation remains
+read-only; a QA title does not authorize source edits or broader architecture.
+Preserve any independently selected final check when the evaluator authors a fix.
+Route findings outside the assignment to their owner with evidence.
 
-## Permission prompt handling
+## Permission and runtime handling
 
-Permission prompts are the #1 mechanical blocker — surface them on your watchdog wake (a scoped `rig ps` / queue check), never a steady-state poll loop.
+Use the actual prompt and declared authority to decide an intervention. Never
+select a numbered option from a timeless harness recipe: prompt shape and the
+consequence of persistent approval vary. An authorized unblock must preserve the
+operation's scope; it does not grant publication, destructive or lifecycle powers.
 
-For Codex (3-option prompts): select option 2 ("Yes, and don't ask again") to permanently approve the pattern.
-For Claude (2-option): approve with Enter.
-For destructive operations (git push, rm, daemon stop, npm publish): DO NOT auto-approve. Check with the human.
-
-## Agent behavioral models
-
-### Claude Code agents (impl, reviewers, lead)
-- Will blast through an entire task list if given a "Go" without explicit gates
-- After being told to slow down, over-corrects to "wait for permission for everything"
-- Compaction is catastrophic — full context loss, needs preparation
-- After compaction: restore the active assignment and its selected context; skill names alone are not restored content. Follow the declared continuity policy without adding a universal quiz gate.
-
-### Codex agents (QA, peer, R2)
-- Self-manages its own context window — do NOT intervene based on context percentage
-- Compacts automatically and continues working — this is normal, not an emergency
-- Never tell Codex to "wrap up" or "save state" based on context percentage
-- Over-engineers when given spec-writing authority — never let Codex write implementation specs
-- Excellent at: implementation, code review, dogfood testing, finding edge cases
+Choose models and roles from the environment's current execution policy and
+observed capabilities. Neither a vendor label nor a seat title determines who
+may author plans, implement, review or accept work. Verify required runtime/model
+identity before relying on the result. Follow the declared continuity policy;
+context telemetry is evidence to interpret, not automatic authority to compact
+or replace another seat.
 
 ## Intervention discipline
 
@@ -283,5 +265,5 @@ installed skill or a quiz as a universal admission gate.
 - relay messages between agents (they communicate directly)
 - auto-approve destructive operations
 - rush agents with deadline pressure
-- write implementation specs (that's a Claude task, not Codex)
-- intervene based on Codex context percentage
+- assign specification or acceptance authority from a runtime label alone
+- change continuity from a context percentage without the selected policy and authority

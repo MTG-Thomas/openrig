@@ -30,10 +30,10 @@
       "pm/requirements-writer/SKILL.md": "a8a27fd86b7261fff6a9f4b93d58b3cef74c343086735685868c664089899279",
       "pm/ui-mockup/SKILL.md": "b527c72c73c926c3d2a61e1264279486737d429aa85d3624c4adc364c577afc8",
       "pods/development-team/SKILL.md": "3d712a94a1725b543371ffc502d3f5641e3b77d9d566aa0f99a2977682241f9b",
-      "pods/orchestration-team/SKILL.md": "44f465ab28e1c2d18d7a509ea63ff60b18e317e74a71671761ad9ea92fb0004b",
+      "pods/orchestration-team/SKILL.md": "d13e08782a64b92b4db3f51d083f11fd6753f06e68052dbf2da174ab5618fa90",
       "pods/oversight-team/SKILL.md": "a48de41350453a09b231e01a89cc1dd3d4a64e082df090a7b0e04034227d2bb4",
       "pods/review-team/SKILL.md": "e669a893d5bd1d01fdd5e357a0f0f56425fc2fb845705bddc629016e04c8a6da",
-      "process/agent-browser/LOCAL-INSIGHTS.md": "e793e30464517bfe0eee3485fb03206292338552cf7ccaadb1713e39bf21b043",
+      "process/agent-browser/LOCAL-INSIGHTS.md": "3e37c298514506099c8212e32c58e78cd77781637a368a5db1acf1982d93a0f4",
       "process/agent-browser/OPENRIG.md": "d15123689824c934b51ba572bc7c4d995651e2f606e0e53697263f4ecde108c9",
       "process/agent-browser/SKILL.md": "f2709bae71a8c60f6a4b80a6873560cdea9632000ed4b28d082dfae58801199b",
       "process/context-engineering/SKILL.md": "ef052238060410f8f49d94baaede14e569f3c943a7dba79ed98d4fc0a117af64",
@@ -50,7 +50,7 @@
       "process/systematic-debugging/root-cause-tracing.md": "a81bee9448794d261b4aca8487c595d11ff4bd4e10a5f96bca1117dd32527050",
       "process/test-driven-development/SKILL.md": "a8ad3479224a979568c20ec09e6ae19ab68bedf6df74bb9dde4a72c02da2eb24",
       "process/test-driven-development/testing-anti-patterns.md": "bde453bc258f06543987477c837939afaa774ea2acbd9f308d702fc452bc4283",
-      "process/verification-before-completion/SKILL.md": "81df2cff3590b35aeac95757b0c21d5c47ed49f1f5e9aea1d23c00da61e8c7e8"
+      "process/verification-before-completion/SKILL.md": "0b8cea0bb82a8ab0f015afaf84c87796e2c94eee3a83d4fa3d4461d0917950bd"
     },
     "plugin": {
       "agent-operated-software/SKILL.md": "14ac512225215af01e95b7f861b625387318011c597ade277cce4f6552f92368",
@@ -124,10 +124,10 @@
       "pm/requirements-writer/SKILL.md": "a8a27fd86b7261fff6a9f4b93d58b3cef74c343086735685868c664089899279",
       "pm/ui-mockup/SKILL.md": "b527c72c73c926c3d2a61e1264279486737d429aa85d3624c4adc364c577afc8",
       "pods/development-team/SKILL.md": "3d712a94a1725b543371ffc502d3f5641e3b77d9d566aa0f99a2977682241f9b",
-      "pods/orchestration-team/SKILL.md": "44f465ab28e1c2d18d7a509ea63ff60b18e317e74a71671761ad9ea92fb0004b",
+      "pods/orchestration-team/SKILL.md": "d13e08782a64b92b4db3f51d083f11fd6753f06e68052dbf2da174ab5618fa90",
       "pods/oversight-team/SKILL.md": "a48de41350453a09b231e01a89cc1dd3d4a64e082df090a7b0e04034227d2bb4",
       "pods/review-team/SKILL.md": "e669a893d5bd1d01fdd5e357a0f0f56425fc2fb845705bddc629016e04c8a6da",
-      "process/agent-browser/LOCAL-INSIGHTS.md": "e793e30464517bfe0eee3485fb03206292338552cf7ccaadb1713e39bf21b043",
+      "process/agent-browser/LOCAL-INSIGHTS.md": "3e37c298514506099c8212e32c58e78cd77781637a368a5db1acf1982d93a0f4",
       "process/agent-browser/OPENRIG.md": "d15123689824c934b51ba572bc7c4d995651e2f606e0e53697263f4ecde108c9",
       "process/agent-browser/SKILL.md": "f2709bae71a8c60f6a4b80a6873560cdea9632000ed4b28d082dfae58801199b",
       "process/context-engineering/SKILL.md": "ef052238060410f8f49d94baaede14e569f3c943a7dba79ed98d4fc0a117af64",
@@ -144,7 +144,7 @@
       "process/systematic-debugging/root-cause-tracing.md": "a81bee9448794d261b4aca8487c595d11ff4bd4e10a5f96bca1117dd32527050",
       "process/test-driven-development/SKILL.md": "a8ad3479224a979568c20ec09e6ae19ab68bedf6df74bb9dde4a72c02da2eb24",
       "process/test-driven-development/testing-anti-patterns.md": "bde453bc258f06543987477c837939afaa774ea2acbd9f308d702fc452bc4283",
-      "process/verification-before-completion/SKILL.md": "81df2cff3590b35aeac95757b0c21d5c47ed49f1f5e9aea1d23c00da61e8c7e8"
+      "process/verification-before-completion/SKILL.md": "0b8cea0bb82a8ab0f015afaf84c87796e2c94eee3a83d4fa3d4461d0917950bd"
     }
   }
 }

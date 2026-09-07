@@ -57,8 +57,8 @@ machine and have things happen.
   follows the supported migration guidance for the installed version,
   and verifies daemon plus rig health before closing the operation.
 - **Skills earn their slot.** Each agent loads a lean roster at
-  startup (per HOST-TOPOLOGY §4.10); the rest are reachable on demand
-  via find-skills.
+  startup for its role and selected work; other capabilities remain discoverable
+  through the installed skill catalog when their triggers apply.
 - **Status flows through the queue.** Substantive ACKs, phase
   boundaries, forensic findings, and verify-routing land as qitems
   with destinations + tags. Conversational replies use rig send.

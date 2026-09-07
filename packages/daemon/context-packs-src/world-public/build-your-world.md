@@ -39,18 +39,23 @@ The address is the source: retrieve it with `rig context get <address>` before m
 
 | Dimension | Exact address | What it contains | Read it when the task asks you to… |
 |---|---|---|---|
-| product | `project-world/identity/product-identity-and-instincts.md#current-position` | The current product position and the instincts the team protects. | choose what OpenRig should optimize or trade one product quality against another. |
-| topology | `project-world/craft/topology-design-judgment.md#judgment-rules` | Judgment rules for cutting seats, pods, edges, and responsibility boundaries. | add, split, merge, or assign a seat, pod, edge, or responsibility boundary. |
+| product | `world-public/boundaries.md#this-pack-does-not-cover` | The boundary of public guidance; the project must supply its actual purpose and product judgment. | choose a product outcome or tradeoff and locate the project authority that can decide it. |
+| topology | `skills/core/openrig-architect/SKILL.md` | Portable topology authoring, role selection, validation and context guidance. | add, split, merge, or assign a seat, pod, edge, or responsibility boundary. |
 | context | `world-public/build-your-world.md#separate-kinds-tag-regions` | The World/Lore/Skills/Mission separation and region-tagging rule. | decide where knowledge belongs or whether it should be preloaded. |
 | skill | `onboarding-width/public-reference-material.md#the-one-you-read-rather-than-consult` | The operating-model entry point and how it differs from lookup references. | choose an operating model or repeatable procedure instead of improvising one. |
 | queue/custody | `onboarding-width/public-what-you-can-do.md#making-work-outlive-you` | Durable queue ownership, state, blocking, and transactional handoff. | assign, claim, block, hand off, or close work that must survive a turn or occupant. |
 | source/worktree | `onboarding-width/public-reference-material.md#the-command-surface-docs-as-built-in-the-source-repo` | The maintained as-built source map and its trust metadata. | locate the source owner, choose authoritative documentation, or separate branch state from running behavior. |
-| proof/review | `project-world/craft/seam-first-negative-proof.md#the-discipline` | The seam-first negative-proof discipline and causal RED rule. | decide what evidence proves a cross-component change or design its negative control. |
-| lifecycle/release | `project-world/project-authority/release-ownership.md` | The release manager's public-release ownership and operator boundary. | adopt a runtime, fold a candidate, or decide who may perform public release mechanics. |
+| proof/review | `skills/process/verification-before-completion/SKILL.md` | Evidence before claims, content checks and untested dimensions; apply the project-selected proof standard. | decide what evidence supports a change or design its negative control. |
+| lifecycle/release | `skills/core/rig-lifecycle/SKILL.md` | Lifecycle mechanics and limits; release ownership must come from the actual project authority. | plan a lifecycle operation and resolve who may execute or publish it. |
 | continuity/recovery | `onboarding-width/public-what-you-can-do.md#when-something-is-broken` | Recovery, handover, compaction, snapshot, and restore capabilities. | restore, hand over, compact, or recover a seat, rig, daemon, or host without losing continuity. |
-| host-boundary | `project-world/project-authority/lifecycle-authority.md` | The asymmetric VM versus parent-host lifecycle authority. | move an operation between the recoverable VM and parent host or infer authority across that boundary. |
+| host-boundary | `skills/core/cross-host-rig-commands/SKILL.md` | Host addressing, transport and verification limits; local authority remains separately declared. | move an operation between hosts or determine which target and authority apply. |
 
-The map reveals where a question lives. It does not replace the source, preload its answer, or make an unavailable local authority public.
+The addresses above are public entry points, not this project's decisions. When a
+row calls for local product, release or host authority, resolve the configured
+project context and record its exact address before acting. If no such authority
+is authored or available, report the missing decision; do not treat the public
+mechanics guide as permission. The map reveals where to start without inventing
+a builtin project policy.
 
 Inspect the public pack and compose it for a fresh session:
 

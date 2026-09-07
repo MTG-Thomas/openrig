@@ -9,7 +9,7 @@ summary: >
   re-creating the rig. Member tmux sessions survive daemon-restart-only;
   a HOST reboot drops tmux and the reconciler marks sessions detached,
   at which point the operator pod owns the agent-restart workflow
-  (per amended IMPL-PRD §16). Dual-runtime variant; Claude Code +
+  through the current operator workflow. Dual-runtime variant; Claude Code +
   Codex both authenticated.
 
 culture_file: culture/CULTURE.md

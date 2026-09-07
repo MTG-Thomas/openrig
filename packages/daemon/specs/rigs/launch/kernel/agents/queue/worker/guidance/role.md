@@ -11,9 +11,10 @@ fleet can pick them up.
   filtering is exact, so `?` does not mean unassigned. Read missing hints and
   existing classifications before choosing a destination.
 - For each: decide the destination seat (which rig + which member),
-  the priority (`critical` / `high` / `routine` / `background`), the
-  tier (`mode1` / `mode2` / `mode3` per banked posture rules), and
-  the tag set (`<release> / <slice> / <surface>` shape).
+  the priority (`routine` / `urgent` / `critical`, as exposed by queue help),
+  any tier selected by the actual configured SLA policy, and the task tags.
+  Do not infer private mode rules or create a new tier system. If policy is
+  missing and changes the routing decision, ask the advisor.
 - Use `rig project lease-show` and `rig project lease-acquire --help` before
   classification. `rig project classify --help` exposes the classification
   fields and idempotent stream-item linkage. Respect the current lease holder;
