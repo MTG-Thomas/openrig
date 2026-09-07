@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { Command } from "commander";
 import { contextCommand } from "../src/commands/context.js";
+import { applyExitOverride } from "../src/cli-error.js";
 
 function captureLogs(fn: () => Promise<void>): Promise<{ logs: string[]; errLogs: string[]; exitCode: number | undefined }> {
   return new Promise(async (resolve) => {
@@ -29,6 +30,7 @@ function makeCommand(): Command {
   const command = new Command();
   command.exitOverride();
   command.addCommand(contextCommand());
+  applyExitOverride(command);
   return command;
 }
 
@@ -277,11 +279,11 @@ skills: []
     expect(betaPlan.pieces.every((piece) => piece.path.startsWith(betaRoot))).toBe(true);
   });
 
-  it("delivers project context and reconciles the composed skill loadout in one operation without dirtying product Git", async () => {
+  it.each(["claude-code", "claude", "codex"])("projects %s skills with canonical metadata and idempotent effects without dirtying product Git", async (runtime) => {
     const run = () => captureLogs(async () => {
       await makeCommand().parseAsync([
         "node", "rig", "context", "work-install",
-        "--project", "alpha", "--runtime", "codex", "--cwd", workingRoot,
+        "--project", "alpha", "--runtime", runtime, "--cwd", workingRoot,
         "--topology", "topology-skill", "--apply-skills", "--json",
       ]);
     });
@@ -299,9 +301,9 @@ skills: []
       ["system-skill", ["system"]],
       ["topology-skill", ["topology"]],
     ]);
-    expect(installed.skillProjection).toMatchObject({ ok: true, applied: true });
+    expect(installed.skillProjection).toMatchObject({ ok: true, applied: true, runtime: runtime === "codex" ? "codex" : "claude-code" });
     expect(installed.skillProjection.receipts.every((receipt) => receipt.status === "current")).toBe(true);
-    expect(readFileSync(join(workingRoot, ".agents", "skills", "project-skill", "SKILL.md"), "utf8"))
+    expect(readFileSync(join(workingRoot, runtime === "codex" ? ".agents" : ".claude", "skills", "project-skill", "SKILL.md"), "utf8"))
       .toBe(readFileSync(join(skillsRoot, "project-skill", "SKILL.md"), "utf8"));
     expect(execFileSync("git", ["-C", alphaRoot, "status", "--short"], { encoding: "utf8" })).toBe("");
     expect(execFileSync("git", ["-C", workingRoot, "status", "--short"], { encoding: "utf8" })).toBe("");
@@ -311,6 +313,19 @@ skills: []
     expect(JSON.parse(second.logs.join("")).skillProjection).toMatchObject({ ok: true, applied: false });
     expect(execFileSync("git", ["-C", alphaRoot, "status", "--short"], { encoding: "utf8" })).toBe("");
     expect(execFileSync("git", ["-C", workingRoot, "status", "--short"], { encoding: "utf8" })).toBe("");
+  });
+
+  it.each(["unknown-runtime", ""])("rejects explicit runtime %j before project lookup or projection", async (runtime) => {
+    const command = makeCommand();
+    const workInstall = command.commands[0]!.commands.find((cmd) => cmd.name() === "work-install")!;
+    workInstall.configureOutput({ writeErr: () => {} });
+    await expect(command.parseAsync([
+      "node", "rig", "context", "work-install", "--project", "missing-project",
+      "--runtime", runtime, "--cwd", workingRoot, "--apply-skills", "--json",
+    ])).rejects.toMatchObject({ code: "commander.invalidArgument", message: expect.stringContaining("claude-code, claude, codex") });
+    expect(existsSync(join(workingRoot, ".claude"))).toBe(false);
+    expect(existsSync(join(workingRoot, ".agents"))).toBe(false);
+    expect(existsSync(join(workingRoot, ".openrig"))).toBe(false);
   });
 
   it("refuses work-install before projecting when a foreign ignore covers only skill entrypoints", async () => {

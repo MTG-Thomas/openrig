@@ -200,6 +200,16 @@ describe("rig context — address fork + profile verb (Atom 4d)", () => {
     }
   });
 
+  it.each(["claude-code", "claude", "codex"])("maps explicit %s to the existing profile runtime while preserving seat grants", async (runtime) => {
+    hits.length = 0;
+    await run(port, ["profile", "packs/smoke", "--situation", "handover", "--runtime", runtime, "--rig", "r1", "--seat", "s1"]);
+    const hit = hits.find((path) => path.startsWith("/api/context-packs/library/by-ref/profile"))!;
+    const params = new URL(hit, "http://localhost").searchParams;
+    expect(params.get("runtime")).toBe(runtime === "codex" ? "codex" : "claude");
+    expect(params.get("rig")).toBe("r1");
+    expect(params.get("seat")).toBe("s1");
+  });
+
   it("PROFILE VERB: composes by situation with the grant params threaded, pieces labeled on stdout, budget + provenance warnings on stderr", async () => {
     hits.length = 0;
     const out = await run(port, ["profile", "packs/smoke", "--situation", "handover", "--runtime", "claude", "--profile", "codex-coverage", "--rig", "r1", "--seat", "s1", "--mission", "release-x", "--slice", "slice-y", "--budget", "4"]);

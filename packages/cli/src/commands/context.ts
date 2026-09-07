@@ -29,6 +29,7 @@ import { parse as parseYaml } from "yaml";
 import { ATOM_TAXONOMIES, TAXONOMY_TEACHING } from "@openrig/daemon/context-pack-taxonomy";
 import { ConfigStore } from "../config-store.js";
 import { DaemonClient } from "../client.js";
+import { enumArg } from "../cli-error.js";
 import { getDaemonStatus, getDaemonUrl , statusGuardMessage} from "../daemon-lifecycle.js";
 import { resolveWorkPosition, type WorkInstallPlan } from "../lib/work-install.js";
 import {
@@ -36,10 +37,11 @@ import {
   resolveSkillLoadout,
   type ReconcileSkillLoadoutResult,
   type SkillLoadout,
-  type SkillRuntime,
 } from "@openrig/daemon/skill-loadout";
 import { realDeps } from "./daemon.js";
 import type { StatusDeps } from "./status.js";
+
+const contextRuntimeArg = enumArg(["claude-code", "claude", "codex"]);
 
 interface ContextPackEntryWire {
   id: string;
@@ -357,6 +359,8 @@ Examples:
   rig context add ./my-pack
   rig context rm packs/compaction-restore
   rig context sync
+  rig context profile world-public --situation fresh --runtime claude-code
+  rig context work-install --runtime claude-code
   rig context trace --rig product-team --seat orch1-lead --name LEARNED.md
   rig context trace --rig product-team --pod delivery --seat dev1-qa --name LEARNED.md
 `);
@@ -372,12 +376,17 @@ Examples:
     .option("--mission <id>", "Exact mission id under the selected project")
     .option("--slice <id>", "Exact slice id under the selected mission")
     .option("--deliver", "Include the exact content of each extant planned file")
-    .option("--runtime <runtime>", "Inspect skills for claude-code or codex")
+    .option("--runtime <runtime>", "Inspect skills for claude-code (alias: claude) or codex", contextRuntimeArg)
     .option("--cwd <path>", "Agent working directory that receives skill projections (default: current directory)")
     .option("--topology <ids>", "Comma-separated topology/profile skill identities")
     .option("--apply-skills", "Reconcile selected skills into the runtime harness directory")
     .option("--json", "JSON output")
     .action((opts: { project?: string; mission?: string; slice?: string; deliver?: boolean; runtime?: string; cwd?: string; topology?: string; applySkills?: boolean; json?: boolean }) => {
+      if (opts.applySkills && opts.runtime === undefined) {
+        console.error("invalid_runtime: --apply-skills requires --runtime claude-code (alias: claude) or codex");
+        process.exitCode = 1;
+        return;
+      }
       const store = new ConfigStore();
       const workspaceRoot = String(store.resolveWithSource("workspace.root").value);
       const catalogPath = String(store.resolveWithSource("workspace.catalog_path").value);
@@ -401,17 +410,7 @@ Examples:
       }
       let skillLoadout: SkillLoadout | undefined;
       let skillProjection: ReconcileSkillLoadoutResult | undefined;
-      if (opts.applySkills && !opts.runtime) {
-        console.error("invalid_runtime: --apply-skills requires --runtime claude-code|codex");
-        process.exitCode = 1;
-        return;
-      }
       if (opts.runtime) {
-        if (opts.runtime !== "claude-code" && opts.runtime !== "codex") {
-          console.error("invalid_runtime: --runtime must be claude-code or codex");
-          process.exitCode = 1;
-          return;
-        }
         const topologySkills = (opts.topology ?? "").split(",").map((id) => id.trim()).filter(Boolean);
         const resolvedSkills = resolveSkillLoadout({
           catalogRoot: String(store.resolveWithSource("skills.root").value),
@@ -429,7 +428,7 @@ Examples:
         skillLoadout = resolvedSkills.loadout;
         skillProjection = reconcileSkillLoadout({
           loadout: skillLoadout,
-          runtime: opts.runtime as SkillRuntime,
+          runtime: opts.runtime === "codex" ? "codex" : "claude-code",
           cwd: resolve(opts.cwd ?? process.cwd()),
           apply: opts.applySkills === true,
         });
@@ -757,7 +756,7 @@ Examples:
     // the rule that the runtimes compose DIFFERENT profiles). Flag beats env;
     // an unrecognized env value falls back to claude rather than erroring a
     // surface the env owner may not control.
-    .option("--runtime <runtime>", "claude | codex (default: $OPENRIG_RUNTIME, else claude)")
+    .option("--runtime <runtime>", "claude-code (alias: claude) or codex (default: $OPENRIG_RUNTIME, else claude-code)", contextRuntimeArg)
     .option("--profile <profile>", "Named install profile declared by the pack (selection + ordered phases)")
     .option("--budget <tokens>", "Situation token budget — overage is REPORTED, never truncated")
     .option("--rig <rig>", "With --seat: grant read access to that seat's tree (seat: atoms)")
@@ -784,6 +783,8 @@ Examples:
             runtime = "claude";
           }
         }
+        // Keep the composer/manifest key and returned metadata compatible.
+        if (runtime === "claude-code") runtime = "claude";
         const params = new URLSearchParams({ ref: entry.relativePath, situation: opts.situation, runtime });
         if (opts.profile !== undefined) params.set("profile", opts.profile);
         if (opts.budget !== undefined) params.set("budget", opts.budget);

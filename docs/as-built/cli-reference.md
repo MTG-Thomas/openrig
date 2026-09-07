@@ -1496,7 +1496,8 @@ Notes:
 Usage: `rig context <subcommand>` — browse, preview, compose, and manage operator-authored context packs. This noun never delivers; delivery belongs to `send`, `broadcast`, `walk`, and `queue create`.
 
 Subcommands:
-- `work-install [--project <id>] [--mission <id>] [--slice <id>] [--deliver] [--runtime <claude-code|codex>] [--cwd <agent-working-directory>] [--topology <ids>] [--apply-skills] [--json]` — resolve project/mission/slice Markdown plus `project.yaml install.skills` in one plan. With `--runtime`, composes system, topology, and project selectors and reports per-skill provenance/status; `--apply-skills` safely reconciles the owned harness projection into `--cwd` (default: the caller's current working directory), not the workspace metadata directory.
+- `work-install [--project <id>] [--mission <id>] [--slice <id>] [--deliver] [--runtime <claude-code|claude|codex>] [--cwd <agent-working-directory>] [--topology <ids>] [--apply-skills] [--json]` — resolve project/mission/slice Markdown plus `project.yaml install.skills` in one plan. With `--runtime`, composes system, topology, and project selectors and reports per-skill provenance/status; `--apply-skills` safely reconciles the owned harness projection into `--cwd` (default: the caller's current working directory), not the workspace metadata directory. Omitting `--runtime` skips skill inspection regardless of `OPENRIG_RUNTIME`; applying skills requires an explicit runtime.
+- `profile <name-or-ref> --situation <fresh|handover|post-compaction> [--runtime <claude-code|claude|codex>] [--profile <id>] [--budget <tokens>] [--rig <rig> --seat <seat>] [--mission <mission>] [--slice <slice>] [--json]` — compose the selected atom graph and explicitly granted context. Runtime defaults to `OPENRIG_RUNTIME`, otherwise Claude; an unknown nonempty environment value warns and falls back to Claude. An explicit flag overrides the environment.
 - `list [options]` — list all context packs in the library.
 - `show <name-or-ref> [options]` — show pack manifest + per-file metadata.
 - `preview <name-or-ref> [options]` — show the assembled bundle without delivering it.
@@ -1507,6 +1508,8 @@ Subcommands:
 
 Notes:
 - Context packs are operator-authored bundles of context (manifest + files) intended to prime a managed seat with a coherent starting context.
+- Both `profile` and `work-install` accept `claude-code`, its alias `claude`, and `codex`. Invalid explicit values fail during CLI argument parsing, before context lookup or projection. JSON metadata retains the consumer's existing keys: `profile.runtime` is `claude` or `codex`; `skillProjection.runtime` is `claude-code` or `codex`. Both Claude spellings produce the same selection and metadata within each command; manifest runtime keys remain unchanged.
+- For example, `rig context profile world-public --situation fresh --runtime claude-code` and `rig context work-install --runtime claude-code` use the same runtime spelling. Profile atoms that read seat context still require both `--rig` and `--seat`.
 - `preview` is the canonical read-only way to inspect the assembled content.
 - This command family is delivery-free; context-window inspection is not part of this noun.
 
