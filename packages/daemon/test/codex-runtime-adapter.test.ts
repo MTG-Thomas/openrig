@@ -8,6 +8,7 @@ import { CodexRuntimeAdapter, type CodexAdapterFsOps } from "../src/adapters/cod
 import type { NodeBinding, ResolvedStartupFile } from "../src/domain/runtime-adapter.js";
 import type { ProjectionPlan, ProjectionEntry } from "../src/domain/projection-planner.js";
 import type { TmuxAdapter } from "../src/adapters/tmux.js";
+import { seedCodexThreads } from "./helpers/codex-state.js";
 
 const CODEX_FLOOR_EFFECT = {
   runtime: "codex",
@@ -122,6 +123,7 @@ afterEach(() => {
 function createCodexLogsDb(homeDir: string, pid: number, threadId: string, dbName = "logs_1.sqlite"): void {
   const codexDir = nodePath.join(homeDir, ".codex");
   fs.mkdirSync(codexDir, { recursive: true });
+  seedCodexThreads(homeDir, [threadId]);
   const db = new Database(nodePath.join(codexDir, dbName));
   try {
     db.exec(`

@@ -240,35 +240,38 @@ function readCodexThreadIdFromLogs(
   exists?: (path: string) => boolean,
   minTs?: number
 ): string | undefined {
-  // OPR.0.5.3.10 r2 round-4 — the logs key is pid:<pid>:<opaque-uuid>, so a
-  // pid-only read can return a RETIRED occupant's row to a reused pid. When
-  // the caller knows the current occupant's start time (minTs, epoch
-  // seconds), only rows written strictly AFTER its start second are provably that occupant's. Identity-less
-  // callers keep the legacy unbounded read.
-  for (const dbPath of resolveCodexLogDbPaths(homeDir, exists)) {
+  const loggedIds = new Set<string>();
+  for (const dbPath of resolveCodexDbPaths(homeDir, "logs", exists)) {
     try {
       const db = new Database(dbPath, { readonly: true });
       try {
-        const row = db.prepare(
-          `SELECT thread_id
-           FROM logs
-           WHERE process_uuid LIKE ?
-             AND thread_id IS NOT NULL
-             AND ts > ?
-           ORDER BY ts DESC, ts_nanos DESC, id DESC
-           LIMIT 1`
-        ).get(`pid:${pid}:%`, minTs ?? 0) as { thread_id?: string } | undefined;
-        if (row?.thread_id) {
-          return row.thread_id;
-        }
+        // Strict start-second gate preserves the existing PID reuse boundary.
+        const rows = db.prepare(
+          "SELECT DISTINCT thread_id FROM logs WHERE process_uuid LIKE ? AND thread_id IS NOT NULL AND ts > ?"
+        ).all(`pid:${pid}:%`, minTs ?? 0) as Array<{ thread_id: string }>;
+        for (const row of rows) loggedIds.add(row.thread_id);
       } finally {
         db.close();
       }
-    } catch {
-      continue;
-    }
+    } catch { /* Missing logs provide no process identity. */ }
   }
-  return undefined;
+  if (!loggedIds.size) return undefined;
+  // Native title generation logs another thread in the same process. Join only
+  // PID-owned IDs to retained CLI conversations; recency cannot identify the TUI.
+  const conversations = new Set<string>();
+  for (const dbPath of resolveCodexDbPaths(homeDir, "state", exists)) {
+    try {
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const select = db.prepare("SELECT id FROM threads WHERE id = ? AND source = 'cli' AND rollout_path IS NOT NULL AND rollout_path != ''");
+        for (const id of loggedIds) if (select.get(id)) conversations.add(id);
+      } finally {
+        db.close();
+      }
+    } catch { /* Missing native state is not evidence of a conversation. */ }
+  }
+  // Multiple retained conversations in one process need a stronger native signal.
+  return conversations.size === 1 ? [...conversations][0] : undefined;
 }
 
 /** Parse `ps lstart` ("Sun Aug 23 19:30:00 2026", local time) to epoch
@@ -288,13 +291,13 @@ export function lstartToMinTs(identity: string | undefined): number | undefined 
   return Math.floor(parsed / 1000);
 }
 
-function resolveCodexLogDbPaths(homeDir: string, exists?: (path: string) => boolean): string[] {
+export function resolveCodexDbPaths(homeDir: string, kind: "logs" | "state", exists?: (path: string) => boolean): string[] {
   const codexDir = nodePath.join(homeDir, ".codex");
   const discovered: Array<{ version: number; path: string }> = [];
 
   try {
     for (const entry of fs.readdirSync(codexDir)) {
-      const match = entry.match(/^logs_(\d+)\.sqlite$/);
+      const match = entry.match(new RegExp(`^${kind}_(\\d+)\\.sqlite$`));
       if (!match) continue;
       discovered.push({
         version: Number(match[1]),
@@ -306,12 +309,12 @@ function resolveCodexLogDbPaths(homeDir: string, exists?: (path: string) => bool
   }
 
   if (discovered.length === 0) {
-    discovered.push({ version: 1, path: nodePath.join(codexDir, "logs_1.sqlite") });
+    discovered.push({ version: kind === "logs" ? 1 : 5, path: nodePath.join(codexDir, kind === "logs" ? "logs_1.sqlite" : "state_5.sqlite") });
   }
 
   return discovered
     .sort((a, b) => b.version - a.version)
     .map((entry) => entry.path)
     .filter((path, index, paths) => paths.indexOf(path) === index)
-    .filter((path) => !exists || exists(path));
+    .filter((path) => (exists ?? fs.existsSync)(path));
 }

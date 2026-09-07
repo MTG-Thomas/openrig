@@ -4,6 +4,7 @@ import nodePath from "node:path";
 import Database from "better-sqlite3";
 import { describe, it, expect, vi } from "vitest";
 import { ResumeMetadataRefresher } from "../src/domain/resume-metadata-refresher.js";
+import { seedCodexThreads } from "./helpers/codex-state.js";
 import type { SessionRegistry } from "../src/domain/session-registry.js";
 import type { TmuxAdapter } from "../src/adapters/tmux.js";
 
@@ -27,6 +28,7 @@ function mockTmux(overrides?: Partial<TmuxAdapter>): TmuxAdapter {
 function createCodexLogsDb(homeDir: string, pid: number, threadId: string, dbName = "logs_1.sqlite"): void {
   const codexDir = nodePath.join(homeDir, ".codex");
   fs.mkdirSync(codexDir, { recursive: true });
+  seedCodexThreads(homeDir, [threadId]);
   const db = new Database(nodePath.join(codexDir, dbName));
   try {
     db.exec(`

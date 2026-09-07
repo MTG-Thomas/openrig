@@ -12,6 +12,7 @@ import { CodexThreadIdResolver, lstartToMinTs } from "../src/domain/codex-thread
 import { ResumeMetadataRefresher } from "../src/domain/resume-metadata-refresher.js";
 import { PeriodicSnapshotScheduler } from "../src/domain/periodic-snapshot-scheduler.js";
 import { createFullTestDb } from "./helpers/test-app.js";
+import { seedCodexThreads } from "./helpers/codex-state.js";
 import { RigRepository } from "../src/domain/rig-repository.js";
 import { SessionRegistry } from "../src/domain/session-registry.js";
 import type { TmuxAdapter } from "../src/adapters/tmux.js";
@@ -284,6 +285,7 @@ describe("OPR.0.5.3.10 — one census per cycle", () => {
     const home = fs.mkdtempSync(nodePath.join(os.tmpdir(), "s10-r4-home-"));
     try {
       fs.mkdirSync(nodePath.join(home, ".codex"), { recursive: true });
+      seedCodexThreads(home, ["retired-thread", "new-thread"]);
       const db = new BetterSqlite3(nodePath.join(home, ".codex", "logs_1.sqlite"));
       db.exec("CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, ts_nanos INTEGER NOT NULL, level TEXT, process_uuid TEXT, thread_id TEXT)");
       // Only the RETIRED occupant's row exists: written 2026-08-23 10:00 local.
@@ -308,11 +310,11 @@ describe("OPR.0.5.3.10 — one census per cycle", () => {
         .run(newTs, "pid:4242:new-process-uuid", "new-thread");
       db2.close();
       expect(await resolver.resolve(4242, "Sun Aug 23 19:30:00 2026")).toBe("new-thread");
-      // An identity-less caller keeps the legacy read (TTL-bounded elsewhere).
-      expect(await resolver.resolveUngatedLegacy(4242)).toBe("new-thread");
       // The HIT path spawned nothing: no probes beyond the one honest miss.
       expect(homeProbes.mock.calls.length).toBe(probesAfterMiss);
       expect(probesAfterMiss).toBeLessThanOrEqual(1);
+      // Without a start-time gate, both retained conversations are ambiguous.
+      expect(await resolver.resolveUngatedLegacy(4242)).toBeUndefined();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -331,6 +333,7 @@ describe("OPR.0.5.3.10 — one census per cycle", () => {
     try {
       fs.mkdirSync(nodePath.join(home, ".codex"), { recursive: true });
       const startTs = Math.floor(new Date("Aug 23, 2026 19:30:00").getTime() / 1000);
+      seedCodexThreads(home, ["retired-thread", "new-thread"]);
       const db = new BetterSqlite3(nodePath.join(home, ".codex", "logs_1.sqlite"));
       db.exec("CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, ts_nanos INTEGER NOT NULL, level TEXT, process_uuid TEXT, thread_id TEXT)");
       // ONLY the retired occupant's row, ONE second before B's start.
@@ -375,6 +378,7 @@ describe("OPR.0.5.3.10 — one census per cycle", () => {
     try {
       fs.mkdirSync(nodePath.join(home, ".codex"), { recursive: true });
       const startTs = Math.floor(new Date("Aug 23, 2026 19:30:00").getTime() / 1000);
+      seedCodexThreads(home, ["retired-thread", "new-thread"]);
       const db = new BetterSqlite3(nodePath.join(home, ".codex", "logs_1.sqlite"));
       db.exec("CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, ts_nanos INTEGER NOT NULL, level TEXT, process_uuid TEXT, thread_id TEXT)");
       // ONLY retired A's row, INSIDE B's start second.

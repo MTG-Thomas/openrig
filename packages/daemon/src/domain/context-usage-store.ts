@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
 import { join } from "node:path";
 import os from "node:os";
-import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, unlinkSync } from "node:fs";
+import { resolveCodexDbPaths } from "./codex-thread-id.js";
 import type { ContextUsage, ContextUnknownReason } from "./types.js";
 import {
   contextUsageDirectory,
@@ -450,33 +451,7 @@ export class ContextUsageStore {
   }
 
   private resolveCodexStateDbPaths(): string[] {
-    if (!this.codexHomeDir) return [];
-
-    const codexDir = join(this.codexHomeDir, ".codex");
-    const discovered: Array<{ version: number; path: string }> = [];
-
-    try {
-      for (const entry of readdirSync(codexDir)) {
-        const match = entry.match(/^state_(\d+)\.sqlite$/);
-        if (!match) continue;
-        discovered.push({
-          version: Number(match[1]),
-          path: join(codexDir, entry),
-        });
-      }
-    } catch {
-      // Best-effort only; fall back to the current common filename below.
-    }
-
-    if (discovered.length === 0) {
-      discovered.push({ version: 5, path: join(codexDir, "state_5.sqlite") });
-    }
-
-    return discovered
-      .sort((a, b) => b.version - a.version)
-      .map((entry) => entry.path)
-      .filter((path, index, paths) => paths.indexOf(path) === index)
-      .filter((path) => existsSync(path));
+    return this.codexHomeDir ? resolveCodexDbPaths(this.codexHomeDir, "state") : [];
   }
 
   private readLatestCodexTokenCount(rolloutPath: string): CodexTokenCountEvent | null {
