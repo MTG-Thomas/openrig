@@ -10,7 +10,8 @@ import { resolveConcreteHint } from "../src/domain/runtime-adapter.js";
 import type { ProjectionPlan } from "../src/domain/projection-planner.js";
 import type { TmuxAdapter } from "../src/adapters/tmux.js";
 import type { StartupAction } from "../src/domain/types.js";
-import { deriveOriented } from "../src/domain/startup-proof.js";
+import { deriveOriented, issueStartupChallenge, verifyStartupProof } from "../src/domain/startup-proof.js";
+import { AgentActivityStore } from "../src/domain/agent-activity-store.js";
 import { AppliedLaunchObservationStore } from "../src/domain/applied-launch-observation-store.js";
 import { observeClaudePermission } from "../src/domain/permission-drift.js";
 
@@ -675,6 +676,86 @@ describe("StartupOrchestrator", () => {
     expect(deriveOriented(db, seed.nodeId)).toBe("n-a");
     const row = db.prepare("SELECT payload FROM events WHERE type='node.startup_pending'").get() as { payload: string };
     expect(JSON.parse(row.payload).startupProof).toEqual({ mode: "none", source: "default" });
+  });
+
+  function seedVerifiedProof() {
+    const seed = seedSession();
+    const store = new AgentActivityStore({ db, eventBus });
+    const challenge = issueStartupChallenge(eventBus, { ...seed, contractSource: "prior occupant" });
+    const submit = () => verifyStartupProof({ store, eventBus }, {
+      nodeId: seed.nodeId, challengeId: challenge.challengeId, answer: challenge.expectedAnswer,
+    });
+    expect(submit().ok).toBe(true);
+    expect(deriveOriented(db, seed.nodeId)).toBe("verified");
+    return { seed, submit };
+  }
+
+  describe.each(["fresh", "fresh-fallback"] as const)("%s lean proof boundary", (mode) => {
+    const launchInput = mode === "fresh-fallback"
+      ? { isRestore: true, resumeToken: "stale-token", allowFreshFallback: true }
+      : {};
+    function launchAdapter() {
+      const launch = vi.fn<RuntimeAdapter["launchHarness"]>().mockResolvedValue({ ok: true });
+      if (mode === "fresh-fallback") {
+        launch.mockResolvedValueOnce({ ok: false, recovery: "retry_fresh", error: "stale resume" });
+      }
+      return launch;
+    }
+
+    it.each(["ready", "attention", "timeout", "throws"] as const)("retires verified proof before readiness %s", async (readiness) => {
+      const { seed, submit } = seedVerifiedProof();
+      const observedAtReadiness: string[] = [];
+      const adapter = mockAdapter({
+        launchHarness: launchAdapter(),
+        checkReady: vi.fn(async () => {
+          observedAtReadiness.push(deriveOriented(db, seed.nodeId));
+          if (readiness === "throws") throw new Error("fixture readiness error");
+          if (readiness === "attention") return { ready: false, code: "login_required", reason: "fixture login" };
+          return { ready: readiness === "ready", reason: "fixture timeout" };
+        }),
+      });
+      const result = await createOrchestrator().startNode(makeInput(seed, {
+        ...launchInput, adapter, readinessTimeoutMs: 0,
+        startupActions: [makeAction({ type: "startup_proof", value: "none" })],
+      }));
+      expect(result.startupStatus).toBe(readiness === "ready" ? "ready" : readiness === "attention" ? "attention_required" : "failed");
+      expect(adapter.launchHarness).toHaveBeenCalledTimes(mode === "fresh-fallback" ? 2 : 1);
+      expect(observedAtReadiness.length).toBeGreaterThan(0);
+      expect(observedAtReadiness.every(value => value === "n-a")).toBe(true);
+      expect(deriveOriented(db, seed.nodeId)).toBe("n-a");
+      expect(submit()).toMatchObject({ ok: false, code: "challenge_stale" });
+      expect(db.prepare("SELECT count(*) AS n FROM events WHERE type='node.startup_proof_skipped'").get()).toEqual({ n: 1 });
+      expect(db.prepare("SELECT count(*) AS n FROM events WHERE type='node.startup_proof_verified'").get()).toEqual({ n: 1 });
+    });
+
+    it.each(["failed", "throws"] as const)("preserves verified proof when replacement launch %s", async (failure) => {
+      const { seed, submit } = seedVerifiedProof();
+      const launch = launchAdapter();
+      if (failure === "throws") launch.mockRejectedValue(new Error("fixture launch error"));
+      else launch.mockResolvedValue({ ok: false, error: "fixture launch failed" });
+      const adapter = mockAdapter({ launchHarness: launch });
+      const result = await createOrchestrator().startNode(makeInput(seed, { ...launchInput, adapter }));
+      expect(result.startupStatus).toBe("failed");
+      expect(launch).toHaveBeenCalledTimes(mode === "fresh-fallback" ? 2 : 1);
+      expect(adapter.checkReady).not.toHaveBeenCalled();
+      expect(deriveOriented(db, seed.nodeId)).toBe("verified");
+      expect(submit().ok).toBe(true);
+      expect(db.prepare("SELECT count(*) AS n FROM events WHERE type='node.startup_proof_skipped'").get()).toEqual({ n: 0 });
+    });
+  });
+
+  it.each(["resume", "adopt"] as const)("preserves verified proof when %s needs readiness attention", async (mode) => {
+    const { seed, submit } = seedVerifiedProof();
+    const adapter = mockAdapter({ checkReady: vi.fn(async () => ({ ready: false, code: "login_required" })) });
+    const result = await createOrchestrator().startNode(makeInput(seed, {
+      adapter, isRestore: true,
+      ...(mode === "resume" ? { resumeToken: "existing-token" } : { skipHarnessLaunch: true }),
+      startupActions: [makeAction({ type: "startup_proof", value: "none" })],
+    }));
+    expect(result.startupStatus).toBe("attention_required");
+    expect(deriveOriented(db, seed.nodeId)).toBe("verified");
+    expect(submit().ok).toBe(true);
+    expect(db.prepare("SELECT count(*) AS n FROM events WHERE type='node.startup_proof_skipped'").get()).toEqual({ n: 0 });
   });
 
   it("rejects unknown persisted proof selection before projection or launch", async () => {

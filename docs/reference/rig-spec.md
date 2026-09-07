@@ -381,7 +381,10 @@ Identity delivery, projection, readiness, and ordinary startup actions still
 run. `startup_status: ready` means startup completed, while `oriented: missing`
 means a selected proof awaits authenticated submission. Omission/`none` yields
 `oriented: n-a` on a new fresh launch and retires an older challenge without
-deleting its audit history. Resume/adoption preserves existing proof history.
+deleting its audit history. Retirement follows successful harness launch,
+before readiness checks, so attention, timeout, or a readiness exception cannot
+retain the preceding proof. A replacement that fails to launch does not retire
+the current proof; resume/adoption also preserves existing proof history.
 The effective selection is recorded on `node.startup_pending`; actions are
 persisted in startup context for restore and fresh relaunch.
 

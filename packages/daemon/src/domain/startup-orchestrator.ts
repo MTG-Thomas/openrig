@@ -266,6 +266,18 @@ export class StartupOrchestrator {
       }
     }
 
+    // A successful new lean launch replaces the occupant's proof boundary even
+    // if readiness later fails. Failed launches and resume/adopt retain history.
+    const isFreshLaunch = continuityOutcome === "fresh" && !input.skipHarnessLaunch;
+    const shouldChallenge = isFreshLaunch
+      && input.adapter.runtime !== "terminal" && startupProof.mode === "authenticated";
+    if (isFreshLaunch && !shouldChallenge) {
+      this.eventBus.emit({
+        type: "node.startup_proof_skipped", rigId: input.rigId, nodeId: input.nodeId,
+        reason: input.adapter.runtime === "terminal" ? "terminal" : "not_selected",
+      });
+    }
+
     // 6. Wait for harness readiness (retry with exponential backoff, 30s timeout)
     try {
       const readiness = await this.waitForReady(input.adapter, input.binding, input.readinessTimeoutMs ?? 30_000);
@@ -289,12 +301,9 @@ export class StartupOrchestrator {
       this.appliedLaunchStore.recordGeneration(launchGeneration, appliedLaunch);
     }
 
-    // Only an authored selection challenges a fresh/fresh-fallback agent.
-    // Resuming/adopting retains existing proof history; a new lean launch
-    // retires it. Persist ground truth BEFORE delivering any proof prompt.
+    // Issue selected proof only once the runtime can receive its prompt.
+    // Persist ground truth BEFORE delivering any proof prompt.
     const identityAction = this.extractSessionIdentityAction(input.startupActions, context);
-    const shouldChallenge = continuityOutcome === "fresh" && !input.skipHarnessLaunch
-      && input.adapter.runtime !== "terminal" && startupProof.mode === "authenticated";
     const challenge = shouldChallenge
       ? issueStartupChallenge(this.eventBus, {
           rigId: input.rigId,
@@ -302,13 +311,6 @@ export class StartupOrchestrator {
           contractSource: JSON.stringify(input.resolvedStartupFiles),
         })
       : null;
-
-    if (!challenge && continuityOutcome === "fresh" && !input.skipHarnessLaunch) {
-      this.eventBus.emit({
-        type: "node.startup_proof_skipped", rigId: input.rigId, nodeId: input.nodeId,
-        reason: input.adapter.runtime === "terminal" ? "terminal" : "not_selected",
-      });
-    }
 
     // A selected proof still works without a session_identity action: deliver
     // its standalone prompt after the post-launch contract files below.
