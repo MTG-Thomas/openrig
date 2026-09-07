@@ -11,7 +11,7 @@ not know exists.** So the point of what follows is not skill. It is recognition:
 lands, something rhymes, and you go check instead of building.
 
 Eighty-one-plus top-level verbs ship (capability canon refreshed through
-`capability-delta-v0.5.10`). Read this once for shape, and let it make you suspicious that a thing
+`capability-delta-v0.5.11`). Read this once for shape, and let it make you suspicious that a thing
 already exists. Model-divergence proclamations are live product (trust them; pins use canonical
 model IDs).
 
@@ -88,11 +88,12 @@ unseen — which makes messages the one delivery channel that never gets skipped
   someone lists the stream before starting.
 - **`rig terminal open <view>`** — bring every live agent in a rig, mission or slice up as real
   typeable tiles at once.
-- **`rig walk <seat> --through <files> --pace <n>`** — deliver a *sequence* of context into a seat
-  one piece at a time, with a gap between pieces. **This is how you hand somebody a large amount of
-  material without dumping it**: absorption between pieces is the whole mechanism, and sending
-  faster than the receiver thinks merges everything into one turn and destroys it. It is also how
-  you were onboarded, and how you would onboard someone else.
+- **`rig walk <seat> --through <files> --pace <n>`** — deliver context pieces through
+  file-backed terminal paste. When the current native generation record resolves, the complete
+  piece and its matching Claude/Codex turn closure must arrive before pacing onward, including
+  the last piece. Initial missing evidence is explicitly unverified; a record lost or replaced
+  during verification stops the walk. Use `rig walk --help` for those receipts and bounds.
+  Delivery and turn completion do not prove comprehension.
 - **`rig slack`** — inspect and manage one connector implementation. Use registered-human
   readiness for the delivery decision and `queue create --verify` for its receipt; connector
   setup or verification is not an outbound human message.
@@ -162,10 +163,16 @@ cheaper than being it.
   from `project.yaml` → `mission.yaml` → `slice.yaml`, inspect it without writing, then start an
   eligible graph with an opaque replay key. Typed acceptance candidate, verdict, and evidence
   travel through `workflow project`; workflow completion alone is never release acceptance.
+  A project-owned release profile carries required obligations across missions; explicit
+  extensions/overrides preserve them. Reach for `docs/reference/project-release-profile.yaml`
+  when release graphs keep being copied or losing stages. The release ceremony and post-release
+  boundary remain distinct; no successor is required to finish. Agents judge the evidence.
 - **`rig workflow instantiate`** — start a multi-step, multi-seat run as one governed instance with
   an entry packet that lands on a real owner.
-- **`rig workflow status`** — **which instances need *you*, right now**, with the reason and next
-  action. This is the "what is waiting on me" surface.
+- **`rig workflow status`** — which instances need attention, with reason and next action.
+  Inspect the exact exception occurrence and packet: resolved overdue work is reconciled without
+  closing an overdue sibling. Registered-human fallback reports missing or ambiguous selection
+  instead of inventing a recipient. Follow the state/error and `workflow show`/`trace` before retrying.
 - **`rig workflow show` / `trace`** — what this instance is, and every step, actor and exit that
   got it here.
 - **`rig workflow continue`** — where you are in a run you have been handed. **It is read-only. It
@@ -178,6 +185,12 @@ cheaper than being it.
   watch it happen, or see what exists.
 
 ## Bringing things into and out of existence
+
+**For a first useful repository change**, preview `first-project`, inspect
+`rig up first-project --cwd . --plan`, and follow `docs/reference/getting-started.md`.
+Its native Codex owner/checker team is the focused starting point; verify prerequisites and
+actual runtime readiness before work. Existing Herdr/cmux terminals can present the managed team
+through `rig terminal open`.
 
 **Need a small team now, without authoring YAML?** Start with `rig create`, then use `rig grow`
 (including `--new-pod`) while it runs. A working topology can become a reusable spec later; you do
@@ -223,8 +236,11 @@ because someone lost work once.
 - **`rig start`** — the box rebooted and everything is gone: bring the whole topology back in one
   move, rather than hand-restoring rig by rig. Selected-rig recovery now demands positive runtime
   evidence and refuses stale identity by name rather than substituting an occupant.
-- **`rig daemon start` / `stop` / `status` / `logs`** — bounce the control plane, or read what it
-  actually tried and refused, in its own voice.
+- **`rig daemon start` / `stop` / `status` / `logs`** — startup reserves the local instance and
+  verifies its own child on required listeners. Inspect a retained reservation before retrying.
+  Stop distinguishes process/listener exit from a clean asynchronous drain: inspect the matching
+  `daemon-shutdown.json` and log when completion is incomplete or unverified. No target is a
+  distinct no-op, and a timeout never proves down. Use command help for exact limits and recovery.
 - **`rig doctor`** — is the *installation* wired up correctly, or are you chasing a bug that is
   really a broken install. **`rig preflight`** asks whether this machine can run OpenRig at all.
 - **`rig crash-cart`** — the daemon is down or not answering: what was running before it died, and
@@ -317,6 +333,9 @@ scheme, and nothing downstream can see it.
   loadout, `--apply-skills` to reconcile its owned harness projection, or `--deliver` to emit the
   exact extant files in order while marking absent pieces visibly. Without the flags it remains
   plan-only.
+  `context profile` and `context work-install` both accept `--runtime claude-code` (alias
+  `claude`) or `codex`; explicit invalid values refuse before projection. This does not rename
+  every other command's runtime vocabulary.
 - **`rig context show` / `sync` / `rm`** — what is inside a context pack before you prime a seat
   with it, and how to make the library catch up when you edit one.
 - **`rig context get <name-or-ref>`** — pull exact context by address instead of reading files:
@@ -397,6 +416,9 @@ reaching them is ordinary work rather than an escalation.
   to the external participant, not a separate outbound route.
 - **`rig gateway human add`** — register a person and their connector binding. Registration or
   connector changes do not themselves authorize a message.
+- **During local-daemon outage, remote HTTP sender attribution still uses the originating
+  instance's durable identity.** A selected remote or forwarded endpoint never becomes the origin.
+  Missing local identity remains explicitly unknown; transport success is not operation success.
 - **Across a host boundary, "it didn't work" has four distinct shapes** — unreachable machine,
   permission gate, remote runtime down, or the remote command itself failed. Collapsing them throws
   away a diagnosis you already had. **And a transport that succeeded says nothing about whether the
@@ -435,12 +457,18 @@ your circumstances is configuration, and the ones that are not, another agent ca
 - **`rig setup`** — what OpenRig would change about this machine, shown before it touches anything.
 - **`rig usage series`** — what a seat's token curve has looked like over time: climbing steadily,
   reset, or stopped reporting entirely. The last one is a signal, not a gap.
-- **`rig tui`** — the interactive view over rigs, pods, seats and specs. **`rig tui commands`**
-  lists everything it can do without launching it. Open the instance row for one continuous
-  cross-rig agent table with pod separators and material `RECENT` transitions; drill into a rig,
-  mission, slice, or agent without losing the owning identity. **`rig ui open`** is unmaintained,
-  best-effort, and replaced by the TUI, so never diagnose product behaviour from the web UI. The
-  TUI plus Slack are the human surface; the CLI plus terminal are the agent surface.
+- **`rig tui`** — the interactive view over rigs, pods, seats and specs. `rig tui --shared`
+  attaches to the existing kernel terminal; Ctrl-b then d detaches, and no missing seat or
+  terminal is implicitly launched. Plain `rig tui` remains a separate view.
+  Open the instance row for one continuous cross-rig agent table with pod separators and material
+  `RECENT` transitions; drill into a rig, mission, slice, or agent without losing the owning
+  identity. Use the mission's workflow/packet view and Specs purpose/source to understand work.
+  Tab completes commands and snapshot arguments; Recent opens original events. `connections`
+  compares effective config with running services and human bindings, passively; dated
+  verification does not prove delivery. `timezone` gives persistent local-time guidance.
+  **`rig tui commands`** lists everything it can do without launching it. **`rig ui open`** is
+  unmaintained, best-effort, and replaced by the TUI, so never diagnose product behaviour from
+  the web UI. The TUI plus Slack are the human surface; the CLI plus terminal are the agent surface.
 - **`rig mcp serve`** — how an agent that speaks MCP rather than shell drives OpenRig, and which
   operations are exposed that way. Relevant the moment a tool you are integrating cannot run a
   shell command.
@@ -448,8 +476,10 @@ your circumstances is configuration, and the ones that are not, another agent ca
   selectors, target, and current/missing/shadowed/conflicting state for one working directory.
   `--apply` writes only the managed ownership set, is idempotent, and refuses local edits or
   unowned collisions.
-- **`rig startup-proof submit`** — prove you actually oriented at boot, rather than claiming you
-  read the prompt.
+- **`rig startup-proof submit`** — answer an explicitly selected authenticated startup challenge.
+  Startup adds no proof exercise by default. Declare `startup_proof` with `authenticated` or
+  `none` in the applicable startup layers; see `docs/reference/rig-spec.md#startup-block/startup-proof-selection`.
+  Terminal nodes never challenge, and resume/adoption does not create a new challenge.
 
 ---
 
