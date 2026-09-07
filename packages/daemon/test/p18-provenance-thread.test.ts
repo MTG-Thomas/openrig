@@ -106,6 +106,18 @@ describe("P18 provenance thread — header-absent delivery must not launder clai
     expect(row?.identity_provenance).toBe("transport:v1");
   });
 
+  it.each([{ "x-openrig-origin-unknown": "true" }, { "x-openrig-relay": "true", "x-openrig-provenance": "origin-unknown:v1" }])("queue create preserves unknown origin durably across direct and relayed delivery: %j", async (relayHeaders) => {
+    const res = await app.request("/api/queue/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-OpenRig-Session": "me@rig", ...relayHeaders },
+      body: JSON.stringify({ destinationSession: "dest@rig", body: "origin unavailable" }),
+    });
+    expect(res.status).toBe(201);
+    const { qitemId } = await res.json() as { qitemId: string };
+    expect(db.prepare("SELECT source_session FROM queue_items WHERE qitem_id = ?").get(qitemId)).toEqual({ source_session: "me@rig" });
+    expect(db.prepare("SELECT identity_provenance FROM queue_transitions WHERE qitem_id = ? ORDER BY rowid LIMIT 1").get(qitemId)).toEqual({ identity_provenance: "origin-unknown:v1" });
+  });
+
   // queue_transitions table — create (queue.ts:470)
   it("queue create: header ABSENT + body sourceSession → delivers, transition records claimed:v1 (NOT transport:v1)", async () => {
     const res = await app.request("/api/queue/create", {

@@ -10,11 +10,11 @@ import type { StatusDeps } from "../src/commands/status.js";
 function mockLifecycleDeps(): LifecycleDeps {
   return { spawn: vi.fn(() => ({ pid: 1, unref: vi.fn() }) as never), fetch: vi.fn(async () => ({ ok: true })), kill: vi.fn(() => true), readFile: vi.fn(() => null), writeFile: vi.fn(), removeFile: vi.fn(), exists: vi.fn(() => false), mkdirp: vi.fn(), openForAppend: vi.fn(() => 3), isProcessAlive: vi.fn(() => true) };
 }
-function captureLogs(fn: () => Promise<void>): Promise<{ logs: string[]; exitCode: number | undefined }> {
+function captureLogs(fn: () => Promise<void>): Promise<{ logs: string[]; stdout: string[]; exitCode: number | undefined }> {
   return new Promise(async (resolve) => {
-    const logs: string[] = []; const origLog = console.log; const origErr = console.error; const origExitCode = process.exitCode; process.exitCode = undefined;
-    console.log = (...args: unknown[]) => logs.push(args.join(" ")); console.error = (...args: unknown[]) => logs.push(args.join(" "));
-    try { await fn(); } finally { console.log = origLog; console.error = origErr; } const exitCode = process.exitCode; process.exitCode = origExitCode; resolve({ logs, exitCode });
+    const logs: string[] = []; const stdout: string[] = []; const origLog = console.log; const origErr = console.error; const origExitCode = process.exitCode; process.exitCode = undefined;
+    console.log = (...args: unknown[]) => { logs.push(args.join(" ")); stdout.push(args.join(" ")); }; console.error = (...args: unknown[]) => logs.push(args.join(" "));
+    try { await fn(); } finally { console.log = origLog; console.error = origErr; } const exitCode = process.exitCode; process.exitCode = origExitCode; resolve({ logs, stdout, exitCode });
   });
 }
 function runningDeps(port: number): StatusDeps {
@@ -258,10 +258,10 @@ describe("Broadcast CLI", () => {
   });
 
   it("broadcast --json prints raw JSON", async () => {
-    const { logs } = await captureLogs(async () => {
+    const { stdout } = await captureLogs(async () => {
       await makeCmd().parseAsync(["node", "rig", "broadcast", "--rig", "my-rig", "hello", "--json"]);
     });
-    const parsed = JSON.parse(logs.join("\n"));
+    const parsed = JSON.parse(stdout.join("\n"));
     expect(parsed.total).toBe(2);
     expect(parsed.sent).toBe(2);
   });

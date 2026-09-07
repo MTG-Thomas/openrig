@@ -31,6 +31,11 @@ import type { Context } from "hono";
  * surfaces. This extends that existing, correctly-degrading pattern to the sites that used to refuse.
  */
 export const SENDER_IDENTITY_HEADER = "x-openrig-session";
+export const ORIGIN_UNKNOWN_HEADER = "x-openrig-origin-unknown";
+
+function transportProvenance(c: Context): Exclude<IdentityProvenance, "relay:v1"> {
+  return c.req.header(ORIGIN_UNKNOWN_HEADER) === "true" ? "origin-unknown:v1" : "transport:v1";
+}
 
 export type SenderIdentity =
   // `provenance` is the NON-RELAY subset — this helper only ever derives locally: transport:v1 when the
@@ -50,9 +55,9 @@ export function requireSenderIdentity(
     // Transport path — the header PROVED the actor at this hop. P18 SWEEP: the wire SUPERSEDES any body
     // claim (the 409 identity_mismatch refusal is retired). A disagreeing body actor is noise to be
     // superseded, not an attack to refuse — the wire decides the actor, the body never does. Deliver
-    // under the certified transport identity, labelled transport:v1 as shipped; the discrepancy is not
+    // under the transport seat identity, preserving any unknown-origin marker; the discrepancy is not
     // persisted (ruling (A) — no new field/schema). `claim` is intentionally ignored on this path.
-    return { ok: true, session, provenance: "transport:v1" };
+    return { ok: true, session, provenance: transportProvenance(c) };
   }
   // No transport identity: deliver under the body-declared actor, labelled honestly as claimed-era.
   if (claim) return { ok: true, session: claim, provenance: "claimed:v1" };
@@ -75,6 +80,7 @@ export function requireSenderIdentity(
  * type so every producer (this helper, the forwarding re-stamp, the recorded-provenance decider) speaks
  * the same closed alphabet:
  *   - `transport:v1` — derived from the transport chokepoint (X-OpenRig-Session on a local request).
+ *   - `origin-unknown:v1` — seat known, originating instance unavailable; carried unchanged across hops.
  *   - `relay:v1`     — a forwarding daemon re-stamped from its OWN authenticated context (cross-host).
  *   - `claimed:v1`   — a founder-visible-surface UI/MCP tap under a not-yet-plumbed principal (the named
  *                      deferral); honest "pre-verification" of a TODAY actor.
@@ -82,7 +88,7 @@ export function requireSenderIdentity(
  * legacy row stays distinguishable from a `claimed:v1` tap today (the era boundary). A forward must
  * PRESERVE `claimed:v1` (never upgrade it to transport:v1/relay:v1 — that would launder unverified→verified).
  */
-export type IdentityProvenance = "transport:v1" | "relay:v1" | "claimed:v1";
+export type IdentityProvenance = "transport:v1" | "relay:v1" | "claimed:v1" | "origin-unknown:v1";
 
 export type ActorWithDeferral =
   // provenance is the NON-RELAY subset: this helper only ever produces transport:v1 (header present) or
@@ -116,8 +122,8 @@ export function resolveActorWithDeferral(
     // Transport path (CLI/DaemonClient stamped the header). P18 SWEEP: the wire SUPERSEDES any body
     // claim — the 409 identity_mismatch is retired here too, so the two sibling helpers agree that a
     // disagreeing body actor is noise to be superseded, never an attack to refuse. Deliver under the
-    // certified transport identity, labelled transport:v1 as shipped; the discrepancy is not persisted.
-    return { ok: true, session, provenance: "transport:v1" };
+    // transport seat identity, preserving any unknown-origin marker; the discrepancy is not persisted.
+    return { ok: true, session, provenance: transportProvenance(c) };
   }
   // Header absent = the browser UI / MCP path → NAMED DEFERRAL (never-break): record the body actor as
   // the DECLARED claimed-era variant `claimed:v1` (not null). A claimed-era actor is still required.
@@ -166,7 +172,8 @@ export function resolveRecordedProvenance(
   identity: { provenance: Exclude<IdentityProvenance, "relay:v1"> },
 ): IdentityProvenance {
   const relayed = !!c.req.header(RELAY_HEADER)?.trim();
+  if (c.req.header(ORIGIN_UNKNOWN_HEADER) === "true") return "origin-unknown:v1";
   if (!relayed) return identity.provenance; // transport:v1 (proven here) | claimed:v1 (the deferral)
   const carried = c.req.header(IDENTITY_PROVENANCE_HEADER)?.trim();
-  return carried === "transport:v1" ? "relay:v1" : "claimed:v1";
+  return carried === "origin-unknown:v1" ? carried : carried === "transport:v1" ? "relay:v1" : "claimed:v1";
 }

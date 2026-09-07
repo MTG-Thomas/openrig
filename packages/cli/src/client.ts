@@ -3,6 +3,7 @@ import path from "node:path";
 import { ConfigStore } from "./config-store.js";
 import { readOpenRigEnv } from "./openrig-compat.js";
 import { fetchWithTimeout, FetchTimeoutError } from "./fetch-with-timeout.js";
+import { readLocalOrigin } from "./local-origin.js";
 
 export function terminalAuthHeaders(): Record<string, string> {
   const token = resolveTerminalToken();
@@ -23,14 +24,7 @@ export const SENDER_IDENTITY_HEADER = "X-OpenRig-Session";
 export function senderIdentityHeaders(originSelfHostId?: string): Record<string, string> {
   const session = readOpenRigEnv("OPENRIG_SESSION_NAME", "RIGGED_SESSION_NAME")?.trim();
   if (!session) return {};
-  // A4 HTTP-path origin-triple carry: on a REMOTE-targeting client, compose the origin TRIPLE
-  // (member@rig@<this host's selfHostId>) at stamp time so the remote daemon's wrapPaneEnvelope
-  // renders the ORIGIN host, not the destination's (its preserve branch fires on a 3-part sender).
-  // The identity stays DERIVED — env session + THIS host's own selfHostId — never a caller-supplied
-  // string (Rail 1 anti-forgery: `originSelfHostId` signals only THAT the client targets a remote host,
-  // never WHO it is). An already-3-part origin (an upstream relay's triple) is preserved verbatim,
-  // never re-stamped with this host's id (which would forge the origin). Local clients pass no
-  // `originSelfHostId` and stamp the 2-part value, byte-identical to today.
+  // Preserve qualified senders; append only a locally derived instance id.
   const value =
     originSelfHostId && originSelfHostId.length > 0 && session.split("@").length < 3
       ? `${session}@${originSelfHostId}`
@@ -38,18 +32,7 @@ export function senderIdentityHeaders(originSelfHostId?: string): Record<string,
   return { [SENDER_IDENTITY_HEADER]: value };
 }
 
-/**
- * A4 — the SINGLE remote-origin construction point (shape b). Every remote-targeting client is built
- * HERE so the origin triple is stamped uniformly. Two structural laws the A4 grep-guard enforces:
- * (1) no remote site constructs a client by calling `clientFactory(<registry host>.url)` directly —
- * they all route through here; (2) `originSelfHostId` is ASSIGNED in exactly ONE place: this function
- * (the sole-assignment law, so pin 3 "no caller-supplied identity path" is structurally true).
- *
- * `originSelfHostId` is THIS host's own id (resolved fail-open via `fetchSelfHostId` on the LOCAL
- * daemon), NOT a caller-supplied identity — the caller only signals it targets a remote host. Preserves
- * the injected-mock `clientFactory` test seam: the client is built by the injected factory; this only
- * sets a field on it afterward (an injected mock harmlessly carries the extra property).
- */
+/** Construct registered remote clients with the origin derived from this instance's durable store. */
 export function remoteDaemonClient(
   clientFactory: (baseUrl: string) => DaemonClient,
   url: string,
@@ -57,6 +40,7 @@ export function remoteDaemonClient(
 ): DaemonClient {
   const client = clientFactory(url);
   client.originSelfHostId = originSelfHostId;
+  client.remoteTarget = true;
   return client;
 }
 
@@ -129,15 +113,41 @@ export class DaemonClient {
   readonly baseUrl: string;
   private fetchImpl: typeof fetch = fetch;
   private timeoutMs = 5_000;
-  /**
-   * A4 HTTP-path origin-triple carry: THIS host's `selfHostId`, set ONLY when this client targets a
-   * REMOTE host, so `senderIdentityHeaders` stamps the origin TRIPLE (member@rig@selfHostId) instead of
-   * the 2-part local value. Undefined for local clients (2-part stamp, unchanged). Assigned in EXACTLY
-   * ONE place — `remoteDaemonClient` — enforced by the A4 grep-guard (the sole-assignment law); this is
-   * NOT a caller identity string (Rail 1: it is THIS host's derived id, never who the caller claims to
-   * be). Public (not ctor-injected) to keep the injected-mock `clientFactory` test seam untouched.
-   */
+  /** Set by remoteDaemonClient; absent origin is labelled explicitly on remote requests. */
   originSelfHostId?: string;
+  remoteTarget = false;
+  private identity?: Promise<Record<string, string>>;
+  private originUnknown = false;
+
+  private async identityHeaders(): Promise<Record<string, string>> {
+    const localHeaders = senderIdentityHeaders();
+    const session = localHeaders[SENDER_IDENTITY_HEADER];
+    if (!session || session.split("@").length >= 3) return localHeaders;
+    const directTarget = readOpenRigEnv("OPENRIG_URL", "RIGGED_URL");
+    if (!this.remoteTarget && !directTarget) return localHeaders;
+    const origin = this.originSelfHostId ?? readLocalOrigin();
+    if (!origin) {
+      this.originUnknown = true;
+      return { ...localHeaders, "X-OpenRig-Origin-Unknown": "true" };
+    }
+    if (!this.remoteTarget) {
+      // Loopback may be a forwarded endpoint. Only matching instance identity proves locality.
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const target = await Promise.race([
+          (async () => {
+            const res = await this.fetchImpl(`${this.baseUrl.replace(/\/+$/, "")}/healthz`, { signal: controller.signal });
+            return res.ok ? (await res.json() as { selfHostId?: unknown }).selfHostId : undefined;
+          })(),
+          new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), Math.min(this.timeoutMs, 1000)); }),
+        ]);
+        if (target === origin) return localHeaders;
+      } catch { /* Unproved locality: carry the known origin, never the endpoint's identity. */ }
+      finally { clearTimeout(timer); controller.abort(); }
+    }
+    return senderIdentityHeaders(origin);
+  }
 
   constructor(baseUrl?: string, options?: DaemonClientOptions) {
     if (baseUrl) {
@@ -213,11 +223,11 @@ export class DaemonClient {
     }
     // P18 sender-provenance: stamp the seat-derived identity header LAST, so the transport — never a
     // caller-supplied header or a request body — decides the caller identity the channel of record records.
-    // A4: a remote-targeting client (originSelfHostId set by remoteDaemonClient) stamps the origin TRIPLE;
-    // local clients stamp the 2-part value, byte-identical to today.
-    init = { ...init, headers: { ...(init.headers as Record<string, string> ?? {}), ...senderIdentityHeaders(this.originSelfHostId) } };
+    // Known remote or unproved direct endpoints carry origin; proven local requests remain bare.
+    this.identity ??= this.identityHeaders();
+    init = { ...init, headers: { ...(init.headers as Record<string, string> ?? {}), ...await this.identity } };
     try {
-      return await fetchWithTimeout(
+      const response = await fetchWithTimeout(
         this.fetchImpl,
         `${this.baseUrl}${path}`,
         init,
@@ -226,6 +236,11 @@ export class DaemonClient {
           timeoutMessage: `Request to ${this.baseUrl}${path} timed out after ${timeoutMs}ms`,
         },
       );
+      if (response.ok && this.originUnknown) {
+        console.error("Origin instance unknown: local durable identity is unavailable; delivery continues with origin-unknown provenance.");
+        this.originUnknown = false;
+      }
+      return response;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Slow-response (a timed-out request) is a DISTINCT class from no-connect:

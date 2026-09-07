@@ -9,7 +9,7 @@ import type {
 import { QueueRepositoryError, newQitemId, deriveCrossHostSuccessorId, stampSelfHostSuffix, classifyNudgeFailure } from "../domain/queue-repository.js";
 import type { QueueItem } from "../domain/queue-repository.js";
 import { parseSessionName, isHumanSeatSessionRef } from "../domain/session-name.js";
-import { requireSenderIdentity, resolveRecordedProvenance } from "./require-sender-identity.js";
+import { requireSenderIdentity, resolveRecordedProvenance, ORIGIN_UNKNOWN_HEADER } from "./require-sender-identity.js";
 import { hostname as osHostname } from "node:os";
 import type { InboxHandler } from "../domain/inbox-handler.js";
 import { InboxHandlerError } from "../domain/inbox-handler.js";
@@ -204,6 +204,7 @@ export function queueRoutes(): Hono {
     c: {
       get: (key: string) => unknown;
       json: (body: unknown, status?: number) => Response;
+      req: { header: (name: string) => string | undefined };
     },
     hostId: string,
     path: string,
@@ -238,6 +239,7 @@ export function queueRoutes(): Hono {
       body: forwardBody,
       timeoutMs: QUEUE_FORWARD_TIMEOUT_MS,
       fetchImpl,
+      headers: c.req.header(ORIGIN_UNKNOWN_HEADER) === "true" ? { [ORIGIN_UNKNOWN_HEADER]: "true" } : undefined,
     });
     if (res.ok) {
       // The origin daemon's structured response, verbatim — its row is the
@@ -304,6 +306,7 @@ export function queueRoutes(): Hono {
     c: {
       get: (key: string) => unknown;
       json: (body: unknown, status?: number) => Response;
+      req: { header: (name: string) => string | undefined };
     },
     qitemId: string,
     hostId: string,
@@ -359,7 +362,7 @@ export function queueRoutes(): Hono {
       // 51-09 incr 4a — stamp-at-FORWARD: this forwarding daemon IS the origin,
       // so stamp its own self-id onto the sender identity before forwarding (the
       // remote create()'s not-bare guard then leaves it — origin never forged).
-      sourceSession: stampSelfHostSuffix(body.fromSession),
+      sourceSession: c.req.header(ORIGIN_UNKNOWN_HEADER) === "true" ? body.fromSession : stampSelfHostSuffix(body.fromSession),
       destinationSession: body.toSession,
       body: body.body ?? source.body,
       priority: body.priority ?? source.priority,
@@ -461,7 +464,7 @@ export function queueRoutes(): Hono {
         // 51-09 incr 4a — stamp-at-FORWARD: this forwarding daemon is the origin,
         // so it stamps its OWN self-id (overriding the bare spread) before the
         // remote create() runs — else the remote would forge member@rig@RECEIVER.
-        sourceSession: stampSelfHostSuffix(sourceSession),
+        sourceSession: c.req.header(ORIGIN_UNKNOWN_HEADER) === "true" ? sourceSession : stampSelfHostSuffix(sourceSession),
         tags: crossHostProvenanceTags(body.tags),
       };
       const fwd = await forwardQueueWrite(c, body.hostId, "/api/queue/create", forwardBody);

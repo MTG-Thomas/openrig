@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import type { ChildProcess } from "node:child_process";
 import { DAEMON_STOP_WAIT_MS, DAEMON_SHUTDOWN_RECEIPT, type DaemonShutdownReceipt } from "@openrig/daemon/daemon-shutdown";
 import { ConfigStore } from "./config-store.js";
+import { readLocalOrigin } from "./local-origin.js";
 import { OPENRIG_HOME, LEGACY_RIGGED_HOME, readOpenRigEnv } from "./openrig-compat.js";
 import {
   ensureDefaultWorkspace,
@@ -1056,29 +1057,9 @@ export async function fetchSelfHostIdentity(
   }
 }
 
-/**
- * A4 HTTP-path origin-triple carry: resolve THIS host's `selfHostId` for a REMOTE-targeting client,
- * so the stamped X-OpenRig-Session becomes the origin TRIPLE (member@rig@selfHostId) and the remote
- * daemon renders the ORIGIN host. The id comes from the LOCAL daemon's /healthz (env OPENRIG_URL,
- * else the running local daemon), via the shipped fail-open `fetchSelfHostId`. C1 fail-open all the
- * way down: no env URL and no running local daemon ⇒ `undefined` ⇒ the 2-part header stamps (today's
- * behavior, no new failure mode). This is THIS host's own derived id, never a caller-supplied string.
- */
-export async function resolveOriginSelfHostId(deps: LifecycleDeps): Promise<string | undefined> {
-  // C1 fail-open around the WHOLE resolution, not just fetchSelfHostId: a remote op must NEVER depend on
-  // local daemon health. getDaemonStatus can throw (down / mid-restart / minimal test deps); ANY failure
-  // ⇒ undefined ⇒ the 2-part header stamps (today's behavior). Pin 5: no new failure mode on the remote path.
-  try {
-    let localUrl = readOpenRigEnv("OPENRIG_URL", "RIGGED_URL");
-    if (!localUrl) {
-      const status = await getDaemonStatus(deps);
-      if (status.state === "running" && status.port !== undefined) localUrl = getDaemonUrl(status);
-    }
-    if (!localUrl) return undefined;
-    return await fetchSelfHostId(deps, localUrl);
-  } catch {
-    return undefined;
-  }
+/** Resolve this instance's persisted identity even during an outage; never read it from the target. */
+export async function resolveOriginSelfHostId(_deps: LifecycleDeps): Promise<string | undefined> {
+  return readLocalOrigin();
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

@@ -961,6 +961,21 @@ commands use single-hop SSH CLI-side shell-out; HTTP-transport commands talk to
 the remote daemon API. The local daemon is not involved in SSH routing. The
 remote host is expected to have its own managed `rig` available on `$PATH`.
 
+HTTP sender attribution uses the originating instance's persisted self-host
+identity, read without creating or changing its database. Explicit DB config
+wins; otherwise the last daemon launch's DB selection is retained. This works
+while the local daemon is stopped. The destination's identity and the configured
+display name are never used as the origin.
+
+Ordinary local requests retain bare seat names. For an explicit `OPENRIG_URL`
+(or legacy `RIGGED_URL`), a bounded health probe preserves bare addressing only
+when the target's self-host identity matches the local one. A different,
+unavailable, or ambiguous target—including a loopback forwarding endpoint—gets
+the known origin suffix. Already-qualified senders remain unchanged. If the
+local origin cannot be read, delivery proceeds with `origin-unknown:v1`
+provenance and a diagnostic after a successful response; queue forwarding
+preserves that uncertainty rather than attributing the sender to the relay.
+
 Hosts are declared by the operator in `~/.openrig/hosts.yaml`:
 
 ```yaml

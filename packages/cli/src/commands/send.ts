@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { resolveEffectiveHost } from "../host-selection.js";
 import { DaemonClient, DaemonConnectionError, DaemonTimeoutError, terminalAuthHeaders } from "../client.js";
-import { getDaemonStatus, getDaemonUrl, fetchSelfHostId } from "../daemon-lifecycle.js";
+import { getDaemonStatus, getDaemonUrl, fetchSelfHostId, resolveOriginSelfHostId } from "../daemon-lifecycle.js";
 import { realDeps } from "./daemon.js";
 import type { StatusDeps } from "./status.js";
 import { loadHostRegistry, resolveHost, hostDisplayTarget, type HttpHostEntry } from "../host-registry.js";
@@ -379,12 +379,7 @@ agent@rig@host is sugar for --host when the suffix is a REGISTERED host id
       }
       if (!opts.context && refuseEmptyMessage(text!, "send", Boolean(opts.json))) return;
 
-      // 51-09 increment 3: resolve the local daemon URL ONCE (reused for the
-      // client below) and best-effort read THIS host's boot-reconciled self-id
-      // from it — ONE identity source + one addressing resolution (rider b), the
-      // same /healthz field the daemon exposes. Fail-open to undefined (C1): the
-      // sugar self-strip and the From: triple both degrade to today's exact
-      // behavior when it is absent (daemon down / pre-reconcile).
+      // The endpoint selects delivery; the local durable store identifies the origin.
       const localDaemonUrl = await resolveLocalDaemonUrl(deps);
       const selfHostId = await fetchSelfHostId(deps.lifecycleDeps, localDaemonUrl);
 
@@ -422,7 +417,8 @@ agent@rig@host is sugar for --host when the suffix is a REGISTERED host id
         // text is validated-defined here: --context is rejected with --host (above,
         // for both explicit and sugar forms), and the single-seat (no text && no
         // context) guard requires it on this path.
-        await runCrossHostSend(opts.host, session, text!, opts, deps, waitForIdleMs, crossHostHint, selfHostId, seatSender);
+        const originId = await resolveOriginSelfHostId(deps.lifecycleDeps);
+        await runCrossHostSend(opts.host, session, text!, opts, deps, waitForIdleMs, crossHostHint, originId, seatSender);
         return;
       }
 

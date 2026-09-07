@@ -11,6 +11,10 @@
 // precedence contract.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { sendCommand, type SendDeps } from "../src/commands/send.js";
 import { captureCommand, type CaptureDeps } from "../src/commands/capture.js";
 import { transcriptCommand, type TranscriptDeps } from "../src/commands/transcript.js";
@@ -598,33 +602,38 @@ describe("broadcast --host (net-new, CLI-direct POST)", () => {
   // A4 PIN 1 — THE MONEY PIN (the receipt's exact failure). A broadcast relayed over HTTP stamps the
   // ORIGIN triple member@rig@<origin selfHostId> on X-OpenRig-Session, so the remote daemon renders the
   // ORIGIN host (not its own). End-to-end through the REAL broadcast --host path: a real DaemonClient
-  // stamps the header (mocks can't — they bypass DaemonClient.fetch); lifecycleDeps answers the LOCAL
-  // /healthz with this host's selfHostId; the wire header is asserted == the triple.
+  // stamps the header using the local durable singleton even when the target reports another id.
   it("PIN 1 (money) — broadcast --host stamps the ORIGIN triple on X-OpenRig-Session (remote renders the origin, not the destination)", async () => {
     vi.stubEnv("OPENRIG_SESSION_NAME", "dev50@v-rig"); // 2-part seat
-    vi.stubEnv("OPENRIG_URL", "http://local-daemon:7433"); // the LOCAL daemon resolveOriginSelfHostId reads
-    const wire: { headers: Record<string, string> } = { headers: {} };
-    const realClientFactory = (url: string) => new DaemonClient(url, {
-      fetchImpl: (async (_u: string, init: RequestInit) => {
-        wire.headers = Object.fromEntries(Object.entries((init.headers ?? {}) as Record<string, string>));
-        return new Response(JSON.stringify({ results: [], sent: 0, total: 0, failed: 0 }), { status: 200, headers: { "Content-Type": "application/json" } });
-      }) as unknown as typeof fetch,
-    });
-    // lifecycleDeps.fetch answers the LOCAL /healthz with THIS host's selfHostId (the origin id).
-    const lifecycleDeps = {
-      exists: () => false,
-      fetch: async (u: string) => (u.includes("/healthz")
-        ? { ok: true, json: async () => ({ selfHostId: "origin-host" }) }
-        : { ok: false }),
-    } as never;
-    const deps = httpDeps(mockClient(() => ({ status: 200, data: {} })), { clientFactory: realClientFactory, lifecycleDeps });
-    const cmd = broadcastCommand(deps);
-    await cmd.parseAsync(["--host", "vps-b", "--rig", "remote-rig", "coordinate"], { from: "user" });
-    expect(wire.headers[SENDER_IDENTITY_HEADER]).toBe("dev50@v-rig@origin-host"); // ORIGIN triple, not "dev50@v-rig@vps-b"
+    vi.stubEnv("OPENRIG_URL", "http://forwarded-endpoint:7433");
+    const home = mkdtempSync(join(tmpdir(), "origin-broadcast-"));
+    vi.stubEnv("OPENRIG_DB", join(home, "origin.sqlite"));
+    const db = new Database(process.env.OPENRIG_DB!);
+    db.exec("CREATE TABLE self_host_identity (singleton INTEGER PRIMARY KEY, host_id TEXT); INSERT INTO self_host_identity VALUES (1, 'origin-host')");
+    db.close();
+    try {
+      const wire: { headers: Record<string, string> } = { headers: {} };
+      const realClientFactory = (url: string) => new DaemonClient(url, {
+        fetchImpl: (async (_u: string, init: RequestInit) => {
+          wire.headers = Object.fromEntries(Object.entries((init.headers ?? {}) as Record<string, string>));
+          return new Response(JSON.stringify({ results: [], sent: 0, total: 0, failed: 0 }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }) as unknown as typeof fetch,
+      });
+      // A destination identity must never become the source identity.
+      const lifecycleDeps = {
+        exists: () => false,
+        fetch: async (u: string) => (u.includes("/healthz")
+          ? { ok: true, json: async () => ({ selfHostId: "destination-host" }) }
+          : { ok: false }),
+      } as never;
+      const deps = httpDeps(mockClient(() => ({ status: 200, data: {} })), { clientFactory: realClientFactory, lifecycleDeps });
+      const cmd = broadcastCommand(deps);
+      await cmd.parseAsync(["--host", "vps-b", "--rig", "remote-rig", "coordinate"], { from: "user" });
+      expect(wire.headers[SENDER_IDENTITY_HEADER]).toBe("dev50@v-rig@origin-host"); // ORIGIN triple, not "dev50@v-rig@vps-b"
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
-  // A4 PIN 5 (fail-open at the site) — when the local selfHostId is unavailable (no /healthz answer), the
-  // broadcast still ships, stamping the 2-part header: no new failure mode, degrades to today's behavior.
+  // When local durable origin is unavailable, delivery continues with an explicit uncertainty marker.
   it("PIN 5 (fail-open) — local selfHostId unavailable ⇒ 2-part header, broadcast still ships", async () => {
     vi.stubEnv("OPENRIG_SESSION_NAME", "dev50@v-rig");
     vi.stubEnv("OPENRIG_URL", "http://local-daemon:7433");
@@ -640,5 +649,7 @@ describe("broadcast --host (net-new, CLI-direct POST)", () => {
     const cmd = broadcastCommand(deps);
     await cmd.parseAsync(["--host", "vps-b", "--rig", "remote-rig", "coordinate"], { from: "user" });
     expect(wire.headers[SENDER_IDENTITY_HEADER]).toBe("dev50@v-rig"); // 2-part, fail-open — no new failure mode
+    expect(wire.headers["X-OpenRig-Origin-Unknown"]).toBe("true");
+    expect(captured.stderrLines.join("\n")).toContain("Origin instance unknown");
   });
 });

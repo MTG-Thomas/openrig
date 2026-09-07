@@ -14,7 +14,7 @@ export interface ChannelState {
 
 export interface ChannelActor {
   actor: string;
-  provenance: "transport:v1" | "claimed:v1";
+  provenance: "transport:v1" | "claimed:v1" | "origin-unknown:v1";
   reason: string;
 }
 
