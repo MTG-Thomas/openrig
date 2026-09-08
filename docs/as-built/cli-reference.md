@@ -1500,6 +1500,10 @@ Mission-bound continuation and wait guidance carries a snapshot of authored
 planning, wave admission/review and integration rules, with a pointer to inspect
 the current source before deciding. Waves guide agents; executable dependencies
 schedule steps. Bound slice sources do not automatically create child workflows.
+The execution view also reads current arrangement guidance into `planning_guidance`
+with exact source fields. Ordinary mission/wave/slice inspection keeps admission,
+review and accepted-core/full-contract guidance distinct from executable edges,
+attributed proof and current custody; prose does not create those facts.
 
 `workflow show`/JSON and the TUI execution view show every named obligation with
 its state and receipt state. Required steps need `project --evidence-ref <ref>`

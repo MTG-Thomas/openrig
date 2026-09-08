@@ -33,6 +33,7 @@ export interface ExecutionViewSnap {
   q6_parallelism?: Record<string, unknown>;
   /** S06: existing workflow engine facts joined to the selected mission. */
   lifecycle_instances?: Array<Record<string, unknown>>;
+  planning_guidance?: Array<{ label: string; text: string; source: string; wave?: string }>;
 }
 
 const INDETERMINATE = "INDETERMINATE";
@@ -368,7 +369,19 @@ function graphChunk(execution: ExecutionViewSnap, members: SliceFacts[], width: 
   return out;
 }
 
-function waveRows(execution: ExecutionViewSnap, wave: string, members: SliceFacts[], width: number): ContentLine[] {
+function planningLines(execution: ExecutionViewSnap, width: number, wave?: string, expanded = false): ContentLine[] {
+  const guidance = (execution.planning_guidance ?? []).filter(item => item.wave === wave &&
+    (expanded || (wave ? item.label !== "Review" : item.label === "Integration decision")));
+  if (!guidance.length) return [];
+  return wrapDetailLines([
+    sectionRule(`Authored guidance${wave ? " · " + wave : " · mission"}`, width),
+    { text: "  Admission guides decisions. Executable dependencies, proof and custody are separate facts." },
+    ...guidance.map(item => ({ text: `  ${item.label}: ${item.text}` })),
+    { text: `  Source: ${guidance[0]!.source.split("#")[0]} · arrangement${wave ? ".waves" : ""}` },
+  ], width);
+}
+
+function waveRows(execution: ExecutionViewSnap, wave: string, members: SliceFacts[], width: number, expanded = false): ContentLine[] {
   const title = waveTitle(wave, members);
   const header = semantic([
     { text: "━ ", token: "chrome" },
@@ -377,6 +390,7 @@ function waveRows(execution: ExecutionViewSnap, wave: string, members: SliceFact
   ], width);
   if (width < 70) return [
     { text: "" }, header,
+    ...planningLines(execution, width, wave, expanded),
     ...members.map((slice) => semanticAction([
       { text: `${stateMark(stateWord(slice))} ${stateWord(slice).padEnd(11)}`, token: stateToken(stateWord(slice)), bold: true },
       { text: `${slice.id}  `, token: "accentBright" },
@@ -384,7 +398,7 @@ function waveRows(execution: ExecutionViewSnap, wave: string, members: SliceFact
     ], sliceAction(execution, slice), width)),
   ];
   return [
-    { text: "" }, header, ...graphChunk(execution, members, width),
+    { text: "" }, header, ...planningLines(execution, width, wave, expanded), ...graphChunk(execution, members, width),
   ];
 }
 
@@ -499,6 +513,7 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
     lines.push(...wrapDetailLines([{ text: `  derived ${localTime}` }], width));
   }
   lines.push(...lifecycleLines(execution, width));
+  lines.push(...planningLines(execution, width));
 
   const waves = new Map<string, SliceFacts[]>();
   for (const slice of slices) waves.set(waveOf(slice), [...(waves.get(waveOf(slice)) ?? []), slice]);
@@ -516,7 +531,8 @@ function waveDetail(execution: ExecutionViewSnap, scopes: readonly MissionScopes
   if (members.length === 0) return null;
   return [
     { text: `${execution.mission} · wave ${wave} · all ${members.length} rows` },
-    ...waveRows(execution, wave, members, width),
+    ...planningLines(execution, width),
+    ...waveRows(execution, wave, members, width, true),
     { text: "" },
     back(),
   ];
@@ -681,6 +697,7 @@ function sliceDetail(
     { text: "" }, ...card("RULING", rulingRows(detail, width, timeZone), width),
     { text: "" }, ...card("NEEDS YOU", [cardField("state", needs ?? "none on current projection")], width),
     { text: "" }, ...card("TYPED ROWS", typedRows, width),
+    { text: "" }, ...planningLines(execution, width), ...planningLines(execution, width, waveOf(slice), true),
     { text: "" }, ...card("DEPENDENCIES", dependencies, width),
     ...authored,
     { text: "" }, ...card("SOURCES", sourceRows, width),
@@ -738,7 +755,7 @@ function laneDetail(execution: ExecutionViewSnap, key: string): ContentLine[] | 
   return [...detailPage({ text: heading }, sections), { text: "" }, back()];
 }
 
-function sourcesDetail(execution: ExecutionViewSnap, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
+function sourcesDetail(execution: ExecutionViewSnap, timeZone = DEFAULT_TIME_ZONE, width = 96): ContentLine[] {
   const lines: ContentLine[] = [{ text: `sources behind ${execution.mission} · derived ${displayTime(execution.derived_at, timeZone) || "?"}` }];
   for (const [name, raw] of Object.entries(execution.sources ?? {})) {
     const cell = record(raw);
@@ -748,6 +765,7 @@ function sourcesDetail(execution: ExecutionViewSnap, timeZone = DEFAULT_TIME_ZON
     if (Object.keys(cell).length === 0) lines.push({ text: `  ${str(raw, "—")}` });
   }
   lines.push({ text: "" });
+  lines.push(...planningLines(execution, width, undefined, true));
   lines.push(back());
   return lines;
 }
@@ -776,7 +794,7 @@ export function executionContentLines(
     const page = opened.startsWith("workflow:") || opened.startsWith("packet:")
       ? workflowDetail(execution, opened, width, timeZone)
       : opened === "sources"
-      ? sourcesDetail(execution, timeZone)
+      ? sourcesDetail(execution, timeZone, width)
       : opened === "evidence"
         ? evidenceDetail(execution, slices, width, timeZone)
       : opened.startsWith("group:wave:")
@@ -821,5 +839,6 @@ export function executionSliceStripLines(
     { text: `  assignment  ${slice.lane ? `${str(slice.lane["seat"])} · ${str(activity["activity"], INDETERMINATE)} (${str(activity["decided_by"], "?")})` : "none — no claimed lane"}`, ...(slice.lane ? { action: open(laneKey(slice.lane)) } : {}) },
     { text: `  next        ${next}` },
     { text: `  problem     ${problem ?? "none on the projection's current surfaces"}` },
+    ...planningLines(execution, width), ...planningLines(execution, width, waveOf(slice), true),
   ];
 }

@@ -368,6 +368,27 @@ describe("execution view — S27 (OPR.0.5.6.27)", () => {
     expect(comparableQ3(doc)).toEqual(comparableQ3(legacy));
   });
 
+  it("returns current authored admission and partial-core guidance without deriving edges or acceptance from prose", () => {
+    const before = show();
+    const manifest = path.join(missionsRoot, MISSION, "mission.yaml");
+    fs.appendFileSync(manifest, "  source:\n    rule: Alpha core accepted; full contract remains open.\n");
+    fs.writeFileSync(manifest, fs.readFileSync(manifest, "utf8").replace(
+      "      review_model: author-excluded-r1-r2-wave",
+      "      review_model: author-excluded-r1-r2-wave\n      admission: Investigate beta early; implement alpha first.\n      review: Independently judge changed consequences.\n      exit: Both full contracts need the shared journey.",
+    ));
+    const current = show();
+    expect(current.planning_guidance).toEqual(expect.arrayContaining([
+      { label: "Integration decision", text: "Alpha core accepted; full contract remains open.", source: manifest + "#arrangement.source.rule" },
+      { label: "Admission", text: "Investigate beta early; implement alpha first.", source: manifest + "#arrangement.waves[0].admission", wave: "WA" },
+    ]));
+    for (const key of ["q1_lanes", "q2_sequencing", "q3_care", "q4_ladder", "readiness"])
+      expect(current[key]).toEqual(before[key]);
+    fs.writeFileSync(manifest, fs.readFileSync(manifest, "utf8").replace("Investigate beta early; implement alpha first.", "Defer beta pending the owning decision."));
+    expect(JSON.stringify(show().planning_guidance)).toContain("Defer beta pending the owning decision.");
+    fs.writeFileSync(manifest, "composition: [invalid");
+    expect(show().planning_guidance).toEqual([]);
+  });
+
   it("malformed YAML emits one named warning cell and falls back to the legacy arrangement without blanking the view", () => {
     fs.writeFileSync(path.join(missionsRoot, MISSION, "mission.yaml"), "composition: [not: valid");
     const doc = show();

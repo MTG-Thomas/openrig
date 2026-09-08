@@ -38,7 +38,10 @@ one command away. Your memory of the fleet is a claim about the past.
   and whether the thing you did an hour ago actually landed.
 - **`rig view list` / `rig view show <lens>`** — named lenses over coordination state: use
   `view show escalations` for owner attention, `view show pickup` for claimed-row state, and
-  `view show execution` for done/now/next. An `INDETERMINATE` cell stays unknown rather than
+  `view show execution` for done/now/next and current authored planning guidance with its
+  source. Mission and wave inspection shows admission and exit guidance; wave/slice details
+  include review decisions. Accepted-core guidance stays separate from full-contract proof,
+  live custody and executable dependencies. An `INDETERMINATE` cell stays unknown rather than
   being filled from memory. **`rig view register`** turns a query you keep re-running into a
   first-class view.
 - **`rig config`** — bare, with no arguments: every key, every current value, and where each came

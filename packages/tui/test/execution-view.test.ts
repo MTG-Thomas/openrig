@@ -129,6 +129,30 @@ function executionKeys(lines: ReturnType<typeof executionContentLines>): string[
 }
 
 describe("mission execution story — readable rows over the shipped projections", () => {
+  it("shows authored admission and partial acceptance with provenance on mission, wave and slice pages at narrow widths", () => {
+    const fixture = executionFixture();
+    fixture.planning_guidance = [
+      { label: "Integration decision", text: "Alpha core accepted; full contract remains open.", source: "/work/mission.yaml#arrangement.source.rule" },
+      { label: "Admission", text: "Implement alpha before beta; investigation may overlap.", source: "/work/mission.yaml#arrangement.waves[0].admission", wave: "active-parallel" },
+      { label: "Review", text: "Independent review must precede merge.", source: "/work/mission.yaml#arrangement.waves[0].review", wave: "active-parallel" },
+      { label: "Exit", text: "Full contracts still need the cumulative journey.", source: "/work/mission.yaml#arrangement.waves[0].exit", wave: "active-parallel" },
+    ];
+    const facts = JSON.stringify(fixture);
+    for (const width of [58, 120]) for (const key of [null, "group:wave:active-parallel", "slice:OPR.0.5.8.1"]) {
+      const lines = executionContentLines(fixture, executionScopes(), [], key, width);
+      const body = text(lines).replace(/\s+/g, " ");
+      expect(body).toContain("Authored guidance");
+      expect(body).toContain("Alpha core accepted; full contract remains open.");
+      expect(body).toContain("Implement alpha before beta; investigation may overlap.");
+      expect(body).toContain("Full contracts still need the cumulative journey.");
+      expect(body).toContain("/work/mission.yaml");
+      if (key?.startsWith("group:")) expect(body).toContain("Independent review must precede merge.");
+      // Full guidance wraps rather than disappearing behind a clipped card.
+      expect(lines.filter(line => line.text.includes("Alpha core") || line.text.includes("Implement alpha")).every(line => line.text.length <= width)).toBe(true);
+    }
+    expect(JSON.stringify(fixture)).toBe(facts);
+  });
+
   it("renders the selected JRN-03 mission grammar: glance summary, wave graph, and structured detail cards", () => {
     const overview = executionContentLines(executionFixture(), executionScopes(), [], null, 126);
     const body = text(overview);

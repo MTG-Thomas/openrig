@@ -265,6 +265,7 @@ type ArrangementData =
       missionPath: string;
       byId: Map<string, ArrangementSlice>;
       byDir: Map<string, ArrangementSlice>;
+      guidance: Array<{ label: string; text: string; source: string; wave?: string }>;
     };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -448,10 +449,26 @@ function readArrangement(missionsRoot: string, mission: string, slices: SliceFac
     const compositionMembers = validateMissionComposition(manifest, missionPath);
     const waveReview = new Map<string, string>();
     const waveBySlice = new Map<string, string>();
+    const guidance: Array<{ label: string; text: string; source: string; wave?: string }> = [];
+    const addGuidance = (label: string, value: unknown, field: string, wave?: string) => {
+      if (typeof value === "string" && value.trim()) guidance.push({
+        label, text: value.trim().replace(/\s+/g, " "), source: `${missionPath}#arrangement.${field}`,
+        ...(wave ? { wave } : {}),
+      });
+    };
     const arrangement = manifest["arrangement"];
+    if (isRecord(arrangement)) for (const [field, label, key] of [
+      ["source", "Integration decision", "rule"],
+      ["planning_posture", "Planning posture", "rule"],
+      ["execution_posture", "Execution posture", "parallelism"],
+      ["integration_exit", "Shared acceptance", "rule"],
+    ] as const) {
+      const value = arrangement[field];
+      if (isRecord(value)) addGuidance(label, value[key], `${field}.${key}`);
+    }
     if (isRecord(arrangement) && arrangement["waves"] != null) {
       if (!Array.isArray(arrangement["waves"])) throw new Error("arrangement.waves is not a list");
-      for (const rawWave of arrangement["waves"]) {
+      for (const [index, rawWave] of arrangement["waves"].entries()) {
         if (!isRecord(rawWave) || typeof rawWave["id"] !== "string") {
           throw new Error("arrangement.waves contains an invalid entry");
         }
@@ -470,6 +487,8 @@ function readArrangement(missionsRoot: string, mission: string, slices: SliceFac
         }
         for (const sliceId of waveSlices as string[]) waveBySlice.set(sliceId, rawWave["id"]);
         if (typeof rawWave["review_model"] === "string") waveReview.set(rawWave["id"], rawWave["review_model"]);
+        for (const [key, label] of [["admission", "Admission"], ["review", "Review"], ["exit", "Exit"]] as const)
+          addGuidance(label, rawWave[key], `waves[${index}].${key}`, rawWave["id"]);
       }
     }
     const byId = new Map<string, ArrangementSlice>();
@@ -506,7 +525,7 @@ function readArrangement(missionsRoot: string, mission: string, slices: SliceFac
       byDir.set(dir, entry);
       if (facts && facts.id !== INDETERMINATE) byId.set(facts.id, entry);
     }
-    return { state: "valid", missionPath, byId, byDir };
+    return { state: "valid", missionPath, byId, byDir, guidance };
   } catch (err) {
     return {
       state: "malformed",
@@ -1114,6 +1133,8 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
     view: "execution",
     readiness,
     project_readiness: missionsRoot ? readProjectReadiness(missionsRoot) : null,
+    // Authored guidance is carried verbatim in meaning, never parsed into edges or acceptance.
+    planning_guidance: arrangement?.state === "valid" ? arrangement.guidance : [],
     mission,
     derived_at: derivedAt,
     sources: {
