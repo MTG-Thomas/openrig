@@ -58,6 +58,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
   private sleep: (ms: number) => Promise<void>;
   private resolveHomeDirByPid: ResolveHomeDirByPid;
   private codexHome?: string;
+  private launchPath?: string;
   // Housekeeping B1 fixback (guard-blocking, arch HK-AR-1 = whole-probe DI):
   // the Codex profile-LOAD probe is an injectable dep in the adapter's
   // established optional-deps shape. Default = the REAL probe
@@ -80,11 +81,14 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     sleep?: (ms: number) => Promise<void>;
     activityRelayPath?: string;
     codexHome?: string;
+    /** Match the daemon's prerequisite probe even if the pane's login shell rewrites PATH. */
+    launchPath?: string;
     verifyProfilePreflight?: (profile: string) => Promise<CodexProfileProbeResult>;
   }) {
     this.tmux = deps.tmux;
     this.fs = deps.fsOps;
     this.codexHome = deps.codexHome;
+    this.launchPath = deps.launchPath;
     this.activityRelayPath = deps.activityRelayPath;
     this.listProcesses = deps.listProcesses ?? defaultListProcesses;
     this.readThreadIdByPid = deps.readThreadIdByPid ?? ((pid) => this.readThreadIdFromLogs(pid));
@@ -351,7 +355,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
       // -s workspace-write floor flag.
       // 0.5.2-07 A2-3: the FORK path threads the SPEC model too (fork-instantiate reverted it before).
       const cmd = `codex${postureArg}${modelArg} fork${queueStateDirArg} ${shellQuote(parentId)}`;
-      const textResult = await this.tmux.sendText(binding.tmuxSession, cmd);
+      const textResult = await this.tmux.sendText(binding.tmuxSession, this.launchPath ? `env PATH=${shellQuote(this.launchPath)} ${cmd}` : cmd);
       if (!textResult.ok) {
         return { ok: false, error: `Failed to send launch command: ${textResult.message}` };
       }
@@ -379,7 +383,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
       ? buildCodexResumeCore(opts.resumeToken, profile, false, queueStateDirArg.trim() || undefined, binding.launchPosture, model, postureArg)
       : `codex${postureArg} -C ${shellQuote(binding.cwd)}${gitDirArg}${queueStateDirArg}${modelArg}`;
 
-    const textResult = await this.tmux.sendText(binding.tmuxSession, cmd);
+    const textResult = await this.tmux.sendText(binding.tmuxSession, this.launchPath ? `env PATH=${shellQuote(this.launchPath)} ${cmd}` : cmd);
     if (!textResult.ok) {
       return { ok: false, error: `Failed to send launch command: ${textResult.message}` };
     }

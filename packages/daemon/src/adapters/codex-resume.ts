@@ -13,6 +13,7 @@ const SHELL_COMMANDS = new Set(["bash", "fish", "nu", "sh", "tmux", "zsh"]);
 export { type ResumeResult };
 
 interface CodexResumeOptions {
+  launchPath?: string;
   pollMs?: number;
   maxWaitMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -82,7 +83,8 @@ export class CodexResumeAdapter {
       postureArg,
     );
 
-    const textResult = await this.tmux.sendText(tmuxSessionName, cmd);
+    const textResult = await this.tmux.sendText(tmuxSessionName, this.options.launchPath
+      ? `env PATH=${shellQuote(this.options.launchPath)} ${cmd}` : cmd);
     if (!textResult.ok) {
       // sendText failed — nothing in the buffer, no cleanup needed
       return { ok: false, code: "resume_failed", message: textResult.message };

@@ -7,6 +7,12 @@ import {
 } from "../src/domain/native-resume-probe.js";
 
 describe("native resume probe", () => {
+  it("keeps a visible client/model compatibility failure distinct from a usable TUI", () => {
+    const result = assessNativeResumeProbe({ runtime: "codex", paneCommand: "node",
+      paneContent: "OpenAI Codex\n■ The configured model requires a\nnewer version of Codex. Please upgrade.\n› Write tests for @filename" });
+    expect(result).toMatchObject({ status: "attention_required", code: "codex_client_incompatible" });
+    expect(result.detail).toContain("changing credentials will not repair");
+  });
   it("builds a Claude resume command with the canonical session name when provided", () => {
     expect(
       buildNativeResumeCommand("claude-code", "abc-123", "dev-impl@demo-rig")

@@ -9,6 +9,7 @@ import type { NodeBinding, ResolvedStartupFile } from "../src/domain/runtime-ada
 import type { ProjectionPlan, ProjectionEntry } from "../src/domain/projection-planner.js";
 import type { TmuxAdapter } from "../src/adapters/tmux.js";
 import { seedCodexThreads } from "./helpers/codex-state.js";
+import { execFileSync } from "node:child_process";
 
 const CODEX_FLOOR_EFFECT = {
   runtime: "codex",
@@ -149,6 +150,22 @@ function createCodexLogsDb(homeDir: string, pid: number, threadId: string, dbNam
 }
 
 describe("Codex runtime adapter", () => {
+  it("launches the probed executable despite a different login-shell PATH", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "codex-launch-path-"));
+    try {
+      const selected = nodePath.join(root, "selected tools");
+      const stale = nodePath.join(root, "stale");
+      fs.mkdirSync(selected); fs.mkdirSync(stale);
+      fs.writeFileSync(nodePath.join(selected, "codex"), "#!/bin/sh\nprintf selected", { mode: 0o755 });
+      fs.writeFileSync(nodePath.join(stale, "codex"), "#!/bin/sh\nprintf stale", { mode: 0o755 });
+      const tmux = mockTmux();
+      const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs(), launchPath: selected + ":/usr/bin:/bin", sleep: async () => {} });
+      await adapter.launchHarness(makeBinding(), { name: "operator-agent@kernel" });
+      const command = vi.mocked(tmux.sendText).mock.calls[0]![1];
+      const output = execFileSync("/bin/sh", ["-c", command], { env: { ...process.env, PATH: stale + ":/usr/bin:/bin" }, encoding: "utf8" });
+      expect(output).toBe("selected");
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
   // T2: implements all four methods
   it("implements all four methods", () => {
     const adapter = new CodexRuntimeAdapter({ tmux: mockTmux(), fsOps: mockFs() });

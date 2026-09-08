@@ -131,6 +131,14 @@ export class StartupController {
       await this.run(async () => { const id = s.rigs[s.selected]!.id; s.selected = 0; await this.readRig(id); s.notice = "Only the selected seat will be started. Other seats retain their history."; }); return;
     }
     const seat = s.rig?.seats[s.selected];
+    if (s.page === "seats" && key === "t" && s.rig?.seats.some((seat) => seat.observed.state === "transport_unavailable")) {
+      await this.run(async () => {
+        s.notice = "Starting the terminal service only…"; this.changed();
+        await this.deps.client.startupRequest("/terminal", {});
+        await this.readRig(s.rig!.rigId);
+        s.notice = "Terminal service available. Choose the seat and conversation deliberately.";
+      }); return;
+    }
     if (s.page === "seats" && seat && key === "f" && seat.hasHistory && seat.freshAllowed !== false && !s.freshBlocked
       && (seat.intendedAction === "resume-original" || seat.freshRequired)) {
       s.consent = { rigId: s.rig!.rigId, seat: { ...seat } }; s.page = "confirm";
@@ -186,6 +194,7 @@ export function startupLines(s: StartupState): Array<{ text: string; action?: Ac
   if (s.page === "seats" && s.rig) {
     lines.push({ text: `${s.rig.rigName} · choose one seat; unselected seats remain unchanged` });
     s.rig.seats.forEach((seat, i) => lines.push(button(`${i === s.selected ? "▶" : " "} ${seat.logicalId} · ${seat.observed.state} · ${seat.hasHistory ? seat.intendedAction : "new seat"}`, `select:${i}`)));
+    if (s.rig.seats.some((seat) => seat.observed.state === "transport_unavailable")) lines.push(button("t  Start terminal service (no seats); then inspect recovery choices", "t"));
     const seat = s.rig.seats[s.selected];
     if (seat) {
       lines.push({ text: "" }, { text: `${seat.logicalId} · ${seat.runtime} · model ${seat.model ?? "configured default"}` },

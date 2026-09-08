@@ -92,6 +92,10 @@ async function refreshNativeMetadata(c: Context, rigId: string) {
 }
 
 startupRoutes.get("/prerequisites", async (c) => c.json(await defaultProbeRuntimes()));
+startupRoutes.post("/terminal", (c) => exclusive(c, "terminal", async () => {
+  const result = await tmux(c).startServer();
+  return c.json(result, result.ok ? 200 : 409);
+}));
 
 // First setup materializes the builtin topology only. No occupant is launched.
 startupRoutes.post("/kernel", (c) => exclusive(c, "kernel", async () => {
@@ -173,7 +177,9 @@ startupRoutes.post("/:rigId/:logicalId", async (c) => {
         member: { ...member, ...(node.model ? { model: node.model } : {}) }, qualifiedId: node.logicalId, nodeId: node.id, cwdOverride: node.cwd ?? undefined });
       await refreshNativeMetadata(c, rig.rig.id);
       dep<SnapshotCapture>(c, "snapshotCapture").captureSnapshot(rig.rig.id, "auto-rehydrate");
-      return c.json({ ok: result.status === "launched", ...result }, result.status === "launched" ? 200 : 409);
+      const after = await observeSeat(c, rig, node);
+      const ok = result.status === "launched" && after.state === "running";
+      return c.json({ ...result, ok, observed: after, ...(!ok ? { message: after.detail, freshAllowed: false } : {}) }, ok ? 200 : 409);
     }
     const selectedRig = { ...rig, nodes: [node] };
     let snapshot = currentSnapshot(c, selectedRig);

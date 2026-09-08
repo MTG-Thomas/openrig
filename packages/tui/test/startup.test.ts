@@ -29,6 +29,20 @@ function fixture() {
 async function chooseOperator(f: ReturnType<typeof fixture>) { await f.controller.refresh(); await f.controller.key("enter"); }
 
 describe("TUI startup choices", () => {
+  it("makes terminal transport repair a separate action with no seat launch", async () => {
+    const f = fixture();
+    f.seat.observed.state = "transport_unavailable"; f.seat.freshAllowed = false;
+    f.response(async () => {
+      f.seat.observed.state = "stopped"; f.seat.freshAllowed = true;
+      return new Response(JSON.stringify({ ok: true }));
+    });
+    await chooseOperator(f);
+    await f.controller.key("f"); expect(f.controller.state.page).toBe("seats");
+    await f.controller.key("t");
+    expect(f.posts).toEqual([{ route: "/api/startup/terminal", body: {} }]);
+    await f.controller.key("f"); expect(f.controller.state.page).toBe("confirm");
+    await f.controller.key("escape"); expect(f.posts).toHaveLength(1);
+  });
   it("first setup starts only the daemon, then presents deliberate rig choices", async () => {
     const f = fixture(); f.down(); await f.controller.refresh();
     expect(f.controller.state.page).toBe("down");

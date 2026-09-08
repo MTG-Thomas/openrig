@@ -17,6 +17,8 @@ the selected instance and daemon address. If the daemon is stopped, press Enter
 to start that daemon, then choose the rigs and seats you want. Kernel is
 recommended first; selecting its operator does not start every kernel seat.
 The same view is available with **S** from ordinary TUI work.
+When terminal transport is unavailable, **t** starts the empty terminal service
+so recovery choices can be inspected. It launches no seats.
 
 For a previously occupied seat, Enter attempts its previous conversation.
 If history is unavailable, read the reason. **f** opens a separate fresh-start

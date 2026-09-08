@@ -143,6 +143,12 @@ export function assessNativeResumeProbe(
   }
 
   if (runtime === "codex") {
+    if (/requires a newer version of Codex/i.test(paneContent.replace(/\s+/g, " "))) {
+      return {
+        status: "attention_required", code: "codex_client_incompatible",
+        detail: "The selected Codex client cannot use the configured model. Use a compatible client and retry; replacing history or changing credentials will not repair this prerequisite.",
+      };
+    }
     if (paneContent.includes("No saved session found")) {
       return {
         status: "failed",

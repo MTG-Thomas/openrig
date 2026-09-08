@@ -223,7 +223,9 @@ export function buildRestorePlanPreview(
     const freshRequested = freshLogicalIds?.includes(node.logicalId) ?? false;
     const resolution = snapshot
       ? resolveActiveSnapshotSession(snapshot.data, node.id)
-      : resolveActiveOccupantRow(sessionRows, relationMap, node.id);
+      : sessionRows.some((row) => row.nodeId === node.id)
+        ? resolveActiveOccupantRow(sessionRows, relationMap, node.id)
+        : { kind: "none" as const };
     const { intendedAction, reason } = intendedActionFor(resolution, freshRequested);
     // OPR.0.4.3.20 FR-6 — per-seat token state (read-only), derived from the
     // RESOLVED occupant only — never from a historical row.

@@ -34,6 +34,12 @@ const FRESH = "2026-07-02 11:59:00"; // 1 min ago (< 1h threshold)
 const OLD = "2026-07-02 10:00:00";   // 2h ago (> 1h threshold)
 
 describe("FR-6 restore-plan token state", () => {
+  it("presents a never-occupied current seat as new, without a history warning", () => {
+    const rig = rigWith([{ id: "n1", logicalId: "a", runtime: "codex" }]);
+    const result = buildRestorePlanPreview(rig, null, []).nodes[0]!;
+    expect(result).toMatchObject({ hasHistory: false, intendedAction: "fresh-primed" });
+    expect(result.reason).toBeUndefined();
+  });
   it("honors explicit snapshot occupant state over the legacy relation", () => {
     const rig = rigWith([{ id: "n1", logicalId: "a", runtime: "claude-code" }]);
     const rows = [row("n1")];

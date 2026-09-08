@@ -159,6 +159,23 @@ describe("StartupOrchestrator", () => {
     expect(row.startup_status).toBe("ready");
     expect(row.startup_completed_at).not.toBeNull();
   });
+  it("does not mark ready when context delivery exposes a native client refusal", async () => {
+    const seed = seedSession();
+    let delivered = false;
+    const adapter = mockAdapter({
+      runtime: "codex",
+      deliverStartup: vi.fn(async (files) => { if (files.some((file) => file.deliveryHint === "send_text")) delivered = true; return { delivered: files.length, failed: [] }; }),
+      checkReady: vi.fn(async () => delivered
+        ? { ready: false, code: "codex_client_incompatible", reason: "The configured model requires a compatible client" }
+        : { ready: true }),
+    });
+    const result = await createOrchestrator().startNode(makeInput(seed, { adapter,
+      resolvedStartupFiles: [{ path: "role.md", absolutePath: "/tmp/role.md", ownerRoot: "/tmp",
+        deliveryHint: "send_text", required: true, appliesOn: ["fresh_start"] }] }));
+    expect(result).toMatchObject({ ok: false, startupStatus: "attention_required" });
+    expect(db.prepare("SELECT startup_status FROM sessions WHERE id = ?").get(seed.sessionId)).toEqual({ startup_status: "attention_required" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM node_startup_context WHERE node_id = ?").get(seed.nodeId)).toEqual({ n: 1 });
+  });
 
   it("records the exact adapter-returned launch effect only after successful managed launch", async () => {
     const seed = seedSession();

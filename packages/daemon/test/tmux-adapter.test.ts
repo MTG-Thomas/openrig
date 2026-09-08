@@ -19,6 +19,23 @@ function mockExec(responses: Record<string, { stdout?: string; error?: Error }>)
 }
 
 describe("TmuxAdapter", () => {
+  it("starts only an empty terminal server and reconciles repeated requests", async () => {
+    let live = false;
+    const exec = vi.fn(async (command: string) => {
+      if (command.startsWith("tmux -D")) { live = true; return ""; }
+      throw live ? new Error("no sessions") : NO_SERVER_ERROR;
+    });
+    const adapter = new TmuxAdapter(exec);
+    expect(await adapter.startServer()).toEqual({ ok: true });
+    expect(await adapter.startServer()).toEqual({ ok: true });
+    expect(exec.mock.calls.filter(([command]) => command.startsWith("tmux -D"))).toHaveLength(1);
+    expect(exec.mock.calls.some(([command]) => command.includes("new-session"))).toBe(false);
+  });
+  it("does not start a server when socket observation fails with a permission error", async () => {
+    const exec = vi.fn(async () => { throw new Error("permission denied"); });
+    expect(await new TmuxAdapter(exec).startServer()).toMatchObject({ ok: false, code: "tmux_unavailable" });
+    expect(exec).toHaveBeenCalledOnce();
+  });
   describe("listSessions", () => {
     it("calls exec with exact tmux list-sessions command and format string", async () => {
       const exec = vi.fn<ExecFn>().mockResolvedValue("");
