@@ -65,7 +65,7 @@ export function workflowRoutes(): Hono {
       // expectedVersion/actualVersion in the body — never a 500.
       const status =
         err.code === "instance_not_found" ? 404
-        : err.code === "instance_version_conflict" ? 409
+        : err.code === "instance_version_conflict" || err.code === "lifecycle_revision_conflict" ? 409
         : 500;
       return c.json({ error: err.code, message: err.message, ...(err.details ?? {}) }, status as 200);
     }
@@ -175,6 +175,24 @@ export function workflowRoutes(): Hono {
     }
   });
 
+  app.get("/operations/:key", (c) => {
+    try {
+      const result = getRuntime(c).recoverOperation(c.req.param("key"));
+      return result ? c.json(result) : c.json({ error: "operation_not_found", message: "No committed effect for this key. Retain it when retrying the original command." }, 404);
+    } catch (err) { return errorResponse(c, err); }
+  });
+
+  app.get("/:instance_id/revision", (c) => {
+    try { return c.json(getRuntime(c).inspectGraph(c.req.param("instance_id"))); }
+    catch (err) { return errorResponse(c, err); }
+  });
+
+  app.post("/:instance_id/revision", async (c) => {
+    const body = await c.req.json<Parameters<WorkflowRuntime["reviseGraph"]>[0]>().catch(() => ({} as never));
+    try { return c.json(getRuntime(c).reviseGraph({ ...body, instanceId: c.req.param("instance_id") })); }
+    catch (err) { return errorResponse(c, err); }
+  });
+
   app.post("/instantiate", async (c) => {
     const body = await c.req
       .json<{
@@ -280,6 +298,7 @@ export function workflowRoutes(): Hono {
     return streamSSE(c, async (stream) => {
       const unsubscribe = eventBus.subscribe((event) => {
         if (
+          event.type !== "workflow.revised" &&
           event.type !== "workflow.instantiated" &&
           event.type !== "workflow.step_closed" &&
           event.type !== "workflow.next_qitem_projected" &&
@@ -387,6 +406,7 @@ export function workflowRoutes(): Hono {
     const inspected = runtime.inspect(instanceId);
     return c.json({
       ...runtime.withDeadline(inst),
+      ...(inst.lifecycleBinding ? { reconciliation: runtime.inspectGraph(instanceId) } : {}),
       frontierPackets: inspected.frontier,
       failureOccurrences: inspected.failures,
       unknowns: inspected.unknowns,

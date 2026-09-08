@@ -9,6 +9,7 @@ import {
   composeAttentionRollup,
   renderInstanceList,
   renderInstanceShow,
+  renderGraphRevision,
   renderProjectAction,
   renderStatus,
   renderTraceTree,
@@ -163,8 +164,51 @@ Examples:
     });
 
   cmd
+    .command("revise <instanceId>")
+    .description("Compare authored and running lifecycle graphs; deliberately adopt compatible changes without replaying work")
+    .option("--apply", "Apply the inspected compatible proposal (default is read-only)")
+    .option("--expected-version <number>", "Instance version returned by inspection")
+    .option("--expected-digest <sha256>", "Authored digest returned by inspection")
+    .option("--operation-key <key>", "Stable revision identity from the inspected apply command")
+    .option("--actor-session <session>", "Agent recording this decision")
+    .option("--reason <text>", "Why the plan changed")
+    .option("--json", "Complete comparison or receipt")
+    .addHelpText("after", "\nStart with: rig workflow revise <instance>\nInspection returns the exact apply command and recovery key. Compatible revisions preserve completed/live steps, required obligations and child custody. Restore a changed completed/live step and revise its unstarted successors; no blind abort/replay is required. After a timeout use rig workflow operation <key> or repeat the identical apply command.\n")
+    .action(async (instanceId: string, opts: { apply?: boolean; expectedVersion?: string; expectedDigest?: string; operationKey?: string; actorSession?: string; reason?: string; json?: boolean }) => {
+      if (opts.apply && (!opts.operationKey || !opts.expectedDigest || opts.expectedVersion === undefined || !opts.actorSession || !opts.reason)) {
+        emit3PartError(opts.json ?? false, "The inspected revision identity and decision are required.", "No revision was sent.", "Run rig workflow revise " + instanceId + " and use its apply command.");
+        return;
+      }
+      await withClient(getDeps(), async client => {
+        const route = "/api/workflow/" + encodeURIComponent(instanceId) + "/revision";
+        const res = opts.apply ? await client.post<unknown>(route, {
+          expectedVersion: Number(opts.expectedVersion), expectedDigest: opts.expectedDigest,
+          operationKey: opts.operationKey, actorSession: opts.actorSession, reason: opts.reason,
+        }) : await client.get<unknown>(route);
+        if (opts.json || opts.apply || res.status >= 400) printResult(opts.json ?? false, res.data, res.status);
+        else for (const line of renderGraphRevision(res.data as Parameters<typeof renderGraphRevision>[0])) console.log(line);
+        if (opts.apply) printOutcomeSummary(opts.json ?? false, res.status, {
+          what: "Revision effect recorded or recovered under " + opts.operationKey,
+          state: "Existing instance, completed results and frontier custody retained",
+          next: "rig workflow operation " + opts.operationKey,
+        });
+      });
+    });
+
+  cmd
+    .command("operation <key>")
+    .description("Recover a lifecycle creation or revision effect by its stable key, even after a lost response or source edit")
+    .option("--json", "Complete original receipt and current instance")
+    .action(async (key: string, opts: { json?: boolean }) => {
+      await withClient(getDeps(), async client => {
+        const res = await client.get<unknown>("/api/workflow/operations/" + encodeURIComponent(key));
+        printResult(opts.json ?? false, res.data, res.status);
+      });
+    });
+
+  cmd
     .command("instantiate-lifecycle <missionPath>")
-    .description("Compile and instantiate an eligible project lifecycle with an opaque idempotency key")
+    .description("Compile and instantiate an eligible lifecycle; recover a lost response with workflow operation <key>")
     .requiredOption("--operation-key <key>", "Opaque stable identity for exact replay")
     .requiredOption("--root-objective <text>", "Root objective for the run")
     .requiredOption("--created-by <session>", "Session creating the instance")
@@ -503,7 +547,7 @@ Examples:
     .action(async (instanceId: string, opts: { json?: boolean }) => {
       const deps = getDeps();
       await withClient(deps, async (client) => {
-        const res = await client.get<{ instance?: unknown; trail?: unknown[]; frontier?: unknown[]; failures?: unknown[]; boundaryObligations?: unknown[]; unknowns?: string[] }>(
+        const res = await client.get<{ instance?: unknown; reconciliation?: unknown; trail?: unknown[]; frontier?: unknown[]; failures?: unknown[]; boundaryObligations?: unknown[]; unknowns?: string[] }>(
           `/api/workflow/${encodeURIComponent(instanceId)}/trace`,
         );
         // WF3 FR-2: human mode renders the per-step tree (mini-req 2's
@@ -514,6 +558,7 @@ Examples:
         }
         const instance = {
           ...(res.data.instance as Parameters<typeof renderTraceTree>[0]),
+          reconciliation: res.data.reconciliation,
           frontierPackets: res.data.frontier,
           boundaryObligations: res.data.boundaryObligations,
           failureOccurrences: res.data.failures,

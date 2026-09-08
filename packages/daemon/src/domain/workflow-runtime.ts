@@ -1,3 +1,4 @@
+import { inspectGraph, recoverGraphOperation, reviseGraph } from "./workflow-reconciliation.js";
 import { lifecycleObligations, requiredLifecycleSteps, type LifecycleObligation } from "./lifecycle-obligations.js";
 // PL-004 Phase D: workflow runtime facade.
 //
@@ -177,6 +178,10 @@ export class WorkflowRuntime {
     );
   }
 
+  inspectGraph(instanceId: string) { return inspectGraph(this.db, instanceId); }
+  recoverOperation(key: string) { return recoverGraphOperation(this.db, key); }
+  reviseGraph(input: Parameters<typeof reviseGraph>[2]) { return reviseGraph(this.db, this.eventBus, input); }
+
   compileLifecycle(missionPath: string, operationKey?: string): LifecycleCompilation {
     return compileProjectLifecycle({ missionPath, operationKey });
   }
@@ -189,6 +194,9 @@ export class WorkflowRuntime {
     entryOwnerSession?: string;
     targetRig?: string;
   }): Promise<InstantiateResult & { compilation: LifecycleCompilation }> {
+    if (this.recoverOperation(input.operationKey)?.kind === "revision") {
+      throw new WorkflowProjectorError("lifecycle_operation_conflict", "This key already records a graph revision; inspect workflow operation before choosing a new creation key.");
+    }
     const compilation = this.compileLifecycle(input.missionPath, input.operationKey);
     if (!compilation.eligible || !compilation.workflowSpec) {
       throw new WorkflowProjectorError(
@@ -212,6 +220,7 @@ export class WorkflowRuntime {
           sources: compilation.sources,
           dependencies: compilation.dependencies,
           graphSource: compilation.graphSource,
+          initialInputDigest: compilation.compiledInputDigest,
         },
       },
     });
@@ -310,13 +319,13 @@ export class WorkflowRuntime {
       }
       const existing = this.instanceStore.getByLifecycleOperationKey(input.lifecycle.operationKey);
       if (existing) {
-        if (existing.compiledInputDigest !== input.lifecycle.compiledInputDigest) {
+        if ((existing.lifecycleBinding?.initialInputDigest ?? existing.compiledInputDigest) !== input.lifecycle.compiledInputDigest) {
           throw new WorkflowProjectorError(
             "lifecycle_operation_conflict",
             `lifecycle operation key ${input.lifecycle.operationKey} already binds different compiled input bytes`,
             {
               operationKey: input.lifecycle.operationKey,
-              expectedDigest: existing.compiledInputDigest,
+              expectedDigest: existing.lifecycleBinding?.initialInputDigest ?? existing.compiledInputDigest,
               attemptedDigest: input.lifecycle.compiledInputDigest,
               instanceId: existing.instanceId,
             },
@@ -1652,6 +1661,7 @@ export class WorkflowRuntime {
   continue(instanceId: string): {
     instance: WorkflowInstanceWithDeadline;
     trail: WorkflowStepTrailEntry[];
+    reconciliation: ReturnType<typeof inspectGraph>;
     frontier: ReturnType<WorkflowRuntime["inspect"]>["frontier"];
     failures: ReturnType<WorkflowRuntime["inspect"]>["failures"];
     unknowns: string[];
@@ -1663,6 +1673,7 @@ export class WorkflowRuntime {
     return {
       instance: this.withDeadline(instance),
       trail,
+      reconciliation: this.inspectGraph(instanceId),
       frontier: inspected.frontier,
       failures: inspected.failures,
       unknowns: inspected.unknowns,

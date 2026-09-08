@@ -20,6 +20,7 @@
 // All in one db.transaction. If any step throws, all rollback. After
 // commit, fan out events to subscribers + nudge next owner.
 
+import { workflowPlanningContext } from "./workflow-planning-context.js";
 import type Database from "better-sqlite3";
 import type { EventBus } from "./event-bus.js";
 import type { QueueRepository } from "./queue-repository.js";
@@ -84,11 +85,12 @@ export function withWorkflowContinuation(input: {
 }): string {
   const lines = input.body
     .split("\n")
-    .filter((line) => !line.startsWith("Continuation: ") && line !== WORKFLOW_CONTEXT_SHORTCUT && !(input.contextRefs && line.startsWith("Context reference: ")));
+    .filter((line) => !line.startsWith("Continuation: ") && !line.startsWith("Workflow plan: ") && line !== WORKFLOW_CONTEXT_SHORTCUT && !(input.contextRefs && line.startsWith("Context reference: ")));
   while (lines.at(-1) === "") lines.pop();
   return [
     ...lines,
     "",
+    ...workflowPlanningContext(input.contextRefs, input.instanceId),
     ...(input.contextRefs ?? []).map((ref) => `Context reference: ${ref}`),
     `Continuation: ${renderWorkflowProjectCommand(input)}`,
     WORKFLOW_CONTEXT_SHORTCUT,
@@ -106,6 +108,7 @@ export function workflowWaitWakeMessage(input: {
     `Workflow wait re-presentation (blocker progress or reminder): ${input.spec.id}@${input.spec.version} instance ${input.instance.instanceId} step ${input.step.id}.`,
     `You still own the same frontier packet ${input.packetId}. Read it and inspect current evidence before choosing an authored exit.`,
     ...(input.step.objective ? [`Objective: ${input.step.objective}`] : []),
+    ...workflowPlanningContext(input.spec.context_refs, input.instance.instanceId),
     ...(input.spec.context_refs ?? []).map((ref) => `Context reference: ${ref}`),
     `Continuation: ${renderWorkflowProjectCommand({ ...input, instanceId: input.instance.instanceId })}`,
     WORKFLOW_CONTEXT_SHORTCUT,

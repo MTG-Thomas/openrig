@@ -1,3 +1,4 @@
+import { inspectGraph } from "./workflow-reconciliation.js";
 import { readMissionReadiness, readProjectReadiness } from "./proof/judgments.js";
 import { lifecycleObligations, requiredLifecycleSteps } from "./lifecycle-obligations.js";
 import { QueueWakeRepository } from "./queue-wake-repository.js";
@@ -403,6 +404,7 @@ function readLifecycleExecutions(db: Database.Database, mission: string): Array<
       sources: Array.isArray(binding["sources"]) ? binding["sources"] : [],
       dependencies: Array.isArray(binding["dependencies"]) ? binding["dependencies"] : [],
       graph_source: binding["graphSource"] ?? null,
+      reconciliation: inspectGraph(db, instanceId),
       boundary_obligations: lifecycleObligations(db, instanceId, binding,
         steps.filter((step) => typeof step["id"] === "string").map((step) => ({ id: String(step["id"]) })), frontier),
       frontier_packets: packets,

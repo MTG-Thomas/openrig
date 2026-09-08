@@ -177,6 +177,13 @@ export class WorkflowInstanceStore {
     return row ? rowToInstance(row) : null;
   }
 
+  /** Caller wraps cache/binding/receipt/event in one transaction. No packet or trail is rewritten. */
+  reviseLifecycle(instanceId: string, expectedVersion: number, workflowVersion: string, digest: string, binding: Record<string, unknown>): void {
+    const result = this.db.prepare("UPDATE workflow_instances SET workflow_version = ?, compiled_input_digest = ?, lifecycle_binding_json = ?, version = version + 1 WHERE instance_id = ? AND version = ?")
+      .run(workflowVersion, digest, JSON.stringify(binding), instanceId, expectedVersion);
+    if (result.changes !== 1) throw new WorkflowInstanceError("instance_version_conflict", "Instance progressed during revision; inspect it again.", { instanceId, expectedVersion });
+  }
+
   bindFrontierPacket(input: {
     instanceId: string;
     packetId: string;

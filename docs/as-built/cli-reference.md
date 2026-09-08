@@ -1422,6 +1422,12 @@ Phase D extends the policy enum with `workflow-keepalive` (the policy deferred f
 - `project --instance <id> --current-packet <qitem-id> --exit <handoff|waiting|done|failed> --actor-session <session>` — close the current packet AND project the next-step packet IN THE SAME daemon transaction (transactional-scribe; lost handoffs impossible by design). `--result-note <text>`, `--blocked-on <ref>`, `--next-owner <session>` modify behavior.
 - `list [--status <s>]` — list instances; optionally filter by status (`active`/`waiting`/`completed`/`failed`).
 - `show <instanceId>` — show one instance.
+- `revise <instanceId>` — inspect authored versus bound lifecycle input without
+  writing. The result names changed sources/steps, composition, compatibility,
+  and an apply command containing the inspected version, digest and operation
+  key. Fill in the actor and decision before using `--apply`.
+- `operation <key>` — recover the original lifecycle creation or revision
+  receipt and current instance after a lost response or later source edit.
 - `trace <instanceId>` — show the instance + its append-only step trail (audit-only).
 - `continue <instanceId>` — idempotent inspector; in v1 returns the current state.
 
@@ -1477,6 +1483,23 @@ These are bound into the compiled input digest and persisted at instantiation.
 Changing source bytes under an existing operation key refuses. Relative paths
 passed to both CLI `compile` and `instantiate-lifecycle` are resolved against the
 **caller cwd before HTTP**, so daemon cwd cannot change their meaning.
+
+`workflow show`, read-only `workflow revise`, and the TUI distinguish current,
+source-only, compatible, incompatible and unavailable authored comparisons.
+Catalog or membership bytes can change without changing executable steps;
+file edits do not silently adopt either kind of change. A supported `revise
+--apply` preserves completed/live steps, required obligations, queue custody and
+prior receipts while adopting future-step changes on the same instance. It
+requires the inspected version/digest, a stable operation key, actor and reason.
+Changed completed/live steps, removed obligations and unsupported migrations
+refuse with a specific explanation; restore the protected contract and revise
+unstarted successors. After an ambiguous response, inspect `workflow operation
+<key>` or retry the identical apply command to recover its one committed effect.
+
+Mission-bound continuation and wait guidance carries a snapshot of authored
+planning, wave admission/review and integration rules, with a pointer to inspect
+the current source before deciding. Waves guide agents; executable dependencies
+schedule steps. Bound slice sources do not automatically create child workflows.
 
 `workflow show`/JSON and the TUI execution view show every named obligation with
 its state and receipt state. Required steps need `project --evidence-ref <ref>`

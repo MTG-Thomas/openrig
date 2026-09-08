@@ -51,6 +51,12 @@ export interface RenderInstance {
   failureOccurrences?: RenderFailureOccurrence[];
   /** Named broken joins; never collapse these to an apparently actionable row. */
   unknowns?: string[];
+  reconciliation?: {
+    status: string; adopted: boolean | null; boundDigest: string | null; proposedDigest: string | null;
+    composition: { mode: string; explanation: string; boundSlices: string[]; executableSteps: unknown[] };
+    changes: Array<{ kind: string; ref: string; fields?: string[] }>; reasons: string[];
+    nextAction: string; applyCommand?: string; operationKey?: string;
+  };
   lifecycleBinding?: { graphSource?: { mode?: string; profileSource?: string | null; missionSource?: string | null } } | null;
   boundaryObligations?: Array<{ stepId: string; required: boolean; state: string; receiptState: string;
     receipt: { evidenceRef: string; actorSession: string; closedAt: string } | null }>;
@@ -398,8 +404,26 @@ export function renderInstanceShow(
     }
   }
   for (const unknown of instance.unknowns ?? []) lines.push(`  unknown:  ${unknown}`);
+  if (instance.reconciliation) lines.push(...renderGraphRevision(instance.reconciliation, false));
   if (instance.hopCount !== undefined) lines.push(`  hops:     ${instance.hopCount}`);
   lines.push(`  next:     rig workflow trace ${instance.instanceId}`);
+  return lines;
+}
+
+export function renderGraphRevision(view: NonNullable<RenderInstance["reconciliation"]>, expanded = true): string[] {
+  const lines = [
+    "  graph:    " + view.status + (view.adopted === null ? " · authored comparison unavailable" : view.adopted ? " · running graph matches authored input" : " · authored input has not been adopted"),
+    "  composition: " + view.composition.mode + "; " + view.composition.boundSlices.length + " bound slice manifests; " + view.composition.executableSteps.length + " executable steps",
+    "    " + view.composition.explanation,
+    "  bound:    " + (view.boundDigest ?? "unavailable"),
+    "  proposed: " + (view.proposedDigest ?? "unavailable"),
+  ];
+  if (view.status === "source-only") lines.push("    Source bytes differ; executable steps/policy are unchanged. No completed work needs replay.");
+  if (expanded) for (const change of view.changes) lines.push("    " + change.kind + ": " + change.ref + (change.fields?.length ? " (" + change.fields.join(", ") + ")" : ""));
+  for (const reason of view.reasons) lines.push("    " + reason);
+  lines.push("  inspect:  " + view.nextAction + " (read-only; --json expands complete evidence)");
+  if (expanded && view.applyCommand) lines.push("  apply:    " + view.applyCommand);
+  if (expanded && view.operationKey) lines.push("  recover:  rig workflow operation " + shellQuote(view.operationKey));
   return lines;
 }
 

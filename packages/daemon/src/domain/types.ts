@@ -282,6 +282,7 @@ export type RigEvent =
   // and next-qitem projection are emitted within the SAME daemon
   // transaction (transactional-scribe contract). Subscribers see the
   // pair atomically.
+  | { type: "workflow.revised"; instanceId: string; workflowName: string; operationKey: string; compiledInputDigest: string; revisedBy: string }
   | { type: "workflow.instantiated"; instanceId: string; workflowName: string; workflowVersion: string; createdBy: string }
   | { type: "workflow.step_closed"; instanceId: string; stepId: string; closureReason: string; actorSession: string; priorQitemId: string }
   | { type: "workflow.next_qitem_projected"; instanceId: string; nextQitemId: string; nextOwner: string; nextStepId: string }

@@ -176,6 +176,24 @@ cheaper than being it.
   instead of inventing a recipient. Follow the state/error and `workflow show`/`trace` before retrying.
 - **`rig workflow show` / `trace`** — what this instance is, and every step, actor and exit that
   got it here.
+- **`rig workflow revise <instance>`** — compare the bound graph with current authored
+  inputs before changing a progressed run. Ordinary show and TUI inspection distinguish
+  source-only edits (such as a catalog address) from executable changes. Preview names
+  changed steps, incompatibilities and an exact apply command. Supported revisions preserve
+  completed/live steps, receipts, required obligations and child custody; new work must
+  depend on unfinished work. A changed completed/live contract needs explicit reconsideration:
+  restore it and revise unstarted successors. Revision does not guess a migration or replay
+  accepted consequences.
+- **`rig workflow operation <key>`** — recover the committed creation/revision effect after
+  a timeout or disconnected response, even if authored files have since changed. Retain the
+  operation key and repeat only the identical decision. The original receipt and current
+  instance are distinct; a terminal packet is not acceptance.
+  Project profiles and mission extension/override define outer steps; bound slice manifests
+  are not automatically nested execution. Waves are agent planning groups. The current
+  plan's admission, review and integration guidance returns in lifecycle packets and their
+  continuation, alongside the small revision move. Scope creation/move maintains manifest
+  membership; `--depends-on` is advisory build order, while `execution.depends_on` defines
+  executable prerequisites.
 - **`rig workflow continue`** — where you are in a run you have been handed. **It is read-only. It
   does not continue anything**, despite the name — `project` is the advance verb.
 - **`rig workflow route`** — the owner of the current step is gone; move *that step* to a live seat

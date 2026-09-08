@@ -87,7 +87,7 @@ export function workflowDetail(execution: ExecutionViewSnap, key: string, width:
     if (hasBoundary) lines.push({ text: obligations.some((o) => o.stepId === "activate-successor") ? "  Successor activation is authored after the release boundary." : "  No successor activation step is bound. This workflow ends after its own release boundary." });
     for (const dependency of dependencies) lines.push(field(words(dependency.stepId), dependency.dependsOn));
     lines.push({ text: "  An optional successor is separate from completing this workflow; only authored steps above are obligations." });
-    lines.push(sectionRule("Bound graph and sources", width), field("workflow", instance.workflow_name), field("version", instance.workflow_version), field("graph", instance.graph_source), { text: "  Sources are bound at compilation. Current source bytes have not been compared." });
+    lines.push(sectionRule("Bound graph and sources", width), field("workflow", instance.workflow_name), field("version", instance.workflow_version), field("graph", instance.graph_source), { text: instance.reconciliation ? "  Bound source receipts are retained; the authored/running comparison below explains current changes." : "  Sources are bound at compilation. Current source bytes have not been compared." });
     for (const source of rows(instance.sources)) {
       if (source.kind === "slice" && typeof source.path === "string") {
         const parts = source.path.split("/");
@@ -95,6 +95,17 @@ export function workflowDetail(execution: ExecutionViewSnap, key: string, width:
         if (slice) lines.push(listItem(`Slice ${slice}`, { type: "scopes-open", mission: execution.mission, slice }));
       }
       for (const [label, value] of Object.entries(source)) lines.push(field(label, value));
+    }
+    const comparison = row(instance.reconciliation);
+    if (instance.reconciliation) {
+      lines.push(sectionRule("Authored and running plan", width), field("comparison", comparison.status),
+        field("bound input", comparison.boundDigest), field("authored input", comparison.proposedDigest),
+        field("composition", row(comparison.composition).explanation));
+      if (comparison.status === "source-only") lines.push({ text: "  Source bytes changed; executable steps/policy are unchanged. No completed work needs replay." });
+      for (const reason of Array.isArray(comparison.reasons) ? comparison.reasons : []) lines.push(field("reason", reason));
+      lines.push(...actionLines(text(comparison.nextAction), width));
+      if (comparison.applyCommand) lines.push(...actionLines(text(comparison.applyCommand), width));
+      lines.push({ text: "  Inspect first; the plan can change. A lost response is recoverable with rig workflow operation <key>." });
     }
     lines.push(field("input digest", instance.compiled_input_digest));
     for (const failure of rows(instance.failure_occurrences)) if (failure.status === "unresolved") lines.push(sectionRule("Unresolved failure", width), field("step", failure.step_id), field("reason", failure.failure_reason), field("occurrence", failure.occurrence_id), ...actionLines(text(failure.targeted_action), width));
