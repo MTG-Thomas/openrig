@@ -1,3 +1,4 @@
+import { queueRecoveryOwnsWake } from "./domain/queue-wake-ladder.js";
 import { HealthPolicyStore } from "./domain/health-policy.js";
 import { HealthCheckpointSource } from "./domain/health-checkpoints.js";
 import { PassiveCeremonySource } from "./domain/health-passive-ceremony.js";
@@ -1792,6 +1793,10 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
 
   const sessionTransport = deps.sessionTransport;
   if (sessionTransport) {
+    queueRepoInstance.attachActivityReader((session) => {
+      const node = db.prepare("SELECT node_id FROM sessions WHERE session_name = ? ORDER BY id DESC LIMIT 1").get(session) as { node_id: string } | undefined;
+      return node ? seatActivityService.getSeatState(node.node_id) : null;
+    });
     const watchdogPolicyEngine = new WatchdogPolicyEngine({
       jobsRepo: watchdogJobsRepoInstance,
       historyLog: watchdogHistoryLogInstance,
@@ -1825,6 +1830,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
       resolveTargetGeneration: (s) => sessionRegistry.currentOccupantGenerationForSession(s),
       resolvePreDeliveryTerminalReason: ({ jobId }) =>
         queueRepoInstance.resolveWatchdogPreDeliveryTerminalReason(jobId),
+      resolveQueueWait: (input) => queueRepoInstance.evaluateWaitReminder(input),
       onWakeAttempt: ({ jobId, deliveryStatus }) => {
         queueRepoInstance.recordWatchdogWakeAttempt(jobId, deliveryStatus);
       },
@@ -1892,6 +1898,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
           // the obligation row (reserve-before-deliver); failures land in the
           // ladder's native last_nudge_result vocabulary.
           rows: {
+            recoveryOwnsWake: (qitemId) => queueRecoveryOwnsWake(db, queueRepoInstance.getById(qitemId)),
             listTransitions: (qitemId: string) =>
               queueRepoInstance
                 .listTransitions(qitemId)
@@ -1952,6 +1959,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
     const watchdogScheduler = new WatchdogScheduler({
       jobsRepo: watchdogJobsRepoInstance,
       policyEngine: watchdogPolicyEngine,
+      beforeTick: () => queueRepoInstance.reconcileWaitReminders(),
     });
     deps.watchdogPolicyEngine = watchdogPolicyEngine;
     deps.watchdogScheduler = watchdogScheduler;

@@ -37,6 +37,8 @@ export interface ParkWakeStatus {
   /** A wake fired, but the row is still HELD. The resume attempt is visible
    *  and cannot be mistaken for a healthy armed continuation. */
   unconsumed: boolean;
+  /** Repeating wait notices have a separate bounded recovery owner. */
+  recoveryOwner?: "queue-stuck-sweep";
   /** Absolute due time derived from canonical watchdog metadata. Present only
    *  for a timer or a dependent of the sanctioned usage-limit timer blocker. */
   expiresAt?: string;
@@ -111,6 +113,7 @@ export class QueueWakeRepository {
       live: fired && !this.isRepeatingTimer(armed.wake_ref) ? false : this.isLive(kind, armed.wake_ref),
       deliveryStatus: fired?.delivery_status ?? null,
       unconsumed: fired !== undefined && state === "blocked",
+      ...(this.isRepeatingTimer(armed.wake_ref) ? { recoveryOwner: "queue-stuck-sweep" as const } : {}),
       ...(expiresAt ? { expiresAt } : {}),
     };
   }

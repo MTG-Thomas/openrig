@@ -116,6 +116,7 @@ interface WatchdogPolicyEngineDeps {
   resolvePreDeliveryTerminalReason?: (input: { jobId: string }) => string | null;
   /** Queue-side observer for a wake attempt. It appends resume evidence to
    *  every HELD row armed to this job; delivery outcome is preserved. */
+  resolveQueueWait?: (input: { jobId: string }) => PolicyEvaluation | null | undefined;
   onWakeAttempt?: (attempt: { jobId: string; deliveryStatus: string }) => void;
 }
 
@@ -134,6 +135,11 @@ const PHASE_C_BUILTIN_POLICIES: ReadonlyArray<Policy> = [
  */
 const QUIET_SKIP_REASONS = new Set<string>([
   "not_due",
+  "queue_wait_already_presented",
+  "queue_wait_owner_working",
+  "workflow_healthy_deadline_gated",
+  "workflow_recovery_owns_notice",
+  "workflow_deadline_already_presented",
   "no_actionable_artifacts",
   "no_missing_edge_artifacts",
   "active_wake_not_due",
@@ -193,6 +199,7 @@ export class WatchdogPolicyEngine {
   private readonly policies: Map<string, Policy>;
   private readonly resolveTargetGeneration?: (sessionName: string) => string | null;
   private readonly resolvePreDeliveryTerminalReason?: (input: { jobId: string }) => string | null;
+  private readonly resolveQueueWait?: WatchdogPolicyEngineDeps["resolveQueueWait"];
   private readonly onWakeAttempt?: (attempt: { jobId: string; deliveryStatus: string }) => void;
 
   constructor(deps: WatchdogPolicyEngineDeps) {
@@ -203,6 +210,7 @@ export class WatchdogPolicyEngine {
     this.resolveTargetGeneration = deps.resolveTargetGeneration;
     this.resolvePreDeliveryTerminalReason = deps.resolvePreDeliveryTerminalReason;
     this.onWakeAttempt = deps.onWakeAttempt;
+    this.resolveQueueWait = deps.resolveQueueWait;
     this.parseSpec = deps.parseSpec ?? parseWatchdogSpec;
     this.now = deps.now ?? (() => new Date());
     this.policies = new Map();
@@ -322,7 +330,7 @@ export class WatchdogPolicyEngine {
       requiredReceiptDeferred,
     };
 
-    const outcome = await policy.evaluate(policyJob);
+    const outcome = this.resolveQueueWait?.({ jobId: job.jobId }) ?? await policy.evaluate(policyJob);
 
     if (outcome.action === "skip") {
       // POC parity: skip clears actionable. Loud-vs-quiet decides

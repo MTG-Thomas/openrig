@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { lastMeaningfulTransition } from "./queue-waiting.js";
 import { derivePickup } from "./queue-pickup.js";
 import { ulid } from "ulid";
 import type { EventBus } from "./event-bus.js";
@@ -170,7 +171,10 @@ export class ViewProjector {
         )
         .all(...rigParams, limit) as Record<string, unknown>[];
       const projected = rows.map((r) => {
+        const activity = this.executionDeps?.seatActivity?.getSeatStateBySession(String(r.destination_session));
         const receipt = derivePickup({
+          lastMeaningfulAt: lastMeaningfulTransition(this.db, String(r.qitem_id))?.at,
+          activity: activity?.activity, needsInput: activity?.needsInput.count,
           state: String(r.state),
           claimedAt: (r.claimed_at as string | null) ?? null,
           lastHeartbeat: (r.last_heartbeat as string | null) ?? null,

@@ -1113,14 +1113,14 @@ describe("QueueRepository — S26 blocker-actuation unification (OPR.0.5.6.26)",
   // reason (the blocked row stays blocked), then the full effect-set parity the update path
   // already produces (transition, wake intent, event).
 
-  it("S26 RED 1: a blocker closed handed-off VIA THE HANDOFF VERB auto-unparks its attached rows", async () => {
+  it("S26 RED 1: a result returned to the waiting owner VIA THE HANDOFF VERB auto-unparks its attached rows", async () => {
     const blocker = await repo.create({ sourceSession: "alice@rig", destinationSession: "bob@rig", body: "blocker A" });
     const parked = await repo.create({ sourceSession: "alice@rig", destinationSession: "carol@rig", body: "work B" });
     repo.update({ qitemId: parked.qitemId, actorSession: "carol@rig", state: "blocked", blockedOn: blocker.qitemId });
     expect(repo.getById(parked.qitemId)!.state).toBe("blocked");
 
     // Close the blocker through the handoff verb (terminal state 'handed-off', clear successor).
-    await repo.handoff({ qitemId: blocker.qitemId, fromSession: "bob@rig", toSession: "dave@rig", nudge: false });
+    await repo.handoff({ qitemId: blocker.qitemId, fromSession: "bob@rig", toSession: "carol@rig", nudge: false });
     expect(repo.getById(blocker.qitemId)!.state).toBe("handed-off");
 
     // PINNED RED REASON (specimen-1 shape): at base the parked row stays blocked — the

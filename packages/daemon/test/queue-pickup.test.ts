@@ -115,8 +115,8 @@ describe("S04 pickup receipts — derived, visible, threshold-honest", () => {
     const item = repo.getById(row.qitemId)!;
     const p = pickupOf(item);
     expect(p?.state).toBe("stalled-after-claim");
-    expect(p?.evidence).toMatch(/claimed .* ago/i); // "claimed N min ago…"
-    expect(p?.evidence).toMatch(/zero (substantive )?transitions/i); // "…zero transitions since"
+    expect(p?.evidence).toMatch(/no meaningful queue change/i); // "claimed N min ago…"
+    expect(p?.evidence).toContain("owner activity unknown"); // "…zero transitions since"
   });
 
   it("PARKED (the fourth honest state): a blocked row is NEVER stalled — it reads parked", async () => {
@@ -182,7 +182,7 @@ describe("S04 pickup receipts — derived, visible, threshold-honest", () => {
     expect(finding?.kind).toBe("stalled-after-claim");
     expect(finding?.target).toBe("worker@r"); // the claimant first; S02 owns the escalation chain
     expect(finding?.qitemId).toBe(row.qitemId);
-    expect(finding?.evidence).toMatch(/claimed .* ago/i);
+    expect(finding?.evidence).toMatch(/no meaningful queue change/i);
     // and a WORKING row produces no finding:
     const fresh = await mkRow();
     repo.claim({ qitemId: fresh.qitemId, destinationSession: "worker@r" });
@@ -198,6 +198,6 @@ describe("S04 pickup receipts — derived, visible, threshold-honest", () => {
     const mine = result.rows.find((r) => r.qitem_id === row.qitemId) as Record<string, unknown> | undefined;
     expect(mine, "the pickup lens must list the claimed row").toBeDefined();
     expect(String(mine!.pickup_state)).toBe("stalled-after-claim");
-    expect(String(mine!.pickup_evidence)).toMatch(/claimed .* ago/i);
+    expect(String(mine!.pickup_evidence)).toMatch(/no meaningful queue change/i);
   });
 });

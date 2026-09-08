@@ -34,6 +34,7 @@ export interface ParkWakeDiagnosis {
   phase?: "armed" | "fired";
   deliveryStatus?: string | null;
   unconsumed: boolean;
+  recoveryOwner?: "queue-stuck-sweep";
   expiresAt?: string;
 }
 
@@ -108,6 +109,7 @@ function parseWake(value: unknown): ParkWakeDiagnosis | null {
     phase: wake.phase === "armed" || wake.phase === "fired" ? wake.phase : undefined,
     deliveryStatus: typeof wake.deliveryStatus === "string" ? wake.deliveryStatus : null,
     unconsumed: wake.unconsumed === true,
+    ...(wake.recoveryOwner === "queue-stuck-sweep" ? { recoveryOwner: "queue-stuck-sweep" as const } : {}),
     ...(typeof wake.expiresAt === "string" ? { expiresAt: wake.expiresAt } : {}),
   };
 }
@@ -121,7 +123,7 @@ export function diagnoseSeatParked(
   const read = deps.listOpenObligations(seat.sessionName, PARKED_OBLIGATION_LIMIT);
   const held: HeldObligation[] = read.rows.filter((r) => r.state === "blocked").map((row) => {
     const wake = parseWake(deps.getParkWake?.(row.qitemId));
-    return { ...row, state: "blocked", wake, healthy: wake?.live === true && !wake.unconsumed };
+    return { ...row, state: "blocked", wake, healthy: wake?.live === true && (!wake.unconsumed || wake.recoveryOwner === "queue-stuck-sweep") };
   });
   const unhealthyHeld = held.filter((row) => !row.healthy);
   const open = read.rows.filter((r) => r.state !== "blocked");

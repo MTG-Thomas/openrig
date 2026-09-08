@@ -119,7 +119,7 @@ describe("WF-5 FR-2 class (b): detection-time stuck exception items", () => {
     expect(tags).toContain(`occurrence:${f.packetId}`);
     expect(tags).toContain("step:produce");
     expect(String(item.evidence_ref)).toContain("rig workflow trace");
-    expect(String(item.body)).toContain("dead-seat");
+    expect(String(item.body)).toContain("packet age alone does not establish idle");
   });
 
   it("re-detection DEDUPES: a second sweep updates/re-nudges the ONE item, never a duplicate", async () => {
@@ -141,7 +141,7 @@ describe("WF-5 FR-2 class (b): detection-time stuck exception items", () => {
       target: { session: "producer@rig" },
       context: { workflow_instance_id: f.inst.instance.instanceId, deadline_gated: true },
     } as never);
-    expect(evaluation.action).toBe("send");
+    expect(evaluation.action).toBe("skip");
     expect(exceptionRows(db)).toHaveLength(1);
   });
 
@@ -177,7 +177,7 @@ describe("WF-5 FR-2 class (b): detection-time stuck exception items", () => {
     expect(rows[0]!.tier).toBe("human-gate");
   });
 
-  it("a MISSED (hand-closed) item with the episode still live is RE-CREATED on the next pass — one OPEN item per occurrence, always", async () => {
+  it("a closed diagnostic is honored until a new underlying episode, without re-creating the same action", async () => {
     const f = await build();
     await sweep(f);
     const first = exceptionRows(db)[0]!;
@@ -185,12 +185,11 @@ describe("WF-5 FR-2 class (b): detection-time stuck exception items", () => {
     // instance is still stuck on the SAME packet.
     db.prepare(`UPDATE queue_items SET state = 'done' WHERE qitem_id = ?`).run(first.qitem_id);
     const again = await sweep(f);
-    expect(again.exceptionItemsCreated).toBe(1);
+    expect(again.exceptionItemsCreated).toBe(0);
     const rows = exceptionRows(db);
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     const open = rows.filter((r) => r.state !== "done");
-    expect(open).toHaveLength(1);
-    expect(String(open[0]!.tags)).toContain(`occurrence:${f.packetId}`);
+    expect(open).toHaveLength(0);
   });
 
   it("healthy instances create NOTHING (the zero-noise negative)", async () => {

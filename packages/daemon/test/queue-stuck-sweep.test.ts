@@ -296,7 +296,7 @@ describe("S02 standing stuck sweep — both halves, routed findings, quiet-but-o
     expect(findings[0]!.body).toMatch(/verification.required|indeterminate/i);
   });
 
-  it("IDEMPOTENT REFRESH: three consecutive sweeps over an unresolved finding keep ONE open finding row and refresh its age", async () => {
+  it("IDEMPOTENT REFRESH: three consecutive sweeps over an unresolved finding keep ONE open finding row without manufacturing progress", async () => {
     const row = await mkRow();
     repo.claim({ qitemId: row.qitemId, destinationSession: "worker@r" });
     makeOverdue(row.qitemId);
@@ -309,7 +309,7 @@ describe("S02 standing stuck sweep — both halves, routed findings, quiet-but-o
     const transitions = db
       .prepare("SELECT transition_note FROM queue_transitions WHERE qitem_id = ? ORDER BY ts")
       .all(findings[0]!.qitemId) as Array<{ transition_note: string | null }>;
-    expect(transitions.some((t) => /refresh/i.test(t.transition_note ?? ""))).toBe(true);
+    expect(transitions.some((t) => /refresh/i.test(t.transition_note ?? ""))).toBe(false);
   });
 
   it("REMINT PINNED: closing a finding while its evidence is unchanged suppresses the next sweep", async () => {

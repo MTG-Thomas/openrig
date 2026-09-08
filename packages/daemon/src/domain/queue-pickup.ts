@@ -5,18 +5,11 @@
 // remember to send would recreate the attention gap this kills), and NO sweep loop lives here
 // (S02 owns the standing sweep; this module exports the INPUT contract it consumes).
 //
-// The four honest states:
-//   unclaimed           — never claimed;
-//   working             — claimed AND (substantive post-claim motion OR still inside the
-//                         threshold — the anti-noise direction: never prematurely stalled);
-//   stalled-after-claim — claimed, past threshold, zero substantive motion; the evidence is
-//                         NAMED ("claimed N min ago, zero substantive transitions since") so
-//                         the old by-hand claimedAt/capture/transitions join retires;
-//   parked              — state=blocked only. This projection knows nothing about wake
-//                         health; `rig parked` carries the separate park-wake diagnosis.
-//
-// Substantive motion = any transition strictly after the claim other than the claim's own
-// 'claimed' transition, or a heartbeat after the claim.
+// Working activity is positive liveness evidence, not proof of task progress.
+// Otherwise the grace follows the latest meaningful queue change; an old note
+// cannot keep the row working forever. Stalled-after-claim names this evidence
+// without inferring idle/dead from age. Blocked remains parked; wake health is
+// derived separately. Legacy callers without timestamps retain count semantics.
 // Queue-row last_heartbeat is formally superseded (2026-08-30, S24 F-14); readers remain
 // null-tolerant. Wiring reopens only for the 0.5.7 mechanized-pull turn-end hook that knows the in-flight row,
 // the first honest row-scoped writer. daemon-lifecycle-store.recordHeartbeat remains live and distinct.
@@ -50,6 +43,9 @@ export interface PickupFacts {
   lastHeartbeat: string | null | undefined;
   /** Count of transitions strictly after the claim, excluding the claim's own transition. */
   postClaimMotionCount: number;
+  lastMeaningfulAt?: string;
+  activity?: string;
+  needsInput?: number;
   now?: Date;
   thresholdMinutes?: number;
 }
@@ -65,14 +61,19 @@ export function derivePickup(facts: PickupFacts): PickupReceipt {
   // it is the first honest row-scoped writer, and wiring reopens only in that slice.
   const heartbeatAfterClaim =
     !!facts.lastHeartbeat && Date.parse(facts.lastHeartbeat) > claimedMs;
-  if (facts.postClaimMotionCount > 0 || heartbeatAfterClaim) return { state: "working" };
+  if (facts.activity === "working" && !facts.needsInput) return { state: "working" };
+  // Legacy callers without a timestamp retain their historical count contract.
+  if (facts.lastMeaningfulAt === undefined && (facts.postClaimMotionCount > 0 || heartbeatAfterClaim)) return { state: "working" };
   const thresholdMs = (facts.thresholdMinutes ?? resolvePickupThresholdMinutes()) * 60_000;
-  const ageMs = now.getTime() - claimedMs;
+  const anchor = Math.max(claimedMs, Date.parse(facts.lastMeaningfulAt ?? facts.claimedAt), heartbeatAfterClaim ? Date.parse(facts.lastHeartbeat!) : claimedMs);
+  const ageMs = now.getTime() - anchor;
   if (ageMs <= thresholdMs) return { state: "working" };
   const minutes = Math.floor(ageMs / 60_000);
   return {
     state: "stalled-after-claim",
-    evidence: `claimed ${minutes} min ago, zero substantive transitions since`,
+    evidence: facts.lastMeaningfulAt === undefined
+      ? `claimed ${minutes} min ago, zero substantive transitions since`
+      : `no meaningful queue change for ${minutes} min; owner activity ${facts.activity ?? "unknown"} (queue age does not prove idle)`,
   };
 }
 

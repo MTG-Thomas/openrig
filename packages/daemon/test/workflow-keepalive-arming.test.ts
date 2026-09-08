@@ -346,9 +346,10 @@ describe("FR-3/FR-2: the deadline-gated keepalive policy behavior", () => {
     expect(evaluation.action).toBe("send");
     if (evaluation.action !== "send") throw new Error("unreachable");
     expect(evaluation.target.session).toBe("worker@rig");
-    expect(evaluation.message).toContain("Workflow STUCK (overdue-unclaimed)");
+    expect(evaluation.message).toContain("Workflow deadline:");
     expect(evaluation.message).toContain(inst.entryQitemId);
-    expect(evaluation.message).toContain("rig workflow project");
+    expect(evaluation.message).toContain("--full");
+    expect(evaluation.message).toContain("Packet age does not establish idle");
     const deadlineNotes = (evaluation.notes as Record<string, unknown>)
       .deadline as Record<string, unknown>;
     expect(deadlineNotes.state).toBe("overdue-unclaimed");

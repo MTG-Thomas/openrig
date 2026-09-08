@@ -33,6 +33,7 @@ import { parse as parseYaml } from "yaml";
 import type Database from "better-sqlite3";
 import { shellQuote } from "../adapters/shell-quote.js";
 import { parseFrontmatter } from "./slices/slice-indexer.js";
+import { lastMeaningfulTransition } from "./queue-waiting.js";
 import { derivePickup } from "./queue-pickup.js";
 import { resolveWorkNodeDirs } from "./current-work.js";
 import { resolveLegacyTopologyRigsRoot } from "./user-settings/settings-store.js";
@@ -735,6 +736,8 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
     const arbitrated = deps.seatActivity?.getSeatStateBySession(r.destination_session) ?? null;
     const pickup = derivePickup({
       state: r.state,
+      lastMeaningfulAt: lastMeaningfulTransition(deps.db, r.qitem_id)?.at,
+      activity: arbitrated?.activity, needsInput: arbitrated?.needsInput.count,
       claimedAt: r.claimed_at,
       lastHeartbeat: r.last_heartbeat,
       postClaimMotionCount: Number(r.post_claim_motion ?? 0),
@@ -1009,7 +1012,10 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
   const q5 = rows
     .filter((r) => r.state === "blocked" || (r.claimed_at && ["in-progress", "pending"].includes(r.state)))
     .map((r) => {
+      const activity = deps.seatActivity?.getSeatStateBySession(r.destination_session);
       const pickup = derivePickup({
+        lastMeaningfulAt: lastMeaningfulTransition(deps.db, r.qitem_id)?.at,
+        activity: activity?.activity, needsInput: activity?.needsInput.count,
         state: r.state,
         claimedAt: r.claimed_at,
         lastHeartbeat: r.last_heartbeat,

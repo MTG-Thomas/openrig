@@ -862,6 +862,7 @@ export class WorkflowRuntime {
       acceptance: WorkflowStepSpec["acceptance"] | null;
       receiptRequired: boolean;
       deadline: WorkflowDeadlineVerdict;
+      waiting: import("./queue-waiting.js").WaitingView | null;
     }>;
     failures: Array<WorkflowFailureOccurrence & { targetedAction: "resume" | "none" }>;
     unknowns: string[];
@@ -883,6 +884,7 @@ export class WorkflowRuntime {
         ownerSession: packet?.destinationSession ?? null,
         queueState: packet?.state ?? null,
         blockedOn: packet?.blockedOn ?? null,
+        waiting: packet?.waiting ?? null,
         targetedAction: stepId && packet ? "project" as const : "indeterminate" as const,
         dependsOn: step?.depends_on ?? [],
         gate: step?.gate ?? null,

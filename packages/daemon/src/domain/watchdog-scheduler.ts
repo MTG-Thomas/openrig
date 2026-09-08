@@ -39,6 +39,8 @@ export interface WatchdogSchedulerDeps {
   /** Override timer scheduler for tests. */
   setTimer?: (cb: () => void, ms: number) => NodeJS.Timeout;
   clearTimer?: (handle: NodeJS.Timeout) => void;
+  /** Reconcile durable domain state before taking the due-job snapshot. */
+  beforeTick?: () => void;
   /** Notification on tick errors (for telemetry; defaults to console.error). */
   onTickError?: (err: unknown) => void;
 }
@@ -50,6 +52,7 @@ export class WatchdogScheduler {
   private readonly now: () => Date;
   private readonly setTimer: (cb: () => void, ms: number) => NodeJS.Timeout;
   private readonly clearTimer: (handle: NodeJS.Timeout) => void;
+  private readonly beforeTick?: () => void;
   private readonly onTickError: (err: unknown) => void;
 
   private timer: NodeJS.Timeout | null = null;
@@ -59,6 +62,7 @@ export class WatchdogScheduler {
 
   constructor(deps: WatchdogSchedulerDeps) {
     this.jobsRepo = deps.jobsRepo;
+    this.beforeTick = deps.beforeTick;
     this.policyEngine = deps.policyEngine;
     this.tickIntervalMs = deps.tickIntervalMs ?? 1000;
     this.now = deps.now ?? (() => new Date());
@@ -126,6 +130,7 @@ export class WatchdogScheduler {
     if (this.shuttingDown) return;
     const passStartedAt = this.now();
     const nowMs = passStartedAt.getTime();
+    this.beforeTick?.();
     const active = this.jobsRepo.listActive();
     for (const job of active) {
       if (this.shuttingDown) return;

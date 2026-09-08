@@ -60,6 +60,8 @@ export interface ParkedOwnerConsumerDeps {
     recordNudgeResult: (qitemId: string, result: string) => void;
     /** FRESH open-obligation ids for a seat at the send boundary (B1 recheck). */
     listOpenIds: (destinationSession: string) => string[];
+    /** Existing delivery/recovery ownership; does not change the parked diagnosis. */
+    recoveryOwnsWake?: (qitemId: string) => boolean;
   };
 }
 
@@ -241,9 +243,9 @@ export function makeParkedOwnerConsumerPolicy(deps: ParkedOwnerConsumerDeps): Po
         // B1 — the delivery-boundary recheck: re-read the seat's open rows NOW;
         // an obligation closed after diagnosis must not be named or woken.
         const fresh = new Set(deps.rows.listOpenIds(seat.sessionName));
-        const namedIds = ids.filter((id) => fresh.has(id));
+        const namedIds = ids.filter((id) => fresh.has(id) && !deps.rows.recoveryOwnsWake?.(id));
         if (namedIds.length === 0) {
-          skipped.push({ seat: seat.sessionName, why: "obligation-closed-between-derive-and-wake" });
+          skipped.push({ seat: seat.sessionName, why: ids.some(id => fresh.has(id)) ? "recovery-already-owns-wake" : "obligation-closed-between-derive-and-wake" });
           continue;
         }
 

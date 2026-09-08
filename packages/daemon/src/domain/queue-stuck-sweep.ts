@@ -1,3 +1,7 @@
+import { findQueueRecovery, recoveryId, recoveryTag } from "./queue-recovery.js";
+import { queueWaitNotice } from "./queue-wait-backoff.js";
+import { lastMeaningfulTransition, pendingSince } from "./queue-waiting.js";
+import { resolvePickupThresholdMinutes } from "./queue-pickup.js";
 // S02 (OPR.0.5.5.2) — STANDING STUCK SWEEP. `queue overdue` and `queue undelivered` are the
 // two halves of "is anything silently stuck" — and they were verbs someone had to remember to
 // run. This module makes the sweep a standing daemon loop's body: both halves swept on a
@@ -19,7 +23,7 @@
 // share one contract instead of two guesses. S03 owns park/wake honesty: state=blocked rows
 // legitimately wait and are never findings.
 
-import { createHash } from "node:crypto";
+import { defaultResolveOrchestrator } from "./queue-owner.js";
 import type Database from "better-sqlite3";
 import { deriveCrossHostSuccessorId, type QueueItem, type QueueRepository } from "./queue-repository.js";
 import { stalledPickupFinding } from "./queue-pickup.js";
@@ -43,6 +47,7 @@ export const LADDER_RUNG_PREFIX = "escalation-rung:";
 export const LADDER_EXHAUSTED_PREFIX = "ladder-exhausted:";
 
 export type StuckFindingKind =
+  | "unconsumed-wait"
   | "overdue-claim"
   | "stalled-after-claim"
   | "undelivered-wake"
@@ -150,35 +155,7 @@ export interface StuckSweepResult {
   error?: string;
 }
 
-/** The durable session→node binding (the session-registry precedent: latest sessions row
- *  for the canonical name). Canonical session names (dash form, `review-r2@rig`) and node
- *  logical ids (dotted form, `review.r2`) are INDEPENDENT identities — the live fleet has
- *  zero cases where they match — so resolution NEVER string-converts between them. */
-export function resolveSessionNodeId(db: Database.Database, session: string): string | null {
-  const row = db
-    .prepare("SELECT node_id FROM sessions WHERE session_name = ? ORDER BY id DESC LIMIT 1")
-    .get(session) as { node_id: string } | undefined;
-  return row?.node_id ?? null;
-}
-
-/** Default orchestrator derivation: the destination's BOUND node → the source of its
- *  delegates_to edge → that parent node's CURRENT canonical session binding. A session
- *  outside the recorded topology, or a parent with no session binding, resolves to null
- *  (there is no orchestrator session to wake — never synthesize one). */
-export function defaultResolveOrchestrator(db: Database.Database, session: string): string | null {
-  const nodeId = resolveSessionNodeId(db, session);
-  if (!nodeId) return null;
-  const row = db
-    .prepare(
-      `SELECT s.session_name AS parentSession FROM edges e
-         JOIN sessions s ON s.node_id = e.source_id
-        WHERE e.target_id = ? AND e.kind = 'delegates_to'
-        ORDER BY s.created_at DESC, s.id DESC
-        LIMIT 1`,
-    )
-    .get(nodeId) as { parentSession: string } | undefined;
-  return row?.parentSession ?? null;
-}
+export { resolveSessionNodeId, defaultResolveOrchestrator } from "./queue-owner.js";
 
 interface TransitionNoteRow {
   transition_note: string | null;
@@ -296,17 +273,6 @@ function evidenceIsNewer(evidenceAt: string, closedAt: string): boolean {
   return !Number.isNaN(evidence) && !Number.isNaN(closed) && evidence > closed;
 }
 
-/** QueueRepository.create already provides structural PK idempotence. Naming the
- *  row from the dedup key plus evidence watermark turns two overlapping sweeps
- *  into the same create instead of two random identities. */
-function findingQitemId(dedupTag: string, evidenceAt: string): string {
-  const digest = createHash("sha256")
-    .update(JSON.stringify([dedupTag, evidenceAt]))
-    .digest("hex")
-    .slice(0, 16);
-  return `qitem-stuck-${digest}`;
-}
-
 function verificationCommand(target: string): string {
   const successorId = target.split("@", 1)[0] ?? target;
   return `OPENRIG_URL=<registered-host> rig queue show ${successorId}`;
@@ -367,7 +333,7 @@ export async function runStuckSweep(deps: StuckSweepDeps): Promise<StuckSweepRes
         row,
         route: row.destinationSession,
         ageMinutes: minutesSince(row.closureRequiredAt ?? row.claimedAt, now),
-        evidenceAt: latestIso(row.tsUpdated, row.closureRequiredAt, row.claimedAt),
+        evidenceAt: latestIso(lastMeaningfulTransition(deps.db, row.qitemId)?.at, row.closureRequiredAt, row.claimedAt),
         why: "claimed and past closure_required_at with no closure",
       });
     }
@@ -385,13 +351,32 @@ export async function runStuckSweep(deps: StuckSweepDeps): Promise<StuckSweepRes
       candidates.push({
         kind: stalled.kind,
         row,
-        route: stalled.target,
+        route: resolveOrch(stalled.target) ?? stalled.target,
         ageMinutes: minutesSince(row.claimedAt, now),
         // Keep this null arm for the 0.5.7 mechanized-pull turn-end hook that knows the in-flight row;
         // it is the first honest row-scoped writer, and wiring reopens only in that slice.
-        evidenceAt: latestIso(row.tsUpdated, row.lastHeartbeat, row.claimedAt),
+        evidenceAt: latestIso(lastMeaningfulTransition(deps.db, row.qitemId)?.at, row.lastHeartbeat, row.claimedAt),
         why: stalled.evidence,
       });
+    }
+
+    // The timer delivered one transition-specific notice (or recorded a failed
+    // attempt). This existing sweep owns its bounded recovery, not another full
+    // packet or a parked-owner replay. A real owner response ends the occurrence.
+    const waitJobs = deps.db.prepare("SELECT job_id, spec_yaml FROM watchdog_jobs WHERE state = 'active' AND policy = 'periodic-reminder'").all() as Array<{ job_id: string; spec_yaml: string }>;
+    for (const job of waitJobs) {
+      const notice = queueWaitNotice(job.spec_yaml);
+      if (!notice || now.getTime() - Date.parse(notice.at) <= resolvePickupThresholdMinutes() * 60_000) continue;
+      const binding = deps.db.prepare("SELECT qitem_id FROM queue_transition_wakes WHERE wake_ref = ? AND phase = 'armed' ORDER BY transition_id DESC LIMIT 1").get(job.job_id) as { qitem_id: string } | undefined;
+      const row = binding ? deps.queueRepo.getById(binding.qitem_id) : null;
+      if (!row || row.state !== "blocked" || deps.queueRepo.getParkWakeStatus(row.qitemId)?.ref !== job.job_id) continue;
+      const response = lastMeaningfulTransition(deps.db, row.qitemId);
+      if (response && Date.parse(response.at) > Date.parse(notice.at)) continue;
+      const ownerActivity = deps.queueRepo.ownerActivity(row.destinationSession);
+      if (ownerActivity?.activity === "working" && !ownerActivity.needsInput.count && notice.deliveryStatus === "ok") continue;
+      candidates.push({ kind: "unconsumed-wait", row, route: resolveOrch(row.destinationSession) ?? row.sourceSession,
+        ageMinutes: minutesSince(notice.at, now), evidenceAt: notice.at,
+        why: `wait notice delivery=${notice.deliveryStatus}; no later owner response; activity=${ownerActivity?.activity ?? "unknown"}; inspect exact blocker ${row.blockedOn}` });
     }
 
     // Half 2 — sender-believed-delivered-never-woken. Nobody holds it (the wake failed),
@@ -428,14 +413,16 @@ export async function runStuckSweep(deps: StuckSweepDeps): Promise<StuckSweepRes
     for (const { qitem_id } of unclaimedRows) {
       const row = deps.queueRepo.getById(qitem_id);
       if (!row || isFindingRow(row)) continue;
+      const actionableAt = pendingSince(deps.db, row.qitemId) ?? row.tsCreated;
+      if (actionableAt > cutoff) continue;
       if (hasLiveLadder(deps.db, row.qitemId)) continue;
       candidates.push({
         kind: "unclaimed-obligation",
         row,
         route: resolveOrch(row.destinationSession) ?? row.destinationSession,
-        ageMinutes: minutesSince(row.tsCreated, now),
-        evidenceAt: latestIso(row.tsUpdated, row.tsCreated),
-        why: `created with a destination and unclaimed for ${minutesSince(row.tsCreated, now)} min (threshold ${ageMinutes})`,
+        ageMinutes: minutesSince(actionableAt, now),
+        evidenceAt: actionableAt,
+        why: `actionable with a destination and unclaimed for ${minutesSince(actionableAt, now)} min (threshold ${ageMinutes})`,
       });
     }
 
@@ -495,8 +482,15 @@ export async function runStuckSweep(deps: StuckSweepDeps): Promise<StuckSweepRes
     // new one is created durable + waking (the create path's default nudge).
     const findings: StuckSweepFindingAction[] = [];
     const liveDedupTags = new Set<string>();
-    for (const c of candidates) {
+    for (const c of [...new Map(candidates.map(c => [c.row.qitemId, c])).values()]) {
       const dedupTag = findingDedupTag(c.kind, c.row.qitemId);
+      const shared = findQueueRecovery(deps.db, c.row.qitemId);
+      if (shared) {
+        const existingTags = deps.queueRepo.getById(shared.qitemId)?.tags ?? [];
+        for (const tag of existingTags) if (tag.startsWith("stuck-sweep:")) liveDedupTags.add(tag);
+        if (["pending", "in-progress", "blocked"].includes(shared.state)) findings.push({ kind: c.kind, qitemId: c.row.qitemId, findingQitemId: shared.qitemId, action: "refreshed" });
+        continue;
+      }
       liveDedupTags.add(dedupTag);
       const existing = deps.db
         .prepare(
@@ -511,15 +505,11 @@ export async function runStuckSweep(deps: StuckSweepDeps): Promise<StuckSweepRes
         | undefined;
       const existingIsOpen = existing && ["pending", "in-progress", "blocked"].includes(existing.state);
       if (existing && existingIsOpen) {
-        await deps.queueRepo.update({
-          qitemId: existing.qitem_id,
-          actorSession: existing.source_session,
-          transitionNote: `stuck-sweep refresh: age now ${c.ageMinutes} min (${c.kind} on ${c.row.qitemId})`,
-        });
+        // Age is derived at read time; an unchanged scan is not a transition.
         findings.push({ kind: c.kind, qitemId: c.row.qitemId, findingQitemId: existing.qitem_id, action: "refreshed" });
       } else if (!existing || evidenceIsNewer(c.evidenceAt, existing.ts_updated)) {
         const created = await deps.queueRepo.create({
-          qitemId: findingQitemId(dedupTag, c.evidenceAt),
+          qitemId: recoveryId(deps.db, c.row.qitemId),
           // The detector is machinery, not a seat: the obligation's own creator is the
           // finding's source (the workflow-exception precedent).
           sourceSession: c.row.sourceSession,
@@ -527,7 +517,7 @@ export async function runStuckSweep(deps: StuckSweepDeps): Promise<StuckSweepRes
           body: evidenceBody(deps.db, c),
           summary: `Stuck sweep: ${c.verificationTargets ? "successor-verification-required" : c.kind} on ${c.row.qitemId} (${c.ageMinutes} min)`,
           evidenceRef: `rig queue show ${c.row.qitemId}`,
-          tags: [STUCK_SWEEP_FINDING_TAG, dedupTag],
+          tags: [STUCK_SWEEP_FINDING_TAG, dedupTag, recoveryTag(c.row.qitemId)],
         });
         findings.push({ kind: c.kind, qitemId: c.row.qitemId, findingQitemId: created.qitemId, action: "created" });
       }

@@ -273,6 +273,7 @@ Examples:
     .requiredOption("--actor-session <session>", "Session closing the packet (owner-as-author)")
     .option("--result-note <text>", "Closure result note (audit context)")
     .option("--evidence-ref <ref>", "Record attributed progress evidence; a changed reference resets an intentional-wait reminder")
+    .option("--wait-for-proof <scope>", "For waiting: watch a slice proof scope through its current attention revision")
     .option("--blocked-on <ref>", "For waiting exits: blocker reference (qitem id, gate name)")
     .option("--next-owner <session>", "Override default next-step owner")
     .option("--acceptance-candidate <identity>", "Typed acceptance candidate identity (use with verdict and evidence-ref)")
@@ -297,6 +298,11 @@ Examples:
   $ rig workflow project --instance WF01ABC --current-packet QITEM-4 \\
       --exit waiting --actor-session velocity-qa@openrig-velocity \\
       --blocked-on "founder-gate-2"
+
+  # also wait for the current outcome of a slice (no copied readiness)
+  $ rig workflow project --instance WF01ABC --current-packet QITEM-4 \\
+      --exit waiting --actor-session velocity-qa@openrig-velocity \\
+      --blocked-on QITEM-3 --wait-for-proof release-example/slices/01-build
 `)
     .action(async (opts: {
       instance: string;
@@ -305,6 +311,7 @@ Examples:
       actorSession: string;
       resultNote?: string;
       evidenceRef?: string;
+      waitForProof?: string;
       blockedOn?: string;
       nextOwner?: string;
       acceptanceCandidate?: string;
@@ -326,8 +333,22 @@ Examples:
         return;
       }
       const exitKind: ProjectExitKind = opts.exit;
+      if (opts.waitForProof && exitKind !== "waiting") {
+        emit3PartError(Boolean(opts.json), "--wait-for-proof requires --exit waiting.", "No workflow state changed.", "Use a waiting exit and an exact slice proof scope.");
+        return;
+      }
       const deps = getDeps();
       await withClient(deps, async (client) => {
+        let attention: { scope: string; revision: string } | undefined;
+        if (opts.waitForProof) {
+          const proof = await client.get<{ attention?: { scope: string; revision: string } }>(`/api/proof?scope=${encodeURIComponent(opts.waitForProof)}`);
+          if (proof.status >= 400) { printResult(Boolean(opts.json), proof.data, proof.status); return; }
+          attention = proof.data?.attention;
+          if (!attention) {
+            emit3PartError(Boolean(opts.json), "The selected proof scope has no slice attention revision.", "No workflow state changed.", "Select a slice shown by rig proof show.");
+            return;
+          }
+        }
         const res = await client.post<{
           closedPacketId?: string;
           nextPacketId?: string;
@@ -340,8 +361,9 @@ Examples:
           actorSession: opts.actorSession,
           resultNote: opts.resultNote,
           blockedOn: opts.blockedOn,
-          closureEvidence: opts.evidenceRef !== undefined || opts.acceptanceCandidate !== undefined || opts.acceptanceVerdict !== undefined || opts.acceptanceEvidenceRef !== undefined
+          closureEvidence: attention !== undefined || opts.evidenceRef !== undefined || opts.acceptanceCandidate !== undefined || opts.acceptanceVerdict !== undefined || opts.acceptanceEvidenceRef !== undefined
             ? {
+                ...(attention ? { attention } : {}),
                 ...(opts.evidenceRef !== undefined ? { evidence_ref: opts.evidenceRef } : {}),
                 ...(opts.acceptanceCandidate !== undefined || opts.acceptanceVerdict !== undefined || opts.acceptanceEvidenceRef !== undefined ? { acceptance: {
                   candidate: opts.acceptanceCandidate,

@@ -331,7 +331,7 @@ describe("S01 wake-or-escalate — retry ladder, named rungs, derived suspension
     const refreshNotes = db
       .prepare("SELECT transition_note FROM queue_transitions WHERE qitem_id = ?")
       .all(escRows[0]!.qitemId) as Array<{ transition_note: string | null }>;
-    expect(refreshNotes.some((n) => /refresh/i.test(n.transition_note ?? ""))).toBe(true);
+    expect(refreshNotes.some((n) => /refresh/i.test(n.transition_note ?? ""))).toBe(false);
   });
 
   it("DESTINATION RATE-BOUND: wake attempts across all ladders to one destination stay within the per-window bound", async () => {
@@ -436,7 +436,7 @@ describe("S01 wake-or-escalate — retry ladder, named rungs, derived suspension
     expect(findings.filter((f) => (f.tags ?? []).some((t) => t.endsWith(`:${baton.qitemId}`)))).toHaveLength(0);
   });
 
-  it("SEAM (handback): an exhausted ladder is S02's net again — exactly one finding across two sweeps", async () => {
+  it("SEAM: the existing aggregate owns recovery after exhaustion; two sweeps do not create another obligation", async () => {
     const baton = await mkBaton();
     setNudgeResult(baton.qitemId, "failed:tmux session not found", 120);
     for (let a = 1; a <= 3; a++) {
@@ -470,7 +470,8 @@ describe("S01 wake-or-escalate — retry ladder, named rungs, derived suspension
           (i.tags ?? []).includes(STUCK_SWEEP_FINDING_TAG) &&
           (i.tags ?? []).some((t) => t.endsWith(`:${baton.qitemId}`)),
       );
-    expect(findings).toHaveLength(1);
+    expect(findings).toHaveLength(0);
+    expect(await escalationRowsFor("worker@r")).toHaveLength(1);
   });
 
   // ── G8: F6 — THE LADDER SURVIVES RESTART BY DERIVATION ───────────────────────

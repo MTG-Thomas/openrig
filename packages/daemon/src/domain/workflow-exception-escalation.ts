@@ -1,3 +1,4 @@
+import { findQueueRecovery, recoveryId, recoveryTag } from "./queue-recovery.js";
 // OPR.0.4.6.WF5 FR-2 class (b): detection-time exception items for
 // STUCK/OVERDUE instances.
 //
@@ -7,14 +8,11 @@
 // missed item on the next pass (P2 cleanup honored: no same-txn claim is
 // made or implemented here).
 //
-// DEDUP (the occurrence contract): exactly ONE OPEN item per
-// (instance, step, class, occurrence) — the occurrence key is the overdue
-// packet id named by the WF-1 evaluator's evidence. Re-detections of the
-// same unresolved episode find the open item by TAG QUERY (never summary
-// parsing) and re-nudge it instead of minting a duplicate. A resolved/
-// closed item with the episode still live is a MISSED item — the next
-// detection re-creates it (the sweep guarantee), keeping exactly one
-// OPEN item per occurrence at all times.
+// The existing diagnostic row carries the underlying obligation tag. Timer,
+// ladder and sweep converge on that same recovery. Unchanged redetection neither
+// sends nor appends a transition; a closed disposition stands until a new
+// meaningful source transition or actual failed delivery creates a new episode.
+// Legacy occurrence tags remain readable without rewriting historical rows.
 //
 // The policy shape is untouched (X5 stands: PolicyEvaluation remains
 // send|skip|terminal) — the keepalive calls this injected helper as a
@@ -75,29 +73,31 @@ export function makeEnsureStuckExceptionItem(deps: StuckExceptionDeps): EnsureSt
     const exception = classifyDeadlineVerdict(input.workflowName, input.verdict);
     if (!exception) return { outcome: "skipped-healthy" };
 
-    // Dedup by tag query against OPEN states only (pending | in-progress
-    // | blocked): one open item per occurrence; a closed item with the
-    // episode still live is missed and gets re-created.
+    const previous = findQueueRecovery(deps.db, exception.deadlineEvidence!.packetId);
+    if (previous) return { outcome: "deduped", qitemId: previous.qitemId };
+
+    // Honor historical occurrence rows, including their closed disposition.
+    // Modern rows were already resolved through the current source episode above.
     const open = deps.db
       .prepare(
         `SELECT qitem_id, destination_session FROM queue_items
-         WHERE state IN ('pending','in-progress','blocked')
-           AND json_valid(tags)
+         WHERE json_valid(tags)
            AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)
            AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)
            AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)
            AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'workflow-exception')
-           AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'exception:stuck_overdue')`,
+           AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'exception:stuck_overdue')
+           AND NOT EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)` ,
       )
       .get(
         `occurrence:${exception.identity.occurrenceKey}`,
         `instance:${exception.identity.instanceId}`,
         `workflow:${exception.identity.workflowName}`,
+        recoveryTag(exception.deadlineEvidence!.packetId),
       ) as { qitem_id: string; destination_session: string } | undefined;
     if (open) {
       // Re-detection of the same unresolved episode: re-nudge the ONE
       // item (best-effort — the durable item is the guarantee).
-      await deps.queueRepo.maybeNudge(open.qitem_id, open.destination_session, undefined);
       return { outcome: "deduped", qitemId: open.qitem_id };
     }
 
@@ -131,15 +131,16 @@ export function makeEnsureStuckExceptionItem(deps: StuckExceptionDeps): EnsureSt
       `deadline: ${e.overdueBySeconds}s past the ${e.anchor} anchor (${e.anchorAt}); packet age ${e.ageSeconds}s\n` +
       `reason: ${exception.reason}\n` +
       `evidence: ${evidenceRef}\n` +
-      `resolve: re-nudge/replace the owner per the WF-1 dead-seat mechanics (the step re-projects and the flow continues from this step); this item clears when the instance leaves the exception state.`;
+      `resolve: inspect the current owner and deadline; packet age alone does not establish idle. This item clears when the instance leaves the exception state.`;
     const createItem = (destination: string, tier: string) =>
       deps.queueRepo.create({
+        qitemId: recoveryId(deps.db, e.packetId),
         sourceSession: input.createdBySession,
         destinationSession: destination,
         body,
         priority: "urgent",
         tier,
-        tags: workflowExceptionTags(exception.identity),
+        tags: [...workflowExceptionTags(exception.identity), recoveryTag(e.packetId)],
         summary: exception.reason,
         evidenceRef,
       });

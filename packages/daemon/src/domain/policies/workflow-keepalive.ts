@@ -219,17 +219,24 @@ export function makeWorkflowKeepalivePolicy(deps: WorkflowKeepaliveDeps): Policy
       let exceptionItemError: string | undefined;
       if (deps.ensureStuckExceptionItem && verdict.state !== "healthy" && verdict.evidence) {
         try {
-          await deps.ensureStuckExceptionItem({
+          const recovery = await deps.ensureStuckExceptionItem({
             workflowName: instance.workflow_name,
             workflowVersion: instance.workflow_version,
             createdBySession: instance.created_by_session,
             verdict,
           });
+          if (context.deadline_gated === true && recovery.qitemId) {
+            return { action: "skip", reason: "workflow_recovery_owns_notice", notes: { instanceId, recoveryQitemId: recovery.qitemId, outcome: recovery.outcome } };
+          }
         } catch (error) {
           // Preserve the owner nudge while reporting failed exception admission.
           exceptionItemError = error instanceof Error ? error.message : String(error);
         }
       }
+      const condition = stuck ? JSON.stringify([stuck.packetId, stuck.anchor, stuck.anchorAt]) : undefined;
+      const hasReceipt = condition && (db.prepare("PRAGMA table_info(watchdog_jobs)").all() as Array<{ name: string }>).some(column => column.name === "last_fired_condition");
+      const receipt = hasReceipt ? (db.prepare("SELECT last_fired_condition AS value FROM watchdog_jobs WHERE job_id = ?").get(job.jobId) as { value: string | null } | undefined)?.value : null;
+      if (condition && receipt === condition && !exceptionItemError) return { action: "skip", reason: "workflow_deadline_already_presented" };
       const primary = stuck ? stuck.ownerSession : allSessions[0]!;
       const others = stuck
         ? allSessions.filter((s) => s !== primary)
@@ -252,6 +259,7 @@ export function makeWorkflowKeepalivePolicy(deps: WorkflowKeepaliveDeps): Policy
 
       return {
         action: "send",
+        ...(condition ? { conditionReceipt: condition } : {}),
         target: { session: primary },
         message: exceptionItemError ? `${message}\nWorkflow exception item was not admitted: ${exceptionItemError}` : message,
         notes: {
@@ -297,10 +305,8 @@ function buildStuckNudgeMessage(input: {
 }): string {
   const e = input.evidence;
   return [
-    `Workflow STUCK (${input.verdictState}): ${input.workflowName}@${input.workflowVersion} instance ${e.instanceId} step ${e.stepId ?? "(unknown)"} is overdue by ${Math.floor(e.overdueBySeconds / 60)}m (anchor: ${e.anchor} @ ${e.anchorAt}; packet age ${Math.floor(e.ageSeconds / 60)}m).`,
-    `You own frontier packet ${e.packetId}. If you lost context: run 'rig whoami --json', read the packet with 'rig queue show ${e.packetId}', do (or verify) the step's work, then close it truthfully via 'rig workflow project --instance ${e.instanceId} --current-packet ${e.packetId} --exit <handoff|waiting|done|failed> --actor-session ${e.ownerSession}'.`,
-    "Projecting normally clears the stuck state automatically - do not hand-edit any workflow state.",
-    POC_KEEPALIVE_TRAILER,
+    `Workflow deadline: ${e.instanceId}, packet ${e.packetId}, owner ${e.ownerSession}; ${Math.floor(e.overdueBySeconds / 60)}m overdue (${e.anchor} at ${e.anchorAt}).`,
+    `Packet age does not establish idle. Inspect: rig workflow show ${e.instanceId}. Full packet: rig queue show ${e.packetId} --full.`,
   ].join("\n");
 }
 

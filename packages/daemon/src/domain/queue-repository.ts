@@ -7,6 +7,7 @@ import type { PersistedEvent } from "./types.js";
 import { QueueTransitionLog, type OwnerNotificationLevel, type RecentQueueTransitionScope } from "./queue-transition-log.js";
 import { WAKE_INTENT_PREFIX, type OutboxHandler } from "./outbox-handler.js";
 import { derivePickup, type PickupReceipt } from "./queue-pickup.js";
+import { lastMeaningfulTransition, readWaitingView, type WaitingView, type WaitingActivityReader } from "./queue-waiting.js";
 import { wrapPaneEnvelope } from "../lib/pane-envelope.js";
 import { getSelfHostId } from "./hosts/fanout-contract.js";
 import { parseSessionName } from "./session-name.js";
@@ -23,7 +24,7 @@ import {
   type ParkWakeStatus,
 } from "./queue-wake-repository.js";
 import { WatchdogJobsRepository } from "./watchdog-jobs-repository.js";
-import { armQueueWait, backOffQueueWait, refreshQueueWaits } from "./queue-wait-backoff.js";
+import { armQueueWait, backOffQueueWait, refreshQueueWaits, evaluateQueueWait, retargetQueueWait } from "./queue-wait-backoff.js";
 
 export const QUEUE_STATES = [
   "pending",
@@ -131,6 +132,7 @@ export interface QueueItem {
   /** S04 — the DERIVED pickup receipt (unclaimed/working/stalled-after-claim/parked). Never
    *  stored: computed at projection time from claimed_at + the transition log + heartbeat. */
   pickup?: PickupReceipt;
+  waiting?: WaitingView;
   handedOffTo: string | null;
   handedOffFrom: string | null;
   expiresAt: string | null;
@@ -146,7 +148,7 @@ export interface QueueItem {
   evidenceRef: string | null;
   /** Present only on compact list rows so omitted content cannot be mistaken
    *  for an author-supplied empty value. Full reads never carry this marker. */
-  fieldsElided?: Array<"body" | "summary" | "evidenceRef">;
+  fieldsElided?: Array<"body" | "summary" | "evidenceRef" | "waiting">;
   closureReason: ClosureReason | null;
   closureTarget: string | null;
   closureRequiredAt: string | null;
@@ -716,8 +718,8 @@ export class QueueRepository {
 
   /** Startup wires this after queue/watchdog composition. Tests may also call
    * it after reconstruction; it only reconciles queue-owned repeating timers. */
-  reconcileWaitReminders(changedQitem?: string): void {
-    refreshQueueWaits(this.db, this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), changedQitem);
+  reconcileWaitReminders(changedQitem?: string, proofChanged = false): void {
+    refreshQueueWaits(this.db, this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), changedQitem, proofChanged);
   }
 
   startWaitReminders(): () => void {
@@ -725,6 +727,8 @@ export class QueueRepository {
     return this.eventBus.subscribe((event) => {
       if (event.type.startsWith("queue.") && "qitemId" in event && typeof event.qitemId === "string") {
         this.reconcileWaitReminders(event.qitemId);
+      } else if (event.type === "proof.judged" || event.type === "proof.sources_changed") {
+        this.reconcileWaitReminders(undefined, true);
       }
     });
   }
@@ -824,6 +828,8 @@ export class QueueRepository {
       toSession,
       identityProvenance,
       bareBody: `Queue handoff: ${successorQitemId} - check your queue.`,
+      tags: this.getById(successorQitemId)?.handedOffFrom
+        ? [`queue:return:${this.getByIdOrThrow(successorQitemId).handedOffFrom}`] : undefined,
     });
   }
 
@@ -874,7 +880,7 @@ export class QueueRepository {
       toSession: input.destinationSession,
       identityProvenance: input.identityProvenance,
       bareBody: `Blocker ${input.blockerQitemId} resolved; parked qitem ${input.qitemId} is pending. Resume the recorded continuation and update the row.`,
-      tags: [AUTO_UNPARK_WAKE_TAG, `${AUTO_UNPARK_BLOCKER_TAG_PREFIX}${input.blockerQitemId}`],
+      tags: [AUTO_UNPARK_WAKE_TAG, `${AUTO_UNPARK_BLOCKER_TAG_PREFIX}${input.blockerQitemId}`, `queue:return:${input.blockerQitemId}`],
     });
   }
 
@@ -949,9 +955,50 @@ export class QueueRepository {
     // cannot both send. A losing claim — the row is no longer `pending` (already
     // resolved, in-flight under another drainer, or claimed) — simply skips: no
     // send, no tally. This makes the external effect once, not merely the state.
-    if (!this.outbox.claimForDelivery(outboxId)) return "skipped";
-    const intent = this.outbox.getById(outboxId);
-    if (!intent) return "skipped"; // unreachable post-claim; defensive
+    // Claim the exact return's arrival + dependent resumes atomically. Each
+    // original frozen intent and audit pointer survives; only transport coalesces.
+    let superseded = false;
+    const actionable = (entry: import("./outbox-handler.js").OutboxEntry): boolean => {
+      const row = entry.auditPointer ? this.db.prepare("SELECT state FROM queue_items WHERE qitem_id = ?").get(entry.auditPointer) as { state: string } | undefined : undefined;
+      let current = row?.state === "pending";
+      const resumePrefix = `${WAKE_INTENT_PREFIX}blocker-`;
+      if (current && entry.outboxId.startsWith(resumePrefix)) {
+        const expected = Number(entry.outboxId.slice(resumePrefix.length));
+        const latest = this.db.prepare(`SELECT transition_id FROM (
+          SELECT transition_id, state, LAG(state) OVER (ORDER BY transition_id) AS previous_state
+          FROM queue_transitions WHERE qitem_id = ?)
+          WHERE state = 'pending' AND previous_state IS NOT 'pending' ORDER BY transition_id DESC LIMIT 1`)
+          .get(entry.auditPointer) as { transition_id: number } | undefined;
+        current = expected === latest?.transition_id;
+      }
+      if (!current) {
+        // Existing failed state means the requested old delivery was refused;
+        // the explicit tag distinguishes supersession from a transport attempt.
+        // Do not stamp last_nudge_result or delivered_at: neither happened.
+        const changed = this.db.prepare("UPDATE outbox_entries SET delivery_state = 'failed', tags = ? WHERE outbox_id = ? AND delivery_state = 'pending'")
+          .run(JSON.stringify([...(entry.tags ?? []), "queue:wake-superseded"]), entry.outboxId);
+        superseded ||= changed.changes > 0;
+      }
+      return current;
+    };
+    const group = this.db.transaction(() => {
+      const candidate = this.outbox!.getById(outboxId);
+      if (!candidate || candidate.deliveryState !== "pending" || !actionable(candidate)) return [];
+      if (!this.outbox!.claimForDelivery(outboxId)) return [];
+      const first = this.outbox!.getById(outboxId)!;
+      const intents = [first];
+      const correlation = first.tags?.find(tag => tag.startsWith("queue:return:"));
+      if (correlation) {
+        const peers = this.db.prepare(`SELECT outbox_id FROM outbox_entries
+          WHERE delivery_state = 'pending' AND destination_session = ? AND substr(outbox_id, 1, ?) = ?
+          AND EXISTS (SELECT 1 FROM json_each(outbox_entries.tags) WHERE value = ?)
+          ORDER BY outbox_id`).all(first.destinationSession, WAKE_INTENT_PREFIX.length, WAKE_INTENT_PREFIX, correlation) as Array<{ outbox_id: string }>;
+        for (const peer of peers) if (actionable(this.outbox!.getById(peer.outbox_id)!) && this.outbox!.claimForDelivery(peer.outbox_id)) intents.push(this.outbox!.getById(peer.outbox_id)!);
+      }
+      return intents;
+    })();
+    const intent = group[0];
+    if (!intent) return superseded ? "failed" : "skipped";
     // Only deliver a wake for a qitem that actually exists. A wake intent whose
     // target qitem is missing — a caller-recorded id under this prefix (the route
     // no longer refuses those), or a successor already swept — is finalized
@@ -963,46 +1010,50 @@ export class QueueRepository {
     const qitemId = intent.auditPointer ?? outboxId;
     // MF4: send the FROZEN envelope stored on the intent verbatim (no re-resolution).
     const outcome = await this.performWakeSend(
-      qitemId, intent.destinationSession, intent.senderSession, undefined, intent.body,
+      qitemId, intent.destinationSession, intent.senderSession, undefined, group.map(entry => entry.body).join("\n"),
     );
     const finalState = outcome.classified === "verified" ? "delivered" : outcome.classified;
-    const blockerRef = intent.tags?.includes(AUTO_UNPARK_WAKE_TAG)
-      ? intent.tags
-          .find((tag) => tag.startsWith(AUTO_UNPARK_BLOCKER_TAG_PREFIX))
-          ?.slice(AUTO_UNPARK_BLOCKER_TAG_PREFIX.length)
-      : undefined;
-    const wakeEvent = this.db.transaction(() => {
-      this.recordNudgeAttempt(qitemId, outcome.nudgeResult);
-      this.outbox!.finalizeDelivery(outboxId, finalState);
-      if (!blockerRef) return null;
+    for (const member of group) {
+      const intent = member;
+      const qitemId = intent.auditPointer!;
+      const blockerRef = intent.tags?.includes(AUTO_UNPARK_WAKE_TAG)
+        ? intent.tags
+            .find((tag) => tag.startsWith(AUTO_UNPARK_BLOCKER_TAG_PREFIX))
+            ?.slice(AUTO_UNPARK_BLOCKER_TAG_PREFIX.length)
+        : undefined;
+      const wakeEvent = this.db.transaction(() => {
+        this.recordNudgeAttempt(qitemId, outcome.nudgeResult);
+        this.outbox!.finalizeDelivery(intent.outboxId, finalState);
+        if (!blockerRef) return null;
 
-      const item = this.getByIdOrThrow(qitemId);
-      const transition = this.transitionLog.append({
-        qitemId,
-        state: item.state,
-        actorSession: "queue@system",
-        transitionNote: `blocker ${blockerRef} wake attempted; delivery=${outcome.nudgeResult}`,
-      });
-      this.wakeRepo.record({
-        transitionId: transition.transitionId,
-        qitemId,
-        phase: "fired",
-        kind: "blocker",
-        ref: blockerRef,
-        deliveryStatus: outcome.nudgeResult,
-      });
-      return this.eventBus.persistWithinTransaction({
-        type: "queue.updated",
-        qitemId,
-        fromState: item.state,
-        toState: item.state,
-        closureReason: null,
-        closureTarget: null,
-        actorSession: "queue@system",
-        summary: item.summary ?? null,
-      });
-    })();
-    if (wakeEvent) this.eventBus.notifySubscribers(wakeEvent);
+        const item = this.getByIdOrThrow(qitemId);
+        const transition = this.transitionLog.append({
+          qitemId,
+          state: item.state,
+          actorSession: "queue@system",
+          transitionNote: `blocker ${blockerRef} wake attempted; delivery=${outcome.nudgeResult}`,
+        });
+        this.wakeRepo.record({
+          transitionId: transition.transitionId,
+          qitemId,
+          phase: "fired",
+          kind: "blocker",
+          ref: blockerRef,
+          deliveryStatus: outcome.nudgeResult,
+        });
+        return this.eventBus.persistWithinTransaction({
+          type: "queue.updated",
+          qitemId,
+          fromState: item.state,
+          toState: item.state,
+          closureReason: null,
+          closureTarget: null,
+          actorSession: "queue@system",
+          summary: item.summary ?? null,
+        });
+      })();
+      if (wakeEvent) this.eventBus.notifySubscribers(wakeEvent);
+    }
     return finalState;
   }
 
@@ -2673,6 +2724,32 @@ export class QueueRepository {
       .prepare("SELECT qitem_id, destination_session FROM queue_items WHERE blocked_on = ? AND state = 'blocked'")
       .all(input.qitemId) as Array<{ qitem_id: string; destination_session: string }>;
     for (const r of blockedRows) {
+      const closed = this.getById(input.qitemId);
+      const successors = input.terminalState === "handed-off" ? this.db.prepare(
+        "SELECT qitem_id FROM queue_items WHERE handed_off_from = ? AND destination_session = ?",
+      ).all(input.qitemId, closed?.handedOffTo ?? "") as Array<{ qitem_id: string }> : [];
+      const successor = successors.length === 1 ? this.getById(successors[0]!.qitem_id) : null;
+      if (successor && isBlockerLive(successor.state) && successor.destinationSession !== r.destination_session) {
+        // Onward custody is a changed blocker. Returning to the waiting owner
+        // below is the result arrival that actually resumes its continuation.
+        const oldWake = this.wakeRepo.getStatus(r.qitem_id);
+        this.db.prepare("UPDATE queue_items SET blocked_on = ?, ts_updated = ? WHERE qitem_id = ?")
+          .run(successor.qitemId, input.ts, r.qitem_id);
+        const rebound = this.transitionLog.append({ qitemId: r.qitem_id, state: "blocked", actorSession: input.actorSession,
+          transitionNote: `blocker custody moved from ${input.qitemId} to ${successor.qitemId}`,
+          identityProvenance: input.identityProvenance });
+        const jobs = this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db);
+        const retainedTimer = oldWake?.kind === "timer" && retargetQueueWait(this.db, jobs, oldWake.ref, successor.qitemId);
+        if (!retainedTimer) this.retireParkGeneratedTimer(r.qitem_id, "blocker_custody_moved");
+        this.wakeRepo.record({ transitionId: rebound.transitionId, qitemId: r.qitem_id, phase: "armed",
+          kind: retainedTimer ? "timer" : "blocker", ref: retainedTimer ? oldWake!.ref : successor.qitemId, deliveryStatus: null });
+        const event = this.eventBus.persistWithinTransaction({ type: "queue.updated", qitemId: r.qitem_id,
+          fromState: "blocked", toState: "blocked", closureReason: null, closureTarget: null,
+          actorSession: input.actorSession, summary: this.getById(r.qitem_id)?.summary ?? null });
+        this.eventBus.registerPersistedWithinActiveEnvelope(event);
+        dependentEvents.push(event);
+        continue;
+      }
       this.db
         .prepare("UPDATE queue_items SET state = 'pending', blocked_on = NULL, ts_updated = ? WHERE qitem_id = ?")
         .run(input.ts, r.qitem_id);
@@ -2797,7 +2874,7 @@ export class QueueRepository {
     const events = this.db.transaction(() => {
       const firedEvents = targets.map(recordFired);
       if (usageLimitBlockers.length === 0) {
-        if (parkGeneratedTimer && !backOffQueueWait(this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), jobId)) {
+        if (parkGeneratedTimer && !backOffQueueWait(this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), jobId, deliveryStatus)) {
           (this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db)).markTerminal(
             jobId,
             "park_timer_fired_once",
@@ -2894,7 +2971,7 @@ export class QueueRepository {
       )
       .all(...params) as QueueItemRow[];
     const items = rows.map((r) => {
-      const item = this.rowToItem(r);
+      const item = this.rowToItem(r, !opts?.compact);
       const ledger = this.deliveryOutcomeFor(item.qitemId);
       return {
         ...item,
@@ -2905,7 +2982,7 @@ export class QueueRepository {
     return opts?.compact
       ? items.map((item) => ({
           ...item,
-          fieldsElided: ["body", "summary", "evidenceRef"],
+          fieldsElided: ["body", "summary", "evidenceRef", "waiting"],
         }))
       : items;
   }
@@ -3026,7 +3103,7 @@ export class QueueRepository {
       params.push(opts.limit);
     }
     const rows = this.db.prepare(sql).all(...params) as QueueItemRow[];
-    return rows.map((r) => this.rowToItem(r));
+    return rows.map((r) => this.rowToItem(r, !opts?.compact));
   }
 
   /**
@@ -3069,7 +3146,7 @@ export class QueueRepository {
     const rows = this.db.prepare(sql).all(...params) as QueueItemRow[];
     const out: QueueItem[] = [];
     for (const r of rows) {
-      const item = this.rowToItem(r);
+      const item = this.rowToItem(r, !opts?.compact);
       const ledger = this.deliveryOutcomeFor(item.qitemId);
       if (ledger?.outcome === "posted") continue; // the receipt wins, always
       if (ledger?.outcome === "transport-failed") {
@@ -3327,33 +3404,40 @@ export class QueueRepository {
     return rows.length;
   }
 
-  /** S04 — substantive post-claim motion: transitions strictly after the claim, excluding the
-   *  claim's own 'claimed' transition. Lazily prepared; indexed on qitem_id. */
-  private postClaimMotionStmt: import("better-sqlite3").Statement | undefined;
-  private postClaimMotionCount(qitemId: string, claimedAt: string): number {
-    this.postClaimMotionStmt ??= this.db.prepare(
-      "SELECT COUNT(*) AS n FROM queue_transitions WHERE qitem_id = ? AND ts > ? AND transition_note IS NOT 'claimed'",
-    );
-    try {
-      return (this.postClaimMotionStmt.get(qitemId, claimedAt) as { n: number }).n;
-    } catch {
-      return 0; // minimal fixture DBs without the transitions table: degrade, never throw
-    }
+  private activityReader?: WaitingActivityReader;
+  attachActivityReader(reader: WaitingActivityReader): void { this.activityReader = reader; }
+
+  evaluateWaitReminder(input: { jobId: string }) {
+    if (this.wakeRepo.findQitemsByAttachedWatchdog(input.jobId).length > 0
+      && this.wakeRepo.findQitemsByGeneratedTimer(input.jobId).every(row => row.state !== "blocked")) return null;
+    const binding = this.wakeRepo.findBlockedQitemsByWatchdog(input.jobId).find(row => row.kind === "timer");
+    return evaluateQueueWait(this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), input.jobId, binding ? this.waitingView(binding.qitemId) : null);
   }
 
-  private rowToItem(row: QueueItemRow): QueueItem {
+  ownerActivity(session: string): ReturnType<WaitingActivityReader> {
+    try { return this.activityReader?.(session) ?? null; } catch { return null; }
+  }
+
+  waitingView(qitemId: string): WaitingView | null { return readWaitingView(this.db, qitemId, this.activityReader); }
+
+  private rowToItem(row: QueueItemRow, includeWaiting = true): QueueItem {
     // S04 — derive the pickup receipt at the ONE shared projection point (list/show/overdue
     // all flow through here), so the park-vs-strand question is answered by the row face.
+    const meaningful = lastMeaningfulTransition(this.db, row.qitem_id);
+    const waiting = includeWaiting ? this.waitingView(row.qitem_id) : null;
+    const activity = this.ownerActivity(row.destination_session);
     const pickup = derivePickup({
       state: row.state,
+      lastMeaningfulAt: meaningful?.at,
+      activity: activity?.activity,
+      needsInput: activity?.needsInput.count,
       claimedAt: row.claimed_at,
       lastHeartbeat: row.last_heartbeat,
-      postClaimMotionCount: row.claimed_at && row.state !== "blocked"
-        ? this.postClaimMotionCount(row.qitem_id, row.claimed_at)
-        : 0,
+      postClaimMotionCount: 0, // this reader supplies the current meaningful timestamp
     });
     return {
       pickup,
+      ...(waiting ? { waiting } : {}),
       qitemId: row.qitem_id,
       tsCreated: row.ts_created,
       tsUpdated: row.ts_updated,

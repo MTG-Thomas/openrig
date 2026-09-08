@@ -498,7 +498,7 @@ database. It is one more set of primitives on a machine full of them.
   moving* falls out — which is the actual question behind every "is the rig stuck."
 - **"Is that seat stuck or thinking?"** — the row face answers this now (S04 pickup receipts):
   every list/show projection carries a derived `pickup` state — `working`, `stalled-after-claim`
-  (with its evidence named: claimed N min ago, zero substantive transitions since), `parked`, or
+  (with its evidence named: time since meaningful queue change and current activity confidence), `parked`, or
   `unclaimed` — and `rig view show pickup` lists every claimed row with it. The old by-hand join
   (capture + `claimedAt` arithmetic + `queue transitions`) is RETIRED as a first move; `rig
   capture` remains the second question (is the pane alive), never the state derivation.
@@ -506,9 +506,22 @@ database. It is one more set of primitives on a machine full of them.
   whether or not it has a wake; a strand reads `stalled-after-claim` with named evidence. Wake
   health and fired-but-unconsumed diagnosis come from `rig parked`, not the pickup projection.
   `queue transitions` remains the audit trail for WHAT happened, not the tool for deriving pickup.
-- **"Did that actually land?"** — `queue show` truncates the body and `queue list` can report
-  `bodyBytes=0`; neither means empty. **`sqlite3 "$OPENRIG_DB" "select length(body) …"` is the
-  only answer.** The CLI is a projection; the database is the thing.
+- **"Did that actually land?"** — `rig queue show <qitemId>` gives a bounded preview,
+  original byte size and the exact expansion command. Read the complete original record with
+  `rig queue show <qitemId> --full --json`; a preview or a compact list is not the whole body.
+  Delivery status is separate from content: inspect its receipt before claiming it was consumed.
+- **"What am I waiting on?"** — the queue row's `waiting` view derives its owner, exact blocker
+  and blocker owner, last meaningful change, activity confidence and next backstop from live
+  domain facts. A working activity observation is not proof of task progress; unknown stays
+  unknown. A repeating wait sends one compact notice per blocker transition, with the existing
+  stuck sweep owning a failed or unconsumed notice after the pickup grace. Real changes use the
+  event path; scheduler reconciliation repairs missed events. A returned result and its dependent
+  resumes share one delivery while retaining their separate rows and receipts.
+  For a workflow waiting on a slice outcome, add `--wait-for-proof <slice-scope>` to
+  `rig workflow project --exit waiting`: it binds the current proof `attention` revision.
+  Proof events invalidate that observation; the authored wait timer repairs a missed event
+  by reading the same current proof source. Inspect `rig workflow project --help` for the
+  required instance, packet and actor arguments; this opt-in does not accept a slice.
 - **"What does this whole corpus say about X?"** — bigger than your window, so do not read it.
   **Fan out**: one region per subagent, N in parallel, each returning a structured report, and you
   read reports rather than sources. **This is the move that beats your own context limit** — it
