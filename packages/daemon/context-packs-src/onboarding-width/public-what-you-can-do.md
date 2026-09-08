@@ -177,6 +177,16 @@ cheaper than being it.
   Inspect the exact exception occurrence and packet: resolved overdue work is reconciled without
   closing an overdue sibling. Registered-human fallback reports missing or ambiguous selection
   instead of inventing a recipient. Follow the state/error and `workflow show`/`trace` before retrying.
+- **Exception ownership before failure:** `workflow compile` and `workflow validate`
+  expose `exceptionReadiness`; `workflow show` renders it alongside existing exception
+  obligations and their queue/evidence pointers. Defining an ordinary role does not select
+  an exception owner. Follow `selection.source` to the owning `exception_routing.orchestrator_role`
+  field; project profiles own it unless the mission explicitly overrides the graph.
+  Selection, registered identity, genuine capability no-match, intended registered-human
+  fallback, ambiguous human selection and unavailable reads remain distinct. An advisory
+  before failure is not a requirement to keep every future role/model live. A failed read
+  cannot establish no-match or silently route to a human. If human selection is needed,
+  inspect `rig gateway human list --json`; select `workspace.operator_seat_name` when ambiguous.
 - **`rig workflow show` / `trace`** — what this instance is, and every step, actor and exit that
   got it here.
 - **`rig workflow revise <instance>`** — compare the bound graph with current authored
@@ -186,7 +196,11 @@ cheaper than being it.
   completed/live steps, receipts, required obligations and child custody; new work must
   depend on unfinished work. A changed completed/live contract needs explicit reconsideration:
   restore it and revise unstarted successors. Revision does not guess a migration or replay
-  accepted consequences.
+  accepted consequences. Exception-routing corrections can be adopted for future occurrences;
+  existing exception obligations retain custody. Editing source alone does not change the
+  running owner. Inspect `workflow show` after adoption and inspect each admitted queue row's
+  evidence. Authoritative workflow recovery/completion clears obsolete overdue occurrences;
+  an unresolved sibling stays visible. Closing a queue row alone is not semantic acceptance.
 - **`rig workflow operation <key>`** — recover the committed creation/revision effect after
   a timeout or disconnected response, even if authored files have since changed. Retain the
   operation key and repeat only the identical decision. The original receipt and current

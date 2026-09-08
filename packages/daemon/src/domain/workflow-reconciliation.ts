@@ -120,8 +120,9 @@ function compare(db: Database.Database, instance: WorkflowInstance): { view: Gra
   if (!["active", "waiting"].includes(instance.status)) view.reasons.push("Instance is " + instance.status + "; retained terminal or failed history is not revised.");
   if (oldSpec.steps.some(s => s.depends_on === undefined || s.next_hop?.on) || proposed.steps.some(s => s.depends_on === undefined || s.next_hop?.on))
     view.reasons.push("Only explicit dependency graphs without conditional jumps support in-place revision.");
-  const { steps: _oldSteps, ...oldContract } = graph(oldSpec);
-  const { steps: _newSteps, ...newContract } = graph(proposed);
+  const { steps: _oldSteps, exception_routing: oldRouting, ...oldContract } = graph(oldSpec);
+  const { steps: _newSteps, exception_routing: newRouting, ...newContract } = graph(proposed);
+  if (!same(oldRouting, newRouting)) view.changes.push({ kind: "exception-routing-changed", ref: "exception_routing", fields: ["future occurrences only; existing obligations keep their owners"] });
   if (!same(oldContract, newContract)) view.reasons.push("Workflow-wide routing, entry, policy or context contract changed; restore those fields and revise future steps separately.");
   const oldRequired = (binding.graphSource as { requiredSteps?: string[] } | undefined)?.requiredSteps ?? [];
   for (const id of oldRequired) if (!compilation.graphSource.requiredSteps.includes(id))
@@ -209,7 +210,7 @@ export function reviseGraph(db: Database.Database, bus: EventBus, input: {
       previousSources: binding.sources, previousGraphSource: binding.graphSource,
       compiledInputDigest: compilation!.compiledInputDigest, workflowVersion: compilation!.workflowSpec!.version,
       actorSession: input.actorSession, reason: input.reason, at: new Date().toISOString(), sourceOnly: view.status === "source-only",
-      preservedFrontier: instance.currentFrontier };
+      preservedFrontier: instance.currentFrontier, changes: view.changes };
     new WorkflowSpecCache(db).putGenerated(compilation!.workflowSpec!, compilation!.sources.find(s => s.kind === "mission")!.path, compilation!.compiledInputDigest);
     store.reviseLifecycle(instance.instanceId, instance.version, compilation!.workflowSpec!.version, compilation!.compiledInputDigest, {
       ...binding, initialInputDigest: binding.initialInputDigest ?? instance.compiledInputDigest,

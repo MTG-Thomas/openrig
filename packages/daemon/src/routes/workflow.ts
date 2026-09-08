@@ -406,6 +406,8 @@ export function workflowRoutes(): Hono {
     const inspected = runtime.inspect(instanceId);
     return c.json({
       ...runtime.withDeadline(inst),
+      exceptionReadiness: runtime.exceptionReadiness(instanceId),
+      exceptionObligations: runtime.exceptionObligations(instanceId),
       ...(inst.lifecycleBinding ? { reconciliation: runtime.inspectGraph(instanceId) } : {}),
       frontierPackets: inspected.frontier,
       failureOccurrences: inspected.failures,

@@ -102,6 +102,9 @@ describe("workflow registered-human selection at the actual runtime callers", ()
     const app = new Hono();
     app.use("*", async (c, next) => { c.set("workflowRuntime" as never, runtime as never); c.set("eventBus" as never, bus as never); await next(); });
     app.route("/workflow", workflowRoutes());
+    const inspected = runtime.exceptionReadiness(i.instance.instanceId)!;
+    expect(inspected.selection.state).toBe("missing");
+    expect(inspected.routes.map(route => route.state)).toEqual([state, state]);
     const response = await app.request("/workflow/project", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ instanceId: i.instance.instanceId, currentPacketId: i.entryQitemId, actorSession: "worker@rig", exit: "failed" }) });
     expect(response.status).toBe(409);
@@ -192,6 +195,44 @@ describe("workflow registered-human selection at the actual runtime callers", ()
           : { destination_session: "dev-orch@rig", tier: "mode2" });
       }
     }
+  });
+
+  it("reports the selected owner, no-match, and read faults without converting an unknown to human fallback", async () => {
+    add("owner-one");
+    const pod = new PodRepository(db).createPod("r", "dev", "dev");
+    const node = new RigRepository(db).addNode("r", "dev.orch", { role: "orch", runtime: "codex", cwd: dir,
+      podId: pod.id, agentRef: "local:agents/fixture", profile: "default" });
+    db.prepare("INSERT INTO sessions(id,node_id,session_name,status) VALUES('reader-orch',?,'dev-orch@rig','running')").run(node.id);
+    writeFileSync(specPath, spec.replace("  roles:", "  target: { rig: rig }\n  roles:\n    orch: {}") + "  exception_routing: { orchestrator_role: orch }\n");
+    const i = await start(), id = i.instance.instanceId;
+    const before = db.serialize();
+    expect(runtime.exceptionReadiness(id)).toMatchObject({ posture: "advisory", selection: { state: "selected", role: "orch" },
+      routes: [{ state: "ready", roleResolution: "capability-match", destinationSession: "dev-orch@rig" },
+        { state: "ready", roleResolution: "capability-match", destinationSession: "dev-orch@rig" }] });
+    expect(db.serialize()).toEqual(before);
+    db.prepare("UPDATE sessions SET status='exited' WHERE id='reader-orch'").run();
+    expect(runtime.exceptionReadiness(id)?.routes[0]).toMatchObject({ state: "ready", roleResolution: "no-match", position: "fallback", destinationSession: "owner-one@external" });
+    const prepare = db.prepare.bind(db);
+    vi.spyOn(db, "prepare").mockImplementation(sql => {
+      if (sql === "SELECT id FROM rigs WHERE name = ? ORDER BY created_at LIMIT 1") throw new Error("fixture inventory unavailable");
+      return prepare(sql);
+    });
+    expect(runtime.exceptionReadiness(id)?.routes[0]).toMatchObject({ state: "unavailable", roleResolution: "unavailable", destinationSession: null, message: "fixture inventory unavailable" });
+  });
+
+  it("distinguishes an intentional human policy from an unselected ordinary owner and checks authored target identity", async () => {
+    add("owner-one");
+    const missing = await start();
+    const r = runtime.exceptionReadiness(missing.instance.instanceId)!;
+    expect(r.selection).toMatchObject({ state: "missing", role: null, source: specPath + "#workflow.exception_routing.orchestrator_role" });
+    expect(r.nextAction).toContain("A defined entry/ordinary role does not select exception ownership");
+    expect(r.routes[0]).toMatchObject({ position: "fallback", roleResolution: "missing-selection", destinationSession: "owner-one@external" });
+    writeFileSync(specPath, spec.replace("version: 1", "version: 2") + "  exception_routing: { default: human_only }\n");
+    const direct = await start();
+    expect(runtime.exceptionReadiness(direct.instance.instanceId)?.nextAction).toContain("no orchestrator selection is required");
+    writeFileSync(specPath, spec.replace("version: 1", "version: 3") + "  exception_routing: { orchestrator_role: worker }\n");
+    const preferred = await start();
+    expect(runtime.exceptionReadiness(preferred.instance.instanceId)?.routes[0]).toMatchObject({ state: "unregistered", roleResolution: "preferred-target", destinationSession: "worker@rig" });
   });
 
 });

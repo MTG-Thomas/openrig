@@ -150,6 +150,7 @@ Examples:
   cmd
     .command("compile <missionPath>")
     .description("Compile project.yaml → mission.yaml → slice.yaml into an inspectable lifecycle graph (read-only)")
+    .addHelpText("after", "\nInspect exceptionReadiness before failure: selected role, owning configuration field, current route or explicit missing/ambiguous/unavailable evidence. This advisory does not require every future role to be live. After correcting source for an existing run, use workflow revise and then workflow show to verify adoption.\n")
     .option("--operation-key <key>", "Opaque replay identity to include in the compilation")
     .option("--json", "JSON output for agents")
     .action(async (missionPath: string, opts: { operationKey?: string; json?: boolean }) => {
@@ -173,7 +174,7 @@ Examples:
     .option("--actor-session <session>", "Agent recording this decision")
     .option("--reason <text>", "Why the plan changed")
     .option("--json", "Complete comparison or receipt")
-    .addHelpText("after", "\nStart with: rig workflow revise <instance>\nInspection returns the exact apply command and recovery key. Compatible revisions preserve completed/live steps, required obligations and child custody. Restore a changed completed/live step and revise its unstarted successors; no blind abort/replay is required. After a timeout use rig workflow operation <key> or repeat the identical apply command.\n")
+    .addHelpText("after", "\nStart with: rig workflow revise <instance>\nInspection returns the exact apply command and recovery key. Compatible revisions preserve completed/live steps, required obligations and child custody. Restore a changed completed/live step and revise its unstarted successors; no blind abort/replay is required. Exception-routing changes apply to future occurrences only; existing exception obligations keep their owners. Ordinary roles and routing remain protected. After a timeout use rig workflow operation <key> or repeat the identical apply command.\n")
     .action(async (instanceId: string, opts: { apply?: boolean; expectedVersion?: string; expectedDigest?: string; operationKey?: string; actorSession?: string; reason?: string; json?: boolean }) => {
       if (opts.apply && (!opts.operationKey || !opts.expectedDigest || opts.expectedVersion === undefined || !opts.actorSession || !opts.reason)) {
         emit3PartError(opts.json ?? false, "The inspected revision identity and decision are required.", "No revision was sent.", "Run rig workflow revise " + instanceId + " and use its apply command.");
@@ -515,12 +516,18 @@ Examples:
 
   cmd
     .command("show <instanceId>")
-    .description("Show one workflow instance")
+    .description("Show current work, exception-owner readiness and existing exception obligations")
     .option("--json", "JSON output for agents")
     .addHelpText("after", `
 Examples:
   $ rig workflow show WF01ABC
-  $ rig workflow show WF01ABC --json | jq '.instance.status'
+  $ rig workflow show WF01ABC --json | jq '{status, exceptionReadiness, exceptionObligations}'
+
+Read exception ownership before failure. A defined ordinary role is not a selected
+exception owner: follow exceptionReadiness.selection.source to the owning field.
+Registered-human fallback, no-match and unavailable reads are distinct. After a
+source correction, inspect workflow revise; compatible adoption changes future
+exception routes only. Existing obligations keep their owners and evidence.
 `)
     .action(async (instanceId: string, opts: { json?: boolean }) => {
       const deps = getDeps();

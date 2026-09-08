@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
@@ -175,6 +175,38 @@ describe("one preserved running graph and recoverable revision decision", () => 
     expect(() => reviseGraph(db, bus, { ...second, operationKey: "first-entry" })).toThrow("different decision");
     expect(() => reviseGraph(db, bus, { ...second, operationKey: 4 as unknown as string })).toThrow("inspected version/digest");
     expect(db.serialize()).toEqual(before);
+  });
+
+  it("adopts only exception policy for future occurrences while preserving live child and completed judgment", async () => {
+    const run = await progressed();
+    const child = await queue.create({ sourceSession: "owner@rig", destinationSession: "owner@rig", body: "Unfinished child" });
+    await runtime.project({ instanceId: run.instanceId, currentPacketId: run.currentFrontier[0]!, actorSession: "owner@rig", exit: "waiting", blockedOn: child.qitemId });
+    expect(runtime.compileLifecycle(mission).exceptionReadiness?.selection).toMatchObject({ state: "missing", source: realpathSync(join(root, "project.yaml")) + "#lifecycle.profiles.release.workflow.exception_routing.orchestrator_role" });
+    project.lifecycle.profiles.release.workflow.exception_routing = { orchestrator_role: "owner" }; save();
+    expect(runtime.exceptionReadiness(run.instanceId)?.selection.state).toBe("missing");
+    const view = runtime.inspectGraph(run.instanceId);
+    expect(view).toMatchObject({ status: "compatible", adopted: false });
+    expect(view.changes.some(c => c.kind === "exception-routing-changed")).toBe(true);
+    const before = unchanged();
+    const adopted = runtime.reviseGraph(apply(run.instanceId));
+    expect(adopted.receipt.changes).toEqual(view.changes);
+    expect(unchanged()).toEqual(before);
+    expect(runtime.exceptionReadiness(run.instanceId)?.selection).toMatchObject({ state: "selected", role: "owner" });
+    expect(runtime.resolveExceptionRouteFor(run.workflowName, adopted.instance.workflowVersion, "stuck_overdue", run.boundRig)?.destinationSession).toBe("owner@rig");
+    project.lifecycle.profiles.release.workflow.roles.owner.preferred_targets = ["other@rig"]; save();
+    expect(runtime.inspectGraph(run.instanceId).status).toBe("incompatible");
+    expect(() => runtime.reviseGraph(apply(run.instanceId, "unsafe-role-edit"))).toThrow("Revision refused");
+    expect(unchanged()).toEqual(before);
+  });
+
+  it("points to the mission owning selection when it explicitly overrides the project graph", () => {
+    plan.lifecycle.mode = "override";
+    plan.lifecycle.workflow = structuredClone(project.lifecycle.profiles.release.workflow);
+    plan.lifecycle.workflow.exception_routing = { default: "human_only" };
+    save();
+    const compiled = runtime.compileLifecycle(mission);
+    expect(compiled.exceptionReadiness?.selection.source).toBe(realpathSync(join(mission, "mission.yaml")) + "#lifecycle.workflow.exception_routing.orchestrator_role");
+    expect(compiled.exceptionReadiness?.nextAction).toContain("no orchestrator selection is required");
   });
 
 });

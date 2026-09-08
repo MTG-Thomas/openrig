@@ -1,3 +1,4 @@
+import { exceptionConfigurationSource, inspectExceptionReadiness, type ExceptionReadiness } from "./workflow-exception-readiness.js";
 import { inspectGraph, recoverGraphOperation, reviseGraph } from "./workflow-reconciliation.js";
 import { lifecycleObligations, requiredLifecycleSteps, type LifecycleObligation } from "./lifecycle-obligations.js";
 // PL-004 Phase D: workflow runtime facade.
@@ -182,8 +183,35 @@ export class WorkflowRuntime {
   recoverOperation(key: string) { return recoverGraphOperation(this.db, key); }
   reviseGraph(input: Parameters<typeof reviseGraph>[2]) { return reviseGraph(this.db, this.eventBus, input); }
 
-  compileLifecycle(missionPath: string, operationKey?: string): LifecycleCompilation {
-    return compileProjectLifecycle({ missionPath, operationKey });
+  compileLifecycle(missionPath: string, operationKey?: string): LifecycleCompilation & { exceptionReadiness?: ExceptionReadiness } {
+    const compiled = compileProjectLifecycle({ missionPath, operationKey });
+    return { ...compiled, ...(compiled.workflowSpec ? { exceptionReadiness: this.readExceptionReadiness(compiled.workflowSpec,
+      exceptionConfigurationSource(compiled.sources.find(s => s.kind === "mission")!.path, compiled.graphSource)) } : {}) };
+  }
+
+  private readExceptionReadiness(spec: WorkflowSpec, source: string, boundRig?: string | null, instanceId?: string) {
+    return inspectExceptionReadiness({ db: this.db, spec, source, boundRig, instanceId,
+      hostDefault: () => this.exceptionDial?.hostDefault() ?? null, humanFallbackSeat: this.exceptionDial?.humanFallbackSeat });
+  }
+
+  exceptionReadiness(instanceId: string): ExceptionReadiness | null {
+    const instance = this.instanceStore.getByIdOrThrow(instanceId);
+    const row = this.specCache.getByNameVersion(instance.workflowName, instance.workflowVersion);
+    if (!row) return null;
+    return this.readExceptionReadiness(row.spec, exceptionConfigurationSource(row.sourcePath,
+      instance.lifecycleBinding?.graphSource as LifecycleCompilation["graphSource"] | undefined), instance.boundRig, instanceId);
+  }
+
+  exceptionObligations(instanceId: string) {
+    return (this.db.prepare(`SELECT qitem_id FROM queue_items WHERE json_valid(tags)
+      AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'workflow-exception')
+      AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?) ORDER BY ts_created, qitem_id`)
+      .all(`instance:${instanceId}`) as Array<{ qitem_id: string }>).map(row => {
+        const q = this.queueRepo.getById(row.qitem_id)!;
+        return { qitemId: q.qitemId, ownerSession: q.destinationSession, state: q.state,
+          evidenceRef: q.evidenceRef, tags: q.tags, handedOffFrom: q.handedOffFrom,
+          inspectCommand: "rig queue show " + q.qitemId + " --full --json" };
+      });
   }
 
   async instantiateLifecycle(input: {
@@ -295,9 +323,10 @@ export class WorkflowRuntime {
     }
   };
 
-  validate(specPath: string, seatLivenessCheck?: SeatLivenessCheckFn): ValidationResult {
+  validate(specPath: string, seatLivenessCheck?: SeatLivenessCheckFn): ValidationResult & { exceptionReadiness: ExceptionReadiness } {
     const specRow = this.specCache.readThrough(specPath);
-    return this.validator.validate(specRow.spec, seatLivenessCheck ?? this.seatLivenessCheck, this.hostRegistryLookup);
+    return { ...this.validator.validate(specRow.spec, seatLivenessCheck ?? this.seatLivenessCheck, this.hostRegistryLookup),
+      exceptionReadiness: this.readExceptionReadiness(specRow.spec, exceptionConfigurationSource(specRow.sourcePath)) };
   }
 
   /**

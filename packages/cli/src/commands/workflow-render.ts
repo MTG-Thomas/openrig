@@ -51,6 +51,12 @@ export interface RenderInstance {
   failureOccurrences?: RenderFailureOccurrence[];
   /** Named broken joins; never collapse these to an apparently actionable row. */
   unknowns?: string[];
+  exceptionObligations?: Array<{ qitemId: string; ownerSession: string; state: string; evidenceRef: string | null; inspectCommand: string }>;
+  exceptionReadiness?: {
+    selection: { state: string; role: string | null; source: string; entryRole: string | null };
+    routes: Array<{ exceptionClass: string; state: string; roleResolution: string; destinationSession: string | null; position: string | null; resolvedVia: string | null; message: string }>;
+    nextAction: string;
+  } | null;
   reconciliation?: {
     status: string; adopted: boolean | null; boundDigest: string | null; proposedDigest: string | null;
     composition: { mode: string; explanation: string; boundSlices: string[]; executableSteps: unknown[] };
@@ -404,6 +410,20 @@ export function renderInstanceShow(
     }
   }
   for (const unknown of instance.unknowns ?? []) lines.push(`  unknown:  ${unknown}`);
+  if (instance.exceptionReadiness) {
+    const r = instance.exceptionReadiness;
+    lines.push(`  exception owner: ${r.selection.state} · ${r.selection.role ?? "none selected"} (ordinary entry: ${r.selection.entryRole ?? "implicit"})`);
+    lines.push(`    selection: ${r.selection.source}`);
+    for (const route of r.routes) {
+      lines.push(`    ${route.exceptionClass}: ${route.state} · ${route.position ?? "unknown policy"} via ${route.resolvedVia ?? "unavailable"} · ${route.destinationSession ?? "no verified destination"} · ${route.roleResolution}`);
+      if (route.state !== "ready" || route.position === "fallback") lines.push(`      ${route.message}`);
+    }
+    lines.push(`    advisory: ${r.nextAction}`);
+  }
+  for (const q of instance.exceptionObligations ?? []) {
+    lines.push(`  exception obligation: ${q.qitemId} · owner=${q.ownerSession} · state=${q.state}`);
+    lines.push(`    evidence: ${q.evidenceRef ?? "UNVERIFIED"} · inspect: ${q.inspectCommand}`);
+  }
   if (instance.reconciliation) lines.push(...renderGraphRevision(instance.reconciliation, false));
   if (instance.hopCount !== undefined) lines.push(`  hops:     ${instance.hopCount}`);
   lines.push(`  next:     rig workflow trace ${instance.instanceId}`);

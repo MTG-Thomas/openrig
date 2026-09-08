@@ -68,7 +68,7 @@ export interface ExceptionRoute {
   resolvedVia: "class-intrinsic" | "class-declared" | "workflow-declared" | "host-default" | "engine-default";
 }
 
-export function resolveExceptionRoute(input: ExceptionRouteInput): ExceptionRoute {
+export function exceptionPolicy(input: Pick<ExceptionRouteInput, "exceptionClass" | "spec" | "hostDialDefault">): Pick<ExceptionRoute, "resolvedVia"> & { position: WorkflowExceptionDialPosition } {
   // Class (c) is intrinsically human-only by its nature (a human decision
   // IS the exception); the dial cannot re-point it.
   let position: WorkflowExceptionDialPosition;
@@ -91,6 +91,12 @@ export function resolveExceptionRoute(input: ExceptionRouteInput): ExceptionRout
     resolvedVia = "engine-default";
   }
 
+  return { position, resolvedVia };
+}
+
+export function resolveExceptionRoute(input: ExceptionRouteInput): ExceptionRoute {
+  const { position, resolvedVia } = exceptionPolicy(input);
+  const routing = input.spec.exception_routing;
   if (position === "human_only") {
     return {
       position: "human_only",

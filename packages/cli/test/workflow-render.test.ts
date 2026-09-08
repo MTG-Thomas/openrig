@@ -263,3 +263,17 @@ describe("BR-2 byte-stability of --json (unit pin; commit-8 harness is the bindi
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify(body));
   });
 });
+
+it("shows the exception selection, unavailable evidence and owning obligation without inventing success", () => {
+  const lines = renderInstanceShow({ ...INSTANCE,
+    exceptionReadiness: { selection: { state: "selected", role: "orch", entryRole: "owner", source: "/project.yaml#lifecycle.profiles.release.workflow.exception_routing.orchestrator_role" },
+      routes: [{ exceptionClass: "stuck_overdue", state: "unavailable", roleResolution: "unavailable", destinationSession: null, position: "orchestrator", resolvedVia: "engine-default", message: "inventory read failed" }],
+      nextAction: "Inspect rig workflow revise WF01ABC; existing obligations keep their owners." },
+    exceptionObligations: [{ qitemId: "qitem-existing", ownerSession: "prior@rig", state: "pending", evidenceRef: "rig workflow trace WF01ABC", inspectCommand: "rig queue show qitem-existing --full --json" }],
+  }, NOW).join("\n");
+  expect(lines).toContain("exception owner: selected · orch (ordinary entry: owner)");
+  expect(lines).toContain("unavailable · orchestrator via engine-default · no verified destination");
+  expect(lines).toContain("inventory read failed");
+  expect(lines).toContain("qitem-existing · owner=prior@rig · state=pending");
+  expect(lines).toContain("rig workflow revise WF01ABC");
+});

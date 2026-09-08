@@ -19,6 +19,10 @@ lifecycle:
         - release-boundary
       workflow:
         entry: { role: orchestrator }
+        # Entry/ordinary custody and exception selection are separate decisions.
+        # Replace the example target with a declared member (rig ps --nodes --json).
+        # Inspect with workflow compile/show; adopt later corrections with workflow revise.
+        exception_routing: { orchestrator_role: orchestrator }
         roles:
           orchestrator: { preferred_targets: [orch@example] }
         steps:
