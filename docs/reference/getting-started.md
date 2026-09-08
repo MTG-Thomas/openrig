@@ -12,6 +12,19 @@ terminal-provider support does not change the harness or account being used.
 
 ## Prepare and launch
 
+Type `rig` in an ordinary terminal to open the startup and work TUI. It shows
+the selected instance and daemon address. If the daemon is stopped, press Enter
+to start that daemon, then choose the rigs and seats you want. Kernel is
+recommended first; selecting its operator does not start every kernel seat.
+The same view is available with **S** from ordinary TUI work.
+
+For a previously occupied seat, Enter attempts its previous conversation.
+If history is unavailable, read the reason. **f** opens a separate fresh-start
+decision for that named seat; **Esc** declines without launching it. A confirmed
+fresh conversation receives the configured context and retains the old history,
+but does not resume that history. Authentication or runtime failures require
+repair of that prerequisite. **r** reads actual state again; **d** expands details.
+
 Install OpenRig and inspect `rig setup --dry-run` before applying machine
 changes. Check `tmux -V`, `codex --version` and `codex login status` in your
 launch shell; install missing prerequisites and complete `codex login` when
@@ -119,36 +132,29 @@ merely to make the first local change.
 | Shared terminal is absent | Inspect the existing kernel binding and recovery state; use standalone `rig tui` while resolving it. |
 | Viewing terminal was closed | Reattach with `rig tui --shared`; do not relaunch the team. |
 | Daemon restarted but tmux survived | Re-read `rig status` and the existing queue; a daemon restart is not a fresh project. |
-| Host reboot lost tmux sessions | Use the crash-cart/restore guidance from `rig` and inspect its recovery plan. Do not erase the old rig or create another to recover it. |
+| Host reboot lost tmux sessions | Open `rig`, start the daemon if needed, and select the existing rig and seats. Resume is the default; a fresh conversation needs a separate decision. |
 | Launch reports no usable snapshot | Inspect the existing rig and retained project files, then follow the same-seat recovery below. |
 | Work is waiting on a prompt or decision | Read the row, transition and named prompt; preserve the obligation until the missing decision arrives. |
 
-If the rig registration and project files are intact but no usable snapshot
-exists, use `rig ps --nodes --rig <rigName> --json` to find the original rig ID
-and seat. Record the surviving state and relaunch that seat:
-
-```bash
-rig snapshot <rigId>
-rig launch <rigId> <nodeRef>
-```
-
-Use the existing rig ID and node logical ID (such as `dev.owner`), not a new
-rig. A new snapshot records what survives now. Recovery may fresh-prime a new
-occupant from retained artifacts; it does not recreate missing native
-conversation history. Check the retained queue, project notes and result before
-continuing work.
+If a snapshot is unavailable, the startup view checks the selected seat's
+retained startup source and authoritative occupant relation. It reports a
+missing or ambiguous source instead of selecting an arbitrary historical row.
+Repair the named source, retry, or leave the seat stopped. Check the retained
+queue, project notes and observed result before continuing work.
 
 `rig setup` prints the short form of this path; `rig status` points back here.
 
 ## Kernel framing (what `rig setup` does and does not do)
 
-The kernel rig **auto-boots on daemon-start** - it is daemon-start behavior, NOT
-a `rig setup` step and NOT something you boot by hand. So:
+Explicit CLI daemon startup retains its automatic kernel behavior. The TUI
+starts the daemon with kernel auto-boot disabled so the user can select seats:
 
 - `rig setup` installs/verifies the runtime; it does not start the daemon or the
   kernel.
 - Starting the daemon (`rig daemon start`, or implicitly via `rig up`) is what
   boots the kernel rig in the background.
+- Starting it from bare `rig` prepares no agents automatically. The TUI offers
+  kernel setup and individual seat selection after connecting.
 - **Kernel readiness is a distinct signal from daemon health.** The daemon's HTTP
   health binds early; the kernel can still be booting or a kernel agent can be
   unhealthy while the daemon is up. `rig status` surfaces kernel readiness

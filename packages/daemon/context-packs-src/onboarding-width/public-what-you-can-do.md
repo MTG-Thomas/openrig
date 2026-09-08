@@ -279,12 +279,14 @@ because someone lost work once.
   distinct no-op, and a timeout never proves down. Use command help for exact limits and recovery.
 - **`rig doctor`** — is the *installation* wired up correctly, or are you chasing a bug that is
   really a broken install. **`rig preflight`** asks whether this machine can run OpenRig at all.
-- **`rig crash-cart`** — the daemon is down or not answering: what was running before it died, and
-  where did the work stop. **NEW in v0.5.2: bare `rig` on a dead daemon opens the crash-cart
-  cockpit, and one Enter restores the whole fleet** — kernel-first, surviving panes ADOPTED live
-  (never clobbered), dead rigs restored from snapshots, non-resumable seats on a scrollable triage
-  list with their exact remediation, mid-run cancel with `c`. It only offers RESTORE on POSITIVE
-  down-evidence (confirmed-down vs cannot-verify are distinct screens).
+- **Bare `rig`** — the same TUI for first setup, daemon-down startup and ordinary work.
+  Enter starts only the selected daemon; then choose rigs and individual seats, with kernel
+  recommended first. Previously occupied seats default to their authoritative conversation.
+  Missing history, ambiguous identity and unavailable authentication have distinct explanations;
+  a fresh conversation requires a separate named confirmation. Declining launches nothing.
+  **r** refreshes actual state and **d** expands diagnostics. **S** returns to startup from work.
+- **`rig crash-cart`** — the read-only daemon verdict and saved-state discovery used by that UI.
+  An unavailable runtime, unauthorized endpoint or unreadable state is not an empty instance.
 - **`rig snapshot`** — take a restore point **before** the risky thing. `snapshot list` shows what
   you actually have and how old the newest is; `--intended-seats` records the topology roster the
   later restore must judge rather than treating every historical node as current.

@@ -13,6 +13,27 @@ import { createStyle, stripAnsi } from "../src/theme.js";
 const snap = emptySnapshot();
 const view = createViewState({ instanceId: "t", getSnapshot: () => snap });
 
+describe("unavailable startup prerequisite", () => {
+  it("names native load failure without inferring missing history or offering restoration", () => {
+    const screen = renderScreen(view.get(), snap, { cols: 100, rows: 32,
+      unavailable: "ERR_DLOPEN_FAILED: NODE_MODULE_VERSION mismatch", unavailableExpanded: false });
+    const body = screen.lines.join("\n");
+    expect(body).toContain("native module");
+    expect(body).toContain("r retry");
+    expect(body).not.toContain("RESTORE EVERYTHING");
+    expect(body).not.toContain("fresh host");
+    expect(body).not.toContain("NODE_MODULE_VERSION");
+  });
+  it("expands useful failure detail while removing terminal control and credentials", () => {
+    const screen = renderScreen(view.get(), snap, { cols: 120, rows: 32,
+      unavailable: "probe failed https://user:secret@example.test/path Bearer secret-token", unavailableExpanded: true });
+    const body = screen.lines.join("\n");
+    expect(body).toContain("probe failed");
+    expect(body).not.toContain("secret");
+    expect(body).toContain("[redacted]");
+  });
+});
+
 describe("renderScreen daemon-down — in-shell split (explorer always present)", () => {
   const screen = renderScreen(view.get(), snap, { cols: 120, rows: 32, daemonState: "down", crashCart: demoCrashCartModel() });
   const body = screen.lines.join("\n");

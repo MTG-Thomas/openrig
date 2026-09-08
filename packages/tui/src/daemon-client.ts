@@ -6,6 +6,13 @@
 export interface DaemonClientOptions {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+  headers?: Record<string, string> | (() => Record<string, string>);
+}
+
+export class StartupRequestError extends Error {
+  constructor(readonly status: number, readonly result: Record<string, unknown>) {
+    super(String(result.message ?? result.error ?? `Startup request returned HTTP ${status}`));
+  }
 }
 
 /** One poll of a fleet-restore attempt (the daemon's GET status shape). The verdict is
@@ -48,10 +55,16 @@ export function launchNodeNotice(agent: string, result: LaunchNodeResult): strin
 export class DaemonClient {
   readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly headerSource: Record<string, string> | (() => Record<string, string>);
 
   constructor(options: DaemonClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? process.env["OPENRIG_URL"] ?? "http://127.0.0.1:7433").replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.headerSource = options.headers ?? {};
+  }
+
+  private get headers(): Record<string, string> {
+    return typeof this.headerSource === "function" ? this.headerSource() : this.headerSource;
   }
 
   /** S19 AM-R18 — open the oracle's SSE event stream (FR-8: HTTP stays in THIS module).
@@ -61,7 +74,7 @@ export class DaemonClient {
   async openActivityEvents(): Promise<Response | null> {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}/api/activity/events`, {
-        headers: { accept: "text/event-stream" },
+        headers: { ...this.headers, accept: "text/event-stream" },
       });
       if (!res.ok || !(res.headers.get("content-type") ?? "").includes("text/event-stream")) return null;
       return res;
@@ -71,7 +84,7 @@ export class DaemonClient {
   }
 
   private async get(route: string): Promise<unknown> {
-    const res = await this.fetchImpl(`${this.baseUrl}${route}`, { signal: AbortSignal.timeout(5_000) });
+    const res = await this.fetchImpl(`${this.baseUrl}${route}`, { headers: this.headers, signal: AbortSignal.timeout(5_000) });
     if (!res.ok) throw new Error(`daemon read failed: GET ${route} → ${res.status}`);
     return res.json();
   }
@@ -79,7 +92,7 @@ export class DaemonClient {
   private async post(route: string, body: unknown): Promise<unknown> {
     const res = await this.fetchImpl(`${this.baseUrl}${route}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...this.headers, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const parsed = await res.json().catch(() => null);
@@ -249,5 +262,17 @@ export class DaemonClient {
   /** the `rig launch` per-seat contract */
   async launchNode(rigId: string, logicalId: string): Promise<LaunchNodeResult> {
     return (await this.post(`/api/rigs/${encodeURIComponent(rigId)}/nodes/${encodeURIComponent(logicalId)}/launch`, {})) as LaunchNodeResult;
+  }
+
+  async startupRequest<T>(route: string, body?: unknown): Promise<T> {
+    const response = await this.fetchImpl(`${this.baseUrl}/api/startup${route}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { ...this.headers, "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(body === undefined ? 15_000 : 120_000),
+    });
+    const result = await response.json() as Record<string, unknown>;
+    if (!response.ok || result.ok === false) throw new StartupRequestError(response.status, result);
+    return result as T;
   }
 }

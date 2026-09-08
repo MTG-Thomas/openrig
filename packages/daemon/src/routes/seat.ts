@@ -163,7 +163,7 @@ seatRoutes.post("/handover/:seatRef", async (c) => {
 
 // S5 (OPR.0.5.4.7) — the seat-lifecycle verb surface: set-model / stop / clean.
 // One service, one resolution path, one status mapping shared by all three verbs.
-function seatLifecycleService(c: { get(key: never): unknown }): SeatLifecycleService {
+export function seatLifecycleService(c: { get(key: never): unknown }): SeatLifecycleService {
   const rigRepo = c.get("rigRepo" as never) as RigRepository;
   return new SeatLifecycleService({
     db: rigRepo.db,

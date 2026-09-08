@@ -53,6 +53,7 @@ import { upRoutes } from "./routes/up.js";
 import { infoRoutes } from "./routes/info.js";
 import { downRoutes } from "./routes/down.js";
 import { kernelStatusRoutes } from "./routes/kernel-status.js";
+import { startupRoutes } from "./routes/startup.js";
 import type { TranscriptStore } from "./domain/transcript-store.js";
 import type { SessionTransport } from "./domain/session-transport.js";
 import type { AgentActivityStore } from "./domain/agent-activity-store.js";
@@ -701,6 +702,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/api/info", infoRoutes());
   app.route("/api/down", downRoutes);
   app.route("/api/kernel", kernelStatusRoutes);
+  app.route("/api/startup", startupRoutes);
   app.route("/api/transcripts", transcriptRoutes());
   app.route("/api/transport", transportRoutes({ bearerToken: deps.terminalBearerToken ?? null }));
   // OPR.0.4.3.14 — manual compaction trigger (same terminal-bearer posture as

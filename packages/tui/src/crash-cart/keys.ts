@@ -9,11 +9,12 @@ import { evaluateOneClickGate } from "./one-click-gate.js";
 // `restore` = the ZERO-GENERATION one-click (every seat resume-original); `restore-confirm` = the
 // gated path when some rig has non-resumable seats (main.ts names the deltas before proceeding — never
 // a silent resume→fresh downgrade). The founder's one-click rule is BINDING on ⏎.
-export type CrashCartKeyAction = "start-daemon" | "retry" | "inspect" | "onboarding" | "restore" | "restore-confirm";
+export type CrashCartKeyAction = "start-daemon" | "retry" | "details" | "inspect" | "onboarding" | "restore" | "restore-confirm";
 
 /** Map a key ("s"/"i"/"n"/"r"/"enter") to a crash-cart action for the active daemon-down screen, or
  *  null (not a crash-cart key here → falls through to normal TUI handling). */
 export function resolveCrashCartKey(key: string, opts: CrashCartRenderOpts): CrashCartKeyAction | null {
+  if (opts.unavailable) return key === "r" ? "retry" : key === "d" ? "details" : null;
   if (opts.daemonState === "down") {
     const firstRun = opts.crashCart?.mode === "first-run";
     if (key === "s") return "start-daemon";
