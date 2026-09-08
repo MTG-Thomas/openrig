@@ -6,7 +6,7 @@
 // `n`; it is not read here at all. The render never asserts a proven-green the store
 // does not enforce: `paired` means exactly "≥1 C1 drop cites this contract item".
 import * as path from "node:path";
-import { readSliceReadiness, type ScopeReadiness } from "../proof/judgments.js";
+import { readSliceReadiness, readProofContract, type ScopeReadiness } from "../proof/judgments.js";
 import { createHash } from "node:crypto";
 import { NODE_FILE_PRECEDENCE } from "./node-file.js";
 
@@ -29,6 +29,8 @@ export interface C1Drop {
 }
 
 export interface ProofContractItem {
+  id: string;
+  source: { file: string; line: number };
   index: number; // 1-based
   text: string;
   /** True iff ≥1 C1 drop cites this item — the ONLY meaning of a ✓ (honest render). */
@@ -105,24 +107,6 @@ function sectionBody(content: string, heading: string): string {
   return (next ? rest.slice(0, next.index) : rest).trim();
 }
 
-/** The proof-contract checkbox lines, in order (1-based indexing = the C1 evidences convention). */
-function contractItems(content: string): string[] {
-  const body = sectionBody(content, "Proof contract");
-  const items: string[] = [];
-  let current: string | null = null;
-  for (const line of body.split("\n")) {
-    const m = /^- \[[ xX]\]\s+(.*)$/.exec(line);
-    if (m) {
-      if (current !== null) items.push(current.trim());
-      current = m[1]!;
-    } else if (current !== null && /^\s+\S/.test(line) && !line.trimStart().startsWith("- [")) {
-      current += " " + line.trim();
-    }
-  }
-  if (current !== null) items.push(current.trim());
-  return items;
-}
-
 /** Numbered mini-requirement lines (top-level `N.` items; continuation lines folded in). */
 function miniRequirements(content: string): string[] {
   const body = sectionBody(content, "Mini-requirements");
@@ -167,15 +151,14 @@ function readLocks(fm: string): ScopeLocks {
 
 /** Join drops → contract items: a drop's evidence ref matches an item by its 1-based
  *  index (the shipped `--evidences "4,5"` convention) or by exact item text. */
-function pairContract(items: string[], drops: C1Drop[]): ProofContractItem[] {
-  return items.map((text, i) => {
-    const index = i + 1;
+function pairContract(items: ReturnType<typeof readProofContract>, drops: C1Drop[]): ProofContractItem[] {
+  return items.map((item) => {
+    const { index, text } = item;
     const matching = drops.filter((d) =>
       d.evidences.some((ref) => ref === String(index) || ref.trim() === text.trim()),
     );
     return {
-      index,
-      text,
+      ...item,
       paired: matching.length > 0,
       drops: matching.map((d) => ({ file: d.file, artifactType: d.artifactType, verdict: d.verdict, media: d.media })),
     };
@@ -221,7 +204,7 @@ export function projectSliceScope(fs: ScopeFsDeps, sliceDir: string): SliceScope
   if (!content) return null;
   const fm = extractFrontmatterRaw(content) ?? "";
 
-  const items = contractItems(content);
+  const items = readProofContract(sliceDir, fs);
   const proofDir = path.join(sliceDir, "proof");
   const drops: C1Drop[] = [];
   if (fs.exists(proofDir) && fs.isDirectory(proofDir)) {

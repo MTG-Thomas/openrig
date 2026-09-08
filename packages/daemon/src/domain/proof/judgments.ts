@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import YAML from "yaml";
 import { parseAddress, resolveAddress } from "../markdown-address.js";
-import { extractProofContractSelected, parseLogicalCheckboxes } from "../review/compose.js";
+import { extractProofContractSelected, parseLogicalCheckboxes, proofItemIdentity } from "../review/compose.js";
 import { validateMissionComposition } from "../lifecycle-manifest.js";
 import type { ScopeFsDeps } from "../scope/scope-view-projection.js";
 
@@ -80,7 +80,7 @@ function policyOf(dir: string, io: ScopeFsDeps): ScopeReadiness["policy"] {
     if (p === root) return null;
   }
 }
-function contract(dir: string, io: ScopeFsDeps) {
+export function readProofContract(dir: string, io: ScopeFsDeps) {
   const files = { prd: "IMPLEMENTATION-PRD.md", readme: "README.md", spec: "SPEC.md" };
   const contents = Object.fromEntries(Object.entries(files).map(([key, file]) => [key, io.readFile(path.join(dir, file))]));
   const selected = extractProofContractSelected(contents.prd ?? null, contents.readme ?? null, contents.spec ?? null);
@@ -88,10 +88,8 @@ function contract(dir: string, io: ScopeFsDeps) {
   const file = files[selected.source], section = resolveAddress(contents[selected.source]!, ["proof-contract"]);
   const logical = parseLogicalCheckboxes(section.text);
   return selected.items.map((item, index) => {
-    const declared = /<!--\s*proof-item:\s*([a-zA-Z0-9_-]+)\s*-->/.exec(item.rawText);
-    const text = item.rawText.replace(/<!--\s*proof-item:\s*[a-zA-Z0-9_-]+\s*-->/g, "").trim();
     const line = section.headerLine + (logical.find(row => row.rawText === item.rawText)?.sourceLine ?? 1);
-    return { id: declared?.[1] ?? `item-${hash(text).slice(0, 20)}`, text, index: index + 1, source: { file, line } };
+    return { ...proofItemIdentity(item.rawText), index: index + 1, source: { file, line } };
   });
 }
 
@@ -149,7 +147,7 @@ export function readSliceReadiness(dir: string, io: ScopeFsDeps = proofFs): Scop
   try {
     policy = policyOf(dir, io); policyRead = true;
     receipts = ledger(dir, io);
-    const root = workspaceOf(dir, io, false), promises = contract(dir, io);
+    const root = workspaceOf(dir, io, false), promises = readProofContract(dir, io);
     if (new Set(promises.map(p => p.id)).size !== promises.length) throw new JudgmentError("item_ambiguous", "Repeated item identity; give distinct promises explicit <!-- proof-item: id --> markers");
     items = promises.map(p => {
       const scope = path.relative(root, dir).split(path.sep).join("/");

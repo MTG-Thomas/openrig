@@ -7,11 +7,11 @@ import type { ContentLine } from "../detail.js";
 import type { Token } from "../theme.js";
 
 export interface ScopeDropRef { file: string; artifactType: string | null; verdict: string | null; media: string[] }
-export interface ScopeContractItem { index: number; text: string; paired: boolean; drops: ScopeDropRef[] }
+export interface ScopeContractItem { id?: string; source?: { file: string; line: number }; index: number; text: string; paired: boolean; drops: ScopeDropRef[] }
 export interface ScopeLocksSnap { spec: { by: string; at: string } | null; delivery: { by: string; at: string } | null }
 export interface ReadinessSnap {
   configured: boolean; state: string; revision: string;
-  items: Array<{ index: number; text: string; state: string; reason: string; judgment: { id: string } | null }>;
+  items: Array<{ id: string; index: number; text: string; state: string; reason: string; judgment: { id: string } | null }>;
 }
 export interface SliceScopeSnap {
   readiness?: ReadinessSnap;
@@ -134,7 +134,7 @@ function wrapped(text: string, width: number, indent: string, token: Token = "br
 }
 
 function itemState(detail: SliceScopeSnap, item: ScopeContractItem): string {
-  return detail.readiness?.configured ? detail.readiness.items.find(i => i.index === item.index)?.state.toUpperCase() ?? "UNKNOWN" : item.paired ? "PAIRED" : "OPEN";
+  return detail.readiness?.configured ? detail.readiness.items.find(i => item.id !== undefined && i.id === item.id)?.state.toUpperCase() ?? "UNKNOWN" : item.paired ? "PAIRED" : "OPEN";
 }
 function proofColumns(detail: SliceScopeSnap, width: number): ContentLine[] {
   const stateW = 8;
@@ -162,7 +162,7 @@ function proofColumns(detail: SliceScopeSnap, width: number): ContentLine[] {
   for (const item of detail.proofContract) {
     const requirements = wrapText(item.text, requirementW);
     const evidence: Array<{ text: string; token: Token }> = [];
-    const judgment = detail.readiness?.items.find(i => i.index === item.index);
+    const judgment = detail.readiness?.items.find(i => item.id !== undefined && i.id === item.id);
     if (judgment?.judgment) evidence.push({ text: `judgment ${judgment.judgment.id.slice(0, 12)}: ${judgment.reason}`, token: judgment.state === "accepted" ? "ok" : "warn" });
     if (item.drops.length === 0 && !judgment?.judgment) evidence.push({ text: "not recorded", token: "warn" });
     for (const drop of item.drops) {
@@ -194,7 +194,7 @@ function proofStack(detail: SliceScopeSnap, width: number): ContentLine[] {
       { text: status, token: status === "ACCEPTED" ? "ok" : "warn", bold: true },
     ], width));
     lines.push(...wrapped(item.text, width, "    "));
-    const judgment = detail.readiness?.items.find(i => i.index === item.index);
+    const judgment = detail.readiness?.items.find(i => item.id !== undefined && i.id === item.id);
     if (judgment?.judgment) lines.push(...wrapped(`judgment ${judgment.judgment.id.slice(0, 12)}: ${judgment.reason}`, width, "    "));
     if (item.drops.length === 0) {
       if (judgment?.judgment) continue;

@@ -379,6 +379,17 @@ describe("§3.1 DELIVERED — the redesigned join (planned ↔ curated proof ↔
     expect(composeDelivered(promised, [pass, correction]).items[0]).toMatchObject({ verified: "unverified", note: "Outcome failed the comparison" });
   });
 
+  it("keeps legacy winners and corrections local to their item and candidate", () => {
+    const first = artifact({ artifactType: "qa", verdict: "PASS", evidences: ["1"], candidateSha: "first-cut", selfCheck: "First outcome", droppedAt: "2026-07-04T08:00:00Z", relPath: "proof/first.md" });
+    const second = artifact({ artifactType: "qa", verdict: "PASS", evidences: ["2"], candidateSha: "second-cut", selfCheck: "Second outcome", droppedAt: "2026-07-04T09:00:00Z", relPath: "proof/second.md" });
+    const correction = artifact({ ...second, verdict: "NOT-CLEAR", selfCheck: "Second failed", droppedAt: "2026-07-04T10:00:00Z", relPath: "proof/correction.md" });
+    expect(composeDelivered(promised, [first, second]).items.map(i => i.verified)).toEqual(["verified", "verified"]);
+    const corrected = composeDelivered(promised, [first, second, correction]).items;
+    expect(corrected.map(i => i.verified)).toEqual(["verified", "unverified"]);
+    expect(corrected[0]!.note).toContain("First outcome");
+    expect(corrected[1]!.note).toBe("Second failed");
+  });
+
   it("a covering artifact WITHOUT a recorded comparison leaves the item unverified — visible, not blocked", () => {
     const guardArt = artifact({ artifactType: "guard", verdict: "CLEAR", evidences: ["range probe 206"] });
     const d = composeDelivered(promised, [guardArt]);

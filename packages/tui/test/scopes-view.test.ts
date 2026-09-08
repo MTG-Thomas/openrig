@@ -4,7 +4,7 @@ import { createViewState, computeExplorerRows } from "../src/state.js";
 import { renderScreen } from "../src/render.js";
 import { demoSnapshot } from "../src/demo-data.js";
 import { parseCommand } from "../src/grammar.js";
-import { proofBadge } from "../src/scopes/scopes-model.js";
+import { proofBadge, scopeContractLines } from "../src/scopes/scopes-model.js";
 
 function openGateway() {
   const snap = demoSnapshot();
@@ -81,4 +81,25 @@ describe("scopes view (store-direct render, v4 mock contract)", () => {
     // the data-path rule: the narrative panel does NOT change the store-derived counts
     expect(out).toContain("PROOF 2/9");
   });
+});
+
+
+it.each([60, 160])("joins scope states and evidence by ID at width %i, not position", (width) => {
+  const detail = demoSnapshot().scopes![0]!.slices[0]!;
+  detail.proofContract = [
+    { id: "b", index: 1, text: "Second item", paired: false, drops: [] },
+    { id: "a", index: 2, text: "First item", paired: false, drops: [] },
+    { id: "missing", index: 3, text: "Unknown item", paired: false, drops: [] },
+  ];
+  detail.readiness = { configured: true, state: "not-ready", revision: "basis", items: [
+    { id: "a", index: 1, text: "First item", state: "rejected", reason: "Only A rejected", judgment: { id: "a-receipt" } },
+    { id: "b", index: 2, text: "Second item", state: "accepted", reason: "Only B accepted", judgment: { id: "b-receipt" } },
+  ] };
+  const render = scopeContractLines(detail, { collapseReqs: false, narrative: null, width }).map(l => l.text).join("\n");
+  const b = render.indexOf("Second item"), a = render.indexOf("First item"), missing = render.indexOf("Unknown item");
+  expect(render).toMatch(width === 60 ? /REQ 1 · ACCEPTED/ : /ACCEPTED\s+1\s+Second item/);
+  expect(render).toMatch(width === 60 ? /REQ 2 · REJECTED/ : /REJECTED\s+2\s+First item/);
+  expect(render.slice(b, a)).toContain("Only B accepted");
+  expect(render.slice(a, missing)).toContain("Only A rejected");
+  expect(render).toContain("UNKNOWN");
 });

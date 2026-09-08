@@ -157,3 +157,18 @@ describe("D1 — spec-sha from locked artifact bytes", () => {
     expect(d.specShaShort).toBe(createHash("sha256").update(prd).digest("hex").slice(0, 8));
   });
 });
+
+
+it.each(["SPEC.md", "README.md", "IMPLEMENTATION-PRD.md"])("uses the selected %s contract and logical item grammar for legacy scope rows", (source) => {
+  const files = {
+    [`${S}/SPEC.md`]: "## Intent\nAn intent-only node.\n",
+    [`${S}/${source}`]: "## Proof contract\n[ ] Bare checkbox. <!-- proof-item: bare -->\n  Continuation.\n  - [ ] Indented checkbox. <!-- proof-item: nested -->\n",
+  };
+  const d = projectSliceScope(fsFixture(files, baseDirs), S)!;
+  expect(d.readiness!.configured).toBe(false);
+  expect(d.proofContract.map(i => ({ id: i.id, text: i.text, source: i.source?.file }))).toEqual([
+    { id: "bare", text: "Bare checkbox.  Continuation.", source },
+    { id: "nested", text: "Indented checkbox.", source },
+  ]);
+  expect(d.proofContract.map(i => i.id)).toEqual(d.readiness!.items.map(i => i.id));
+});

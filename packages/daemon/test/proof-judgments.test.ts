@@ -1,3 +1,4 @@
+import { composeDelivered, extractProofContract } from "../src/domain/review/compose.js";
 import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import { join } from "node:path";
@@ -292,5 +293,29 @@ describe("real process publication and recovery", () => {
       expect(reply.result.replayed).toBe(crash === "after"); expect(reply.result.readiness.items[0].state).toBe("accepted");
       if (crash === "after") expect(reply.result.readiness.revision).toBe(prior.revision);
     } finally { await kill(restarted); }
+  });
+});
+
+
+describe("selected proof identity across readers", () => {
+  it("keeps same-worded IDs independent through acceptance, correction and reorder", () => {
+    const f = fixture();
+    const rows = ["- [ ] Repeated outcome. <!-- proof-item: a -->", "- [ ] Repeated outcome. <!-- proof-item: b -->"];
+    f.write(join(f.alpha, "SPEC.md"), "## Proof contract\n" + rows.join("\n") + "\n");
+    const act = (id: string, verdict: "accept" | "reject") => {
+      const item = readSliceReadiness(f.alpha).items.find(i => i.id === id)!;
+      return f.judge({ ...f.input(), item: id, expectedRevision: item.revision, expectedPrevious: item.judgment?.id ?? null, verdict, reason: `${id} ${verdict}` });
+    };
+    const view = () => composeDelivered(extractProofContract(fs.readFileSync(join(f.alpha, "SPEC.md"), "utf8")), [], readSliceReadiness(f.alpha)).items;
+    act("a", "accept");
+    expect(view().map(i => i.verified)).toEqual(["verified", "missing"]);
+    expect(view()[1]!.note).not.toContain("a accept");
+    act("b", "accept");
+    expect(view().map(i => i.verified)).toEqual(["verified", "verified"]);
+    act("a", "reject");
+    expect(view().map(i => i.verified)).toEqual(["unverified", "verified"]);
+    expect(view()[1]!.note).toContain("b accept");
+    f.write(join(f.alpha, "SPEC.md"), "## Proof contract\n" + rows.reverse().join("\n") + "\n");
+    expect(view().map(i => i.verified)).toEqual(["verified", "unverified"]);
   });
 });

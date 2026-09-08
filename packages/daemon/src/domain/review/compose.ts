@@ -16,6 +16,7 @@
 // completion green (FR-7 — a mission-altitude fact, not a slice structure).
 
 import YAML from "yaml";
+import { createHash } from "node:crypto";
 import type { ScopeReadiness, MissionReadiness } from "../proof/judgments.js";
 import * as posixPath from "node:path/posix";
 import { renderBriefSpine } from "./brief-spine.js";
@@ -388,6 +389,13 @@ export interface PromisedItem {
 export { parseLogicalCheckboxes };
 export type { LogicalCheckboxItem };
 
+/** Shared identity for judgment authority and readers; preserve existing receipt hashes. */
+export function proofItemIdentity(rawText: string): { id: string; text: string } {
+  const declared = /<!--\s*proof-item:\s*([a-zA-Z0-9_-]+)\s*-->/.exec(rawText);
+  const text = rawText.replace(/<!--\s*proof-item:\s*[a-zA-Z0-9_-]+\s*-->/g, "").trim();
+  return { id: declared?.[1] ?? `item-${createHash("sha256").update(JSON.stringify(text)).digest("hex").slice(0, 20)}`, text };
+}
+
 export function extractProofContract(prd: string | null): PromisedItem[] {
   const body = extractSection(prd, "Proof contract");
   if (!body) return [];
@@ -553,7 +561,7 @@ export function composeDelivered(promised: PromisedItem[], artifacts: ProofArtif
     const covering = artifacts.filter((a) => a.evidences.some((ref) => refMatches(ref, promised, i))).sort(byLatest);
     covering.forEach((a) => covered.add(a.relPath));
     const qaCovering = covering.filter((a) => a.artifactType === "qa" || a.artifactType === "adjudication");
-    const winners = selectWinning(artifacts, deriveCandidateSha(artifacts));
+    const winners = selectWinning(covering, deriveCandidateSha(covering));
     const verifiedBy = qaCovering.find((a) => a.artifactType !== null && winners.get(a.artifactType) === a && a.selfCheck !== null && isPassing(a.artifactType, a.verdict));
     const noteSource = qaCovering.find((a) => a.selfCheck !== null) ?? covering.find((a) => a.selfCheck !== null);
     const plannedRef = p.plannedRef ? toReviewMedia(p.plannedRef, "") : null;
@@ -566,8 +574,7 @@ export function composeDelivered(promised: PromisedItem[], artifacts: ProofArtif
     const note = noteSource?.selfCheck ?? null;
     if (note) item.note = note;
     if (readiness?.configured) {
-      const text = p.rawText.replace(/<!--\s*proof-item:\s*[a-zA-Z0-9_-]+\s*-->/g, "").trim();
-      const current = readiness.items.find(i => i.text === text);
+      const current = readiness.items.find(i => i.id === proofItemIdentity(p.rawText).id);
       item.verified = current?.state === "accepted" && !readiness.issues.length ? "verified" : current?.judgment || covering.length ? "unverified" : "missing";
       item.note = current ? `Judgment ${current.state}: ${current.reason}` : `Current judgment unavailable: ${readiness.issues.join("; ")}`;
     } else if (verifiedBy) item.note = `Legacy recorded verification (item revision unbound). ${item.note ?? ""}`.trim();
