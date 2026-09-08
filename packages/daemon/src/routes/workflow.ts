@@ -397,6 +397,14 @@ export function workflowRoutes(): Hono {
     }
   });
 
+  app.get("/:instance_id/guidance", (c) => {
+    try {
+      return c.json(getRuntime(c).guidance(c.req.param("instance_id"), {
+        packetId: c.req.query("packet"), component: c.req.query("component"), full: c.req.query("full") === "true",
+      }));
+    } catch (err) { return errorResponse(c, err); }
+  });
+
   app.get("/:instance_id", (c) => {
     const instanceId = c.req.param("instance_id");
     const runtime = getRuntime(c);
@@ -406,6 +414,7 @@ export function workflowRoutes(): Hono {
     const inspected = runtime.inspect(instanceId);
     return c.json({
       ...runtime.withDeadline(inst),
+      guidance: runtime.guidance(instanceId),
       exceptionReadiness: runtime.exceptionReadiness(instanceId),
       exceptionObligations: runtime.exceptionObligations(instanceId),
       ...(inst.lifecycleBinding ? { reconciliation: runtime.inspectGraph(instanceId) } : {}),

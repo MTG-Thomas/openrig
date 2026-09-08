@@ -1,3 +1,4 @@
+import { readWorkflowGuidance, type GuidanceInput } from "./workflow-guidance.js";
 // PL-004 Phase D: workflow projector — transactional-scribe contract.
 //
 // LOAD-BEARING. The single most important Phase D contract.
@@ -73,24 +74,32 @@ export function renderWorkflowProjectCommand(input: {
   return `${base} --acceptance-candidate ${shellQuote(acceptance.candidate)} --acceptance-verdict ${shellQuote(verdict)} --acceptance-evidence-ref ${shellQuote(acceptance.evidence_ref)}`;
 }
 
+function workflowMethodLines(input: GuidanceInput): string[] {
+  const guidance = readWorkflowGuidance(input);
+  return guidance.state === "unselected" ? [] : guidance.lines;
+}
+
 /** Refreshes guidance when a packet is recreated (route/resume) instead of
  * carrying a stale packet id or owner forward in copied body text. */
 export function withWorkflowContinuation(input: {
   body: string;
   contextRefs?: string[];
+  binding?: GuidanceInput["binding"];
+  library?: GuidanceInput["library"];
   instanceId: string;
   packetId: string;
   ownerSession: string;
-  step?: Pick<WorkflowStepSpec, "acceptance">;
+  step?: Pick<WorkflowStepSpec, "acceptance"> & { id?: string };
 }): string {
   const lines = input.body
     .split("\n")
-    .filter((line) => !line.startsWith("Continuation: ") && !line.startsWith("Workflow plan: ") && line !== WORKFLOW_CONTEXT_SHORTCUT && !(input.contextRefs && line.startsWith("Context reference: ")));
+    .filter((line) => !line.startsWith("Continuation: ") && !line.startsWith("Workflow plan: ") && !line.startsWith("Workflow method: ") && line !== WORKFLOW_CONTEXT_SHORTCUT && !(input.contextRefs && line.startsWith("Context reference: ")));
   while (lines.at(-1) === "") lines.pop();
   return [
     ...lines,
     "",
     ...workflowPlanningContext(input.contextRefs, input.instanceId),
+    ...workflowMethodLines({...input, stepId: input.step?.id}),
     ...(input.contextRefs ?? []).map((ref) => `Context reference: ${ref}`),
     `Continuation: ${renderWorkflowProjectCommand(input)}`,
     WORKFLOW_CONTEXT_SHORTCUT,
@@ -212,6 +221,7 @@ export class WorkflowProjector {
       hostDefault: () => "orchestrator" | "human_only" | null;
       humanFallbackSeat: WorkflowHumanDestination;
     },
+    private readonly guidanceLibrary?: GuidanceInput["library"],
   ) {}
 
   private nodeRuntimeOf(session: string): string | null {
@@ -595,6 +605,7 @@ export class WorkflowProjector {
           sourceSession: input.actorSession,
           destinationSession: resolvedNextOwner,
           body: workflowHandoffBody({
+            library: this.guidanceLibrary,
             spec,
             instance,
             currentStep,
@@ -1129,6 +1140,7 @@ export class WorkflowProjector {
           sourceSession: input.actorSession,
           destinationSession: plan.owner,
           body: workflowHandoffBody({
+            library: this.guidanceLibrary,
             spec,
             instance,
             currentStep,
@@ -1753,6 +1765,7 @@ export function compileGate(
 }
 
 function workflowHandoffBody(input: {
+  library?: GuidanceInput["library"];
   spec: WorkflowSpec;
   instance: WorkflowInstance;
   currentStep: WorkflowStepSpec;
@@ -1788,6 +1801,8 @@ function workflowHandoffBody(input: {
   return withWorkflowContinuation({
     body: lines.join("\n"),
     contextRefs: input.spec.context_refs,
+    binding: input.instance.lifecycleBinding,
+    library: input.library,
     instanceId: input.instance.instanceId,
     packetId: input.packetId,
     ownerSession: input.ownerSession,

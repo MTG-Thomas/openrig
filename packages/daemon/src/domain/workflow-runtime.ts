@@ -1,3 +1,4 @@
+import { readWorkflowGuidance, type GuidanceInput } from "./workflow-guidance.js";
 import { exceptionConfigurationSource, inspectExceptionReadiness, type ExceptionReadiness } from "./workflow-exception-readiness.js";
 import { inspectGraph, recoverGraphOperation, reviseGraph } from "./workflow-reconciliation.js";
 import { lifecycleObligations, requiredLifecycleSteps, type LifecycleObligation } from "./lifecycle-obligations.js";
@@ -69,6 +70,7 @@ import type {
 import { compileProjectLifecycle, type LifecycleCompilation } from "./project-lifecycle-compiler.js";
 
 export interface WorkflowRuntimeDeps {
+  guidanceLibrary?: GuidanceInput["library"];
   db: Database.Database;
   eventBus: EventBus;
   queueRepo: QueueRepository;
@@ -148,6 +150,7 @@ export class WorkflowRuntime {
   readonly validator: WorkflowValidator;
   readonly projector: WorkflowProjector;
 
+  private readonly guidanceLibrary?: GuidanceInput["library"];
   private readonly db: Database.Database;
   private readonly eventBus: EventBus;
   private readonly queueRepo: QueueRepository;
@@ -156,6 +159,7 @@ export class WorkflowRuntime {
   private readonly exceptionDial?: WorkflowRuntimeDeps["exceptionDial"];
 
   constructor(deps: WorkflowRuntimeDeps) {
+    this.guidanceLibrary = deps.guidanceLibrary;
     this.db = deps.db;
     this.eventBus = deps.eventBus;
     this.queueRepo = deps.queueRepo;
@@ -176,7 +180,15 @@ export class WorkflowRuntime {
       this.now,
       this.watchdogJobsRepo,
       deps.exceptionDial,
+      deps.guidanceLibrary,
     );
+    this.queueRepo.attachWorkflowGuidance(packetId => {
+      const packet = this.queueRepo.getById(packetId);
+      const instanceId = packet?.tags?.find(tag => tag.startsWith("instance:"))?.slice(9);
+      if (!instanceId) return [];
+      const guidance = this.guidance(instanceId, {packetId});
+      return guidance.state === "unselected" ? [] : guidance.lines;
+    });
   }
 
   inspectGraph(instanceId: string) { return inspectGraph(this.db, instanceId); }
@@ -192,6 +204,17 @@ export class WorkflowRuntime {
   private readExceptionReadiness(spec: WorkflowSpec, source: string, boundRig?: string | null, instanceId?: string) {
     return inspectExceptionReadiness({ db: this.db, spec, source, boundRig, instanceId,
       hostDefault: () => this.exceptionDial?.hostDefault() ?? null, humanFallbackSeat: this.exceptionDial?.humanFallbackSeat });
+  }
+
+  guidance(instanceId: string, options: Pick<GuidanceInput, "packetId" | "component" | "full"> = {}) {
+    const instance = this.instanceStore.getByIdOrThrow(instanceId);
+    const spec = this.specCache.getByNameVersion(instance.workflowName, instance.workflowVersion)?.spec;
+    const packetId = options.packetId ?? (instance.currentFrontier.length === 1 ? instance.currentFrontier[0] : undefined);
+    if (packetId && !instance.currentFrontier.includes(packetId)) throw new WorkflowProjectorError("packet_not_on_frontier", "Guidance needs a current frontier packet; inspect workflow show first.");
+    const packet = packetId ? this.queueRepo.getById(packetId) : null;
+    const stepId = packetId ? this.instanceStore.getFrontierBinding(instanceId, packetId)?.stepId ?? (instance.currentFrontier.length === 1 ? instance.currentStepId : null) : null;
+    return readWorkflowGuidance({instanceId, contextRefs: spec?.context_refs, binding: instance.lifecycleBinding,
+      stepId: stepId ?? undefined, ownerSession: packet?.destinationSession, library: this.guidanceLibrary, ...options, packetId});
   }
 
   exceptionReadiness(instanceId: string): ExceptionReadiness | null {
@@ -735,6 +758,8 @@ export class WorkflowRuntime {
         sourceSession: input.createdBySession,
         destinationSession: entryOwner,
         body: workflowInstantiateBody({
+          binding: instance.lifecycleBinding,
+          library: this.guidanceLibrary,
           spec: specRow.spec,
           instanceId: instance.instanceId,
           entryStep,
@@ -1137,6 +1162,8 @@ export class WorkflowRuntime {
         sourceSession: input.actorSession,
         destinationSession: owner,
         body: withWorkflowContinuation({
+          binding: instance.lifecycleBinding,
+          library: this.guidanceLibrary,
           body:
             `WORKFLOW RESUME (redrive)\n` +
             `workflow: ${instance.workflowName} v${instance.workflowVersion}\n` +
@@ -1353,6 +1380,8 @@ export class WorkflowRuntime {
         sourceSession: input.actorSession,
         destinationSession: owner,
         body: withWorkflowContinuation({
+          binding: instance.lifecycleBinding,
+          library: this.guidanceLibrary,
           body: `WORKFLOW RESUME (packet redrive)\nworkflow: ${instance.workflowName} v${instance.workflowVersion}\ninstance: ${instance.instanceId}\noccurrence: ${occurrence.occurrenceId}\nstep: ${step.id}\n${input.decision ? `decision: ${input.decision}\n` : ""}`,
           instanceId: instance.instanceId,
           packetId: redrivePacketId,
@@ -1528,6 +1557,8 @@ export class WorkflowRuntime {
         sourceSession: input.actorSession,
         destinationSession: input.toSession,
         body: withWorkflowContinuation({
+          binding: instance.lifecycleBinding,
+          library: this.guidanceLibrary,
           body: oldPacket.body,
           instanceId: instance.instanceId,
           packetId: routedPacketId,
@@ -1690,6 +1721,7 @@ export class WorkflowRuntime {
   continue(instanceId: string): {
     instance: WorkflowInstanceWithDeadline;
     trail: WorkflowStepTrailEntry[];
+    guidance: ReturnType<WorkflowRuntime["guidance"]>;
     reconciliation: ReturnType<typeof inspectGraph>;
     frontier: ReturnType<WorkflowRuntime["inspect"]>["frontier"];
     failures: ReturnType<WorkflowRuntime["inspect"]>["failures"];
@@ -1702,6 +1734,7 @@ export class WorkflowRuntime {
     return {
       instance: this.withDeadline(instance),
       trail,
+      guidance: this.guidance(instanceId),
       reconciliation: this.inspectGraph(instanceId),
       frontier: inspected.frontier,
       failures: inspected.failures,
@@ -1770,6 +1803,8 @@ export type WorkflowInstanceWithInspection = WorkflowInstanceWithDeadline & {
 };
 
 function workflowInstantiateBody(input: {
+  binding?: GuidanceInput["binding"];
+  library?: GuidanceInput["library"];
   spec: Pick<WorkflowSpec, "id" | "version" | "context_refs">;
   instanceId: string;
   entryStep: WorkflowStepSpec;
@@ -1800,6 +1835,8 @@ function workflowInstantiateBody(input: {
   return withWorkflowContinuation({
     body: lines.join("\n"),
     contextRefs: input.spec.context_refs,
+    binding: input.binding,
+    library: input.library,
     instanceId: input.instanceId,
     packetId: input.packetId,
     ownerSession: input.ownerSession,

@@ -1312,6 +1312,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
     | undefined;
   if (queueRepoForWorkflow) {
     workflowRuntime = new WorkflowRuntime({
+      guidanceLibrary: contextPackLibrary,
       db,
       eventBus,
       queueRepo: queueRepoForWorkflow,

@@ -18,6 +18,7 @@
 import { shellQuote } from "../cross-host-executor.js";
 
 export interface RenderInstance {
+  guidance?: {lines: string[]};
   instanceId: string;
   workflowName?: string;
   workflowVersion?: string;
@@ -410,6 +411,7 @@ export function renderInstanceShow(
     }
   }
   for (const unknown of instance.unknowns ?? []) lines.push(`  unknown:  ${unknown}`);
+  if (instance.guidance) lines.push(...instance.guidance.lines);
   if (instance.exceptionReadiness) {
     const r = instance.exceptionReadiness;
     lines.push(`  exception owner: ${r.selection.state} · ${r.selection.role ?? "none selected"} (ordinary entry: ${r.selection.entryRole ?? "implicit"})`);

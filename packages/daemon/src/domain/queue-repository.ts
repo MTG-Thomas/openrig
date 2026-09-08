@@ -3408,11 +3408,21 @@ export class QueueRepository {
   private activityReader?: WaitingActivityReader;
   attachActivityReader(reader: WaitingActivityReader): void { this.activityReader = reader; }
 
+  private workflowGuidance?: (packetId: string) => string[];
+  attachWorkflowGuidance(reader: (packetId: string) => string[]): void { this.workflowGuidance = reader; }
+
   evaluateWaitReminder(input: { jobId: string }) {
     if (this.wakeRepo.findQitemsByAttachedWatchdog(input.jobId).length > 0
       && this.wakeRepo.findQitemsByGeneratedTimer(input.jobId).every(row => row.state !== "blocked")) return null;
     const binding = this.wakeRepo.findBlockedQitemsByWatchdog(input.jobId).find(row => row.kind === "timer");
-    return evaluateQueueWait(this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), input.jobId, binding ? this.waitingView(binding.qitemId) : null);
+    const result = evaluateQueueWait(this.watchdogJobsRepo ?? new WatchdogJobsRepository(this.db), input.jobId, binding ? this.waitingView(binding.qitemId) : null);
+    // Only an already-admitted send reads prose: healthy silence, receipts and
+    // failed-delivery retries remain owned by the existing wait evaluator.
+    if (result?.action === "send" && binding && this.workflowGuidance) {
+      try { result.message += "\n" + this.workflowGuidance(binding.qitemId).join("\n"); }
+      catch (error) { result.message += "\nWorkflow method: UNKNOWN: current guidance unavailable: " + String(error); }
+    }
+    return result;
   }
 
   ownerActivity(session: string): ReturnType<WaitingActivityReader> {

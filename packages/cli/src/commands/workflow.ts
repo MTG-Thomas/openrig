@@ -515,6 +515,25 @@ Examples:
     });
 
   cmd
+    .command("guidance <instanceId>")
+    .description("Read current selected SDLC teaching, original intent and authored/bound provenance")
+    .option("--packet <id>", "Select current packet custody when the frontier branches")
+    .option("--component <id>", "Choose an effective selected component; never infer a process stage")
+    .option("--full", "Expand complete relevant prose and selection; preserves authored caveats")
+    .option("--json", "Structured guidance and source identities")
+    .action(async (instanceId: string, opts: {packet?: string; component?: string; full?: boolean; json?: boolean}) => {
+      await withClient(getDeps(), async client => {
+        const query = new URLSearchParams();
+        if (opts.packet) query.set("packet", opts.packet);
+        if (opts.component) query.set("component", opts.component);
+        if (opts.full) query.set("full", "true");
+        const res = await client.get<{lines: string[]}>("/api/workflow/" + encodeURIComponent(instanceId) + "/guidance?" + query);
+        if (opts.json || res.status >= 400) printResult(opts.json ?? false, res.data, res.status);
+        else for (const line of res.data.lines) console.log(line);
+      });
+    });
+
+  cmd
     .command("show <instanceId>")
     .description("Show current work, exception-owner readiness and existing exception obligations")
     .option("--json", "JSON output for agents")

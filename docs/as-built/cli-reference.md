@@ -1484,6 +1484,34 @@ Changing source bytes under an existing operation key refuses. Relative paths
 passed to both CLI `compile` and `instantiate-lifecycle` are resolved against the
 **caller cwd before HTTP**, so daemon cwd cannot change their meaning.
 
+`workflow guidance <instance> [--packet <qitem>] [--component <id>] [--full]`
+reads current selected SDLC teaching and original SPEC intent. `workflow show`
+and `workflow continue` expose the same guidance. Entry, handoff, route and resume
+packets carry a compact preview; existing admitted wait notices refresh it at
+send time. Healthy waiting does not read or inject the catalog on every tick.
+
+Selection follows project → mission → explicit active slice (or a legacy slice's
+exact executable identity). A narrower component list replaces ancestor components
+and edges; an omitted catalog inherits. Bound member lists alone do not select an
+active slice. Catalog addresses use the shared H2/H3 resolver: absolute or
+`$OPENRIG_HOME` paths, paths relative to the declaring manifest, `root: repository`
+from that manifest's Git tree, or a file declared by the installed context library.
+Missing/ambiguous components and unavailable sources are named unknowns; prose
+stays verbatim and has no required semantic field ontology.
+
+Compact guidance previews one component, using exact owner matches where possible;
+otherwise it labels a menu preview. Position remains unknown: neither array order,
+clock nor handoff infers method progress. `--full` expands components relevant to
+current packet custody (all selected components when none match); `--component`
+chooses one explicitly. Whole oversized prose blocks are omitted with an expansion
+notice, so a clipped caveat never masquerades as complete teaching.
+
+Guidance reports manifest hashes against the lifecycle binding and the current
+catalog hash. Referenced prose is current authored advice, not a cached executable
+snapshot. YAML selection edits use the existing revision path; catalog-only prose
+changes refresh on read without creating work or a new revision store. Reading
+advice, receiving a notice and independent acceptance remain distinct.
+
 `workflow show`, read-only `workflow revise`, and the TUI distinguish current,
 source-only, compatible, incompatible and unavailable authored comparisons.
 Catalog or membership bytes can change without changing executable steps;
