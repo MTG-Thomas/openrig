@@ -34,6 +34,7 @@ import {
 import type { AgentsBand, AgentsScope, ComposedMissionReview, ComposedRigAgents, ComposedSliceReview, LockedArtifact, SettledRow, WorkflowRowRef } from "./types.js";
 import { composeAgentsBand, composeRigAgents } from "./compose.js";
 import { runSyncSite } from "../sync-site-wrap.js";
+import { readSliceReadiness, readMissionReadiness } from "../proof/judgments.js";
 import { readProofArtifacts } from "./proof-io.js";
 import { evaluateStepDeadline } from "../workflow-deadline.js";
 import type { AgentActivityStore } from "../agent-activity-store.js";
@@ -151,6 +152,7 @@ export class ReviewGatherer {
       .filter((s): s is MissionSliceEntry => s !== null);
     const missionMeta = this.readMissionMeta(mission);
     return composeMissionReview({
+      readiness: readMissionReadiness(path.join(this.indexer.slicesRoot, mission)),
       mission: { name: mission, id: missionMeta.id, title: missionMeta.title, intent: missionMeta.intent },
       slices: composed,
       missionAttention: this.attentionForTag(`mission:${mission}`, `slice:`),
@@ -242,6 +244,7 @@ export class ReviewGatherer {
       prd,
       proofMd,
       artifacts,
+      readiness: readSliceReadiness(slice.slicePath),
       lockedArtifacts: this.parseLockedArtifacts(frontmatter),
       mediaRefs: this.collectMediaRefs([readme, prd, proofMd]),
       proofDirExists: fs.existsSync(path.join(slice.slicePath, "proof")),

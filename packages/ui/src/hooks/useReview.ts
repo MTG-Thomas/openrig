@@ -127,6 +127,8 @@ export interface AgentsBand {
  *  always composes, degrading to a muted "—" line when its source is absent —
  *  never invented, never blocking. */
 export interface ComposedSliceReview {
+  sourceObservation?: { state: string };
+  readiness?: { configured: boolean; state: string; revision: string };
   slice: string;
   sliceId: string | null;
   title: string;
@@ -185,6 +187,8 @@ export interface LedgerRow {
 }
 
 export interface ComposedMissionReview {
+  sourceObservation?: { state: string };
+  readiness?: { state: string; revision: string };
   mission: string;
   missionId: string | null;
   title: string;
@@ -223,29 +227,35 @@ export interface ComposedRigAgents {
 // --- Hooks ---
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as T;
 }
 
 export function useSliceReview(name: string | null) {
-  return useQuery({
+  const client = useQueryClient();
+  const query = useQuery({
     queryKey: ["review", "slice", name],
     queryFn: () => fetchJson<ComposedSliceReview>(`/api/review/slice/${encodeURIComponent(name!)}`),
     enabled: !!name,
     // Refresh-after-action rides invalidation (useInvalidateReview), not
     // window focus; keep a short staleTime so recompositions surface.
     staleTime: 15_000,
+    refetchInterval: 30_000,
   });
+  return { ...query, updatesUnavailable: query.data?.sourceObservation?.state === "unavailable", basisInvalidated: client.getQueryState(["review", "slice", name])?.isInvalidated === true };
 }
 
 export function useMissionReview(name: string | null) {
-  return useQuery({
+  const client = useQueryClient();
+  const query = useQuery({
     queryKey: ["review", "mission", name],
     queryFn: () => fetchJson<ComposedMissionReview>(`/api/review/mission/${encodeURIComponent(name!)}`),
     enabled: !!name,
     staleTime: 15_000,
+    refetchInterval: 30_000,
   });
+  return { ...query, updatesUnavailable: query.data?.sourceObservation?.state === "unavailable", basisInvalidated: client.getQueryState(["review", "mission", name])?.isInvalidated === true };
 }
 
 export function useReviewAgents(scope: AgentsScope | null) {

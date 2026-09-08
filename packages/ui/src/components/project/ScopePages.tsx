@@ -559,7 +559,7 @@ function WorkspaceOverviewPanel() {
     // railItem/unsorted keys have no sidecar entry and fall to derived.
     const authored = data.missions ?? {};
     return Array.from(buckets.entries()).map(([key, slices]) => {
-      const rec = reconcileMissionStatus(authored[key]?.authoredStatus ?? null, slices);
+      const rec = reconcileMissionStatus(authored[key]?.authoredStatus ?? null, slices, undefined, authored[key]?.readiness);
       return {
         id: key,
         label: key === "unsorted" ? "Unsorted" : key,

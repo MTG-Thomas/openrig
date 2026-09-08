@@ -48,7 +48,7 @@ export interface MissionUnavailable {
 async function fetchMission(missionId: string, hostId: string): Promise<MissionDataResponse | MissionUnavailable> {
   // OPR.0.4.6.MH2 FR-2 — selected-host envelope; origin shape verbatim;
   // local path unchanged (withHostParam is identity for local).
-  const res = await fetch(withHostParam(`/api/missions/${encodeURIComponent(missionId)}`, hostId));
+  const res = await fetch(withHostParam(`/api/missions/${encodeURIComponent(missionId)}`, hostId), { signal: AbortSignal.timeout(5_000) });
   if (res.status === 503) {
     const body = (await res.json().catch(() => ({}))) as { error?: string; hint?: string };
     return {
@@ -75,6 +75,7 @@ export function useMission(missionId: string | null) {
     enabled: !!missionId,
     placeholderData: keepPreviousData,
     staleTime: 30_000,
+    refetchInterval: 30_000,
     // V0.3.1 slice 17 workspace-state-correctness pattern: refetch on
     // window focus so the operator who creates a slice folder + comes
     // back to the tab sees the new slice without a manual refresh.

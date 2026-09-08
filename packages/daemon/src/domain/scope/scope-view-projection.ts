@@ -6,10 +6,12 @@
 // `n`; it is not read here at all. The render never asserts a proven-green the store
 // does not enforce: `paired` means exactly "≥1 C1 drop cites this contract item".
 import * as path from "node:path";
+import { readSliceReadiness, type ScopeReadiness } from "../proof/judgments.js";
 import { createHash } from "node:crypto";
 import { NODE_FILE_PRECEDENCE } from "./node-file.js";
 
 export interface ScopeFsDeps {
+  readBytes?: (path: string) => Uint8Array | null;
   exists: (p: string) => boolean;
   readFile: (p: string) => string | null;
   listDir: (p: string) => string[];
@@ -40,6 +42,7 @@ export interface ScopeLocks {
 }
 
 export interface SliceScopeSummary {
+  readiness?: ScopeReadiness;
   dirName: string;
   id: string | null;
   displayName: string;
@@ -236,6 +239,7 @@ export function projectSliceScope(fs: ScopeFsDeps, sliceDir: string): SliceScope
   const heading = /^# (.+)$/m.exec(content);
   const progressPath = path.join(sliceDir, "PROGRESS.md");
   return {
+    readiness: readSliceReadiness(sliceDir, fs),
     dirName: path.basename(sliceDir),
     id: fmValue(fm, "id"),
     displayName: heading ? heading[1]!.trim() : path.basename(sliceDir),

@@ -13,6 +13,7 @@
 // three N1 facts with what it has — never a remembered claim).
 
 import { Hono } from "hono";
+import { proofSourceObservation } from "../domain/proof/source-watch.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ReviewGatherer } from "../domain/review/gather.js";
@@ -99,7 +100,7 @@ export function reviewRoutes(): Hono {
     if (!gatherer) return c.json({ error: "review_composer_unavailable" }, 503);
     const composed = gatherer.composeSlice(c.req.param("name"));
     if (!composed) return c.json({ error: "slice_not_found", name: c.req.param("name") }, 404);
-    return c.json(composed);
+    return c.json({ ...composed, sourceObservation: proofSourceObservation(c) });
   });
 
   app.get("/mission/:name", (c) => {
@@ -107,7 +108,7 @@ export function reviewRoutes(): Hono {
     if (!gatherer) return c.json({ error: "review_composer_unavailable" }, 503);
     const composed = gatherer.composeMission(c.req.param("name"));
     if (!composed) return c.json({ error: "mission_not_found", name: c.req.param("name") }, 404);
-    return c.json(composed);
+    return c.json({ ...composed, sourceObservation: proofSourceObservation(c) });
   });
 
   // FR-6 — the ONE synchronous compose-and-freeze endpoint (the P1/P2

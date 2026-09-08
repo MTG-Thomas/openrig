@@ -112,6 +112,7 @@ import { progressRoutes } from "./routes/progress.js";
 import { scopeAuditRoutes } from "./routes/scope-audit.js";
 import { scopesRoutes } from "./routes/scopes.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
+import { proofRoutes } from "./routes/proof.js";
 import { scopeApproveRoutes } from "./routes/scope-approve.js";
 import { registerTerminalWs } from "./routes/terminal-ws.js";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -138,6 +139,7 @@ import { seatRoutes } from "./routes/seat.js";
 import { createRouteTimingMiddleware } from "./domain/route-timing-recorder.js";
 
 export interface AppDeps {
+  proofSourceWatch?: import("./domain/proof/source-watch.js").ProofSourceWatch;
   /** S20 — effective bind plan for the health surface (absent = legacy body). */
   bindPlan?: { mode: "explicit" | "default"; hosts: string[]; tailscaleDetected: boolean; ignoredRoutingHost?: string };
   rigRepo: RigRepository;
@@ -545,6 +547,7 @@ export function createApp(deps: AppDeps): Hono {
     c.set("missionControlActionLog" as never, deps.missionControlActionLog);
     c.set("missionControlFleetCliCapability" as never, deps.missionControlFleetCliCapability);
     c.set("sliceIndexer" as never, deps.sliceIndexer);
+    c.set("proofSourceWatch" as never, deps.proofSourceWatch);
     c.set("sliceDetailProjector" as never, deps.sliceDetailProjector);
     c.set("reviewGatherer" as never, deps.reviewGatherer);
     c.set("terminalService" as never, deps.terminalService);
@@ -772,6 +775,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/api/telemetry", telemetryRoutes({ db: () => deps.rigRepo.db }));
   // OPR.0.4.4.19 FR-9 — scope approve: frontmatter stamp + audit row.
   app.route("/api/scope/approve", scopeApproveRoutes());
+  app.route("/api/proof", proofRoutes());
   // Operator Surface Reconciliation v0 — steering composition + health summary.
   app.route("/api/steering", steeringRoutes());
   app.route("/api/health-summary", healthSummaryRoutes());

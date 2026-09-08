@@ -247,7 +247,7 @@ activityRoutes.get("/events", (c) => {
   return streamSSE(c, async (stream) => {
     const unsubscribe = eventBus.subscribe((event) => {
       const type = (event as { type?: string }).type;
-      if (type !== "seat.activity_changed" && type !== "seat.rung_health") return;
+      if (type !== "seat.activity_changed" && type !== "seat.rung_health" && type !== "proof.judged" && type !== "proof.sources_changed") return;
       void stream.writeSSE({ event: type, data: JSON.stringify(event) });
     });
     await new Promise<void>((resolve) => {

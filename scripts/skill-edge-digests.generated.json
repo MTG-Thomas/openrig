@@ -53,7 +53,7 @@
       "process/verification-before-completion/SKILL.md": "0b8cea0bb82a8ab0f015afaf84c87796e2c94eee3a83d4fa3d4461d0917950bd"
     },
     "plugin": {
-      "agent-operated-software/SKILL.md": "14ac512225215af01e95b7f861b625387318011c597ade277cce4f6552f92368",
+      "agent-operated-software/SKILL.md": "9159d26e7884bc5205f8b06adaa65625c7d9c6bef41dc2f307d91da4cc1b424b",
       "agent-operated-workflows/SKILL.md": "24e54cbfa979999f523516112670618b2926ae5d42c7aa0846c94db214857ea5",
       "applying-a-permission-policy/SKILL.md": "fa4eaa920a4f38d985301d73518a31c74d0d6fc3a8d3743031aa2dc150e74db0",
       "claude-compaction-restore/SKILL.md": "6c6a8b008bf838e003a584011616b3698e83d150ac6e850b4f53ec28828300ef",
@@ -67,7 +67,7 @@
       "loading-addressable-markdown/scripts/resolve-markdown.mjs": "ef113af7bb297058a8c23a82a4c171232ae8c2d6b1705a89a80140000ad3bca0",
       "messaging-the-human/SKILL.md": "d202dcdf76fb7adccc15b532af1ec3aa4b564634f4cee4611ed6b7cf5c732154",
       "mission-slice-sop/SKILL.md": "3c3783d2f2d05cead97c94d10a9af00b397b810a8fdb7d599930fc1ea226305d",
-      "openrig-operating-model/SKILL.md": "5bb037bc3507cacd571b9d80d9bf5a9ec3e3baccb75c889ece814ab740fb2149",
+      "openrig-operating-model/SKILL.md": "53ec4d9c7764f5bc23616885d193b79ddb1be139fd010f4b89f143d39dfdcaa6",
       "openrig-operating-model/scripts/compose.py": "332a13580393fd1421f0b498eae51f01243de31ba168a86db52a6251fc4cc384",
       "openrig-operating-model/scripts/scaffold.sh": "873fc78d8581e463079db24cfbdef3228b845c1a4c32e0d631234eacb3094be7",
       "openrig-operating-model/scripts/trace-due.sh": "c56a8b044e624f40972654bc810df623e70303cc5daa4aa06e3ee86b262b7792",

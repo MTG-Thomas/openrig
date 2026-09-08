@@ -9,7 +9,12 @@ import type { Token } from "../theme.js";
 export interface ScopeDropRef { file: string; artifactType: string | null; verdict: string | null; media: string[] }
 export interface ScopeContractItem { index: number; text: string; paired: boolean; drops: ScopeDropRef[] }
 export interface ScopeLocksSnap { spec: { by: string; at: string } | null; delivery: { by: string; at: string } | null }
+export interface ReadinessSnap {
+  configured: boolean; state: string; revision: string;
+  items: Array<{ index: number; text: string; state: string; reason: string; judgment: { id: string } | null }>;
+}
 export interface SliceScopeSnap {
+  readiness?: ReadinessSnap;
   dirName: string;
   id: string | null;
   displayName: string;
@@ -28,6 +33,7 @@ export interface MissionScopesSnap { mission: string; slices: SliceScopeSnap[] }
 
 /** Slice state glyph (mock: ● building/spec · ✓ delivery-locked · ⊙ other/idle). */
 export function sliceGlyph(s: SliceScopeSnap): string {
+  if (s.readiness?.configured) return s.readiness.state === "ready" ? "✓" : "⊙";
   if (s.locks.delivery) return "✓";
   if (s.stage === "building" || s.status === "building" || s.status === "spec") return "●";
   return "⊙";
@@ -36,7 +42,8 @@ export function sliceGlyph(s: SliceScopeSnap): string {
 /** The founder lock-glyph form: `proof: N/M 🔒` ONLY when delivery-locked — no del token,
  *  no unproven suffix; the visible COUNT carries the honesty (4/6 🔒 shows partial). */
 export function proofBadge(s: SliceScopeSnap): string {
-  const base = `proof: ${s.proof.paired}/${s.proof.total}`;
+  if (s.readiness?.configured) return `accepted: ${s.readiness.items.filter(i => i.state === "accepted").length}/${s.readiness.items.length} · ${s.readiness.state}`;
+  const base = `proof: ${s.proof.paired}/${s.proof.total} paired`;
   return s.locks.delivery ? `${base} 🔒` : base;
 }
 
@@ -126,6 +133,9 @@ function wrapped(text: string, width: number, indent: string, token: Token = "br
   ], width));
 }
 
+function itemState(detail: SliceScopeSnap, item: ScopeContractItem): string {
+  return detail.readiness?.configured ? detail.readiness.items.find(i => i.index === item.index)?.state.toUpperCase() ?? "UNKNOWN" : item.paired ? "PAIRED" : "OPEN";
+}
 function proofColumns(detail: SliceScopeSnap, width: number): ContentLine[] {
   const stateW = 8;
   const indexW = 3;
@@ -152,7 +162,9 @@ function proofColumns(detail: SliceScopeSnap, width: number): ContentLine[] {
   for (const item of detail.proofContract) {
     const requirements = wrapText(item.text, requirementW);
     const evidence: Array<{ text: string; token: Token }> = [];
-    if (item.drops.length === 0) evidence.push({ text: "not recorded", token: "warn" });
+    const judgment = detail.readiness?.items.find(i => i.index === item.index);
+    if (judgment?.judgment) evidence.push({ text: `judgment ${judgment.judgment.id.slice(0, 12)}: ${judgment.reason}`, token: judgment.state === "accepted" ? "ok" : "warn" });
+    if (item.drops.length === 0 && !judgment?.judgment) evidence.push({ text: "not recorded", token: "warn" });
     for (const drop of item.drops) {
       evidence.push({ text: `↳ ${(drop.artifactType ?? "drop").toUpperCase()} ${drop.verdict ?? ""}`.trimEnd(), token: drop.verdict === "PASS" || drop.verdict === "CLEAR" ? "ok" : "dim" });
       evidence.push(...wrapText(drop.file, evidenceW).map((text) => ({ text, token: "dim" as Token })));
@@ -161,11 +173,11 @@ function proofColumns(detail: SliceScopeSnap, width: number): ContentLine[] {
     const count = Math.max(requirements.length, evidence.length, 1);
     for (let i = 0; i < count; i += 1) {
       lines.push(column(
-        i === 0 ? (item.paired ? "PROVED" : "OPEN") : "",
+        i === 0 ? itemState(detail, item) : "",
         i === 0 ? String(item.index) : "",
         requirements[i] ?? "",
         evidence[i]?.text ?? "",
-        item.paired ? "ok" : "warn",
+        itemState(detail, item) === "ACCEPTED" ? "ok" : "warn",
         evidence[i]?.token ?? "dim",
       ));
     }
@@ -176,13 +188,16 @@ function proofColumns(detail: SliceScopeSnap, width: number): ContentLine[] {
 function proofStack(detail: SliceScopeSnap, width: number): ContentLine[] {
   const lines: ContentLine[] = [];
   for (const item of detail.proofContract) {
-    const status = item.paired ? "PROVED" : "OPEN";
+    const status = itemState(detail, item);
     lines.push(semantic([
       { text: `  REQ ${item.index} · `, token: "accentBright", bold: true },
-      { text: status, token: item.paired ? "ok" : "warn", bold: true },
+      { text: status, token: status === "ACCEPTED" ? "ok" : "warn", bold: true },
     ], width));
     lines.push(...wrapped(item.text, width, "    "));
+    const judgment = detail.readiness?.items.find(i => i.index === item.index);
+    if (judgment?.judgment) lines.push(...wrapped(`judgment ${judgment.judgment.id.slice(0, 12)}: ${judgment.reason}`, width, "    "));
     if (item.drops.length === 0) {
+      if (judgment?.judgment) continue;
       lines.push(semantic([{ text: "    EVIDENCE · ", token: "dim" }, { text: "not recorded", token: "warn" }], width));
       continue;
     }
@@ -213,7 +228,7 @@ export interface ScopeContentOpts {
 export function scopeIdentityLines(detail: SliceScopeSnap, mission: string | null, width: number): ContentLine[] {
   const lines: ContentLine[] = [];
   const w = Math.max(24, width);
-  const stage = detail.stage ?? detail.status ?? "unknown";
+  const stage = detail.readiness?.configured ? `proof ${detail.readiness.state}` : detail.stage ?? detail.status ?? "unknown";
   const stateToken: Token = /done|established|building|active|spec/i.test(stage) ? "ok" : "dim";
   const proofToken: Token = detail.proof.total > 0 && detail.proof.paired === detail.proof.total ? "ok" : "warn";
   const locks = `${detail.locks.spec ? "spec locked" : "spec open"} · ${detail.locks.delivery ? "delivery locked" : "delivery open"}`;
@@ -244,6 +259,7 @@ export function scopeIdentityLines(detail: SliceScopeSnap, mission: string | nul
       { text: "LOCKS ", token: "dim" }, { text: locks, token: detail.locks.delivery ? "ok" : "bright" },
     ], w));
   }
+  if (detail.readiness?.configured) lines.push({ text: `  judgment basis ${detail.readiness.revision.slice(0, 12)} · publication is separate` });
   const provenance = [
     detail.specShaShort ? `spec ${detail.specShaShort}` : "spec sha unknown",
     detail.locks.spec ? `${detail.locks.spec.at.slice(5, 10)} ${detail.locks.spec.by.split("@")[0]}` : "unlocked",

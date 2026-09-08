@@ -343,6 +343,7 @@ export interface ComposedFleet {
  *  always composes, degrading to a muted "—" line when its source is absent —
  *  never invented, never blocking. */
 export interface ComposedSliceReview {
+  readiness?: import("../proof/judgments.js").ScopeReadiness;
   slice: string;
   sliceId: string | null;
   title: string;
@@ -408,6 +409,7 @@ export interface LedgerRow {
 }
 
 export interface ComposedMissionReview {
+  readiness?: import("../proof/judgments.js").MissionReadiness;
   mission: string;
   missionId: string | null;
   title: string;

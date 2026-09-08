@@ -43,6 +43,7 @@ import {
   composeDelivered,
   parseLogicalCheckboxes,
 } from "../review/compose.js";
+import { readSliceReadiness, type ScopeReadiness } from "../proof/judgments.js";
 import { readProofArtifacts } from "../review/proof-io.js";
 import { isNodeFile, resolveNodeFile } from "../scope/node-file.js";
 import {
@@ -174,6 +175,7 @@ export interface WorkflowBindingPayload {
 }
 
 export interface SliceDetailPayload {
+  readiness: ScopeReadiness;
   name: string;
   missionId: string | null;
   slicePath: string;
@@ -234,7 +236,9 @@ export class SliceDetailProjector {
       : null;
     const trailQitemToStep = binding ? this.buildTrailQitemToStepMap(binding.instanceId) : new Map<string, string>();
 
+    const readiness = readSliceReadiness(slice.slicePath);
     return {
+      readiness,
       name: slice.name,
       missionId: slice.missionId,
       slicePath: slice.slicePath,
@@ -262,7 +266,7 @@ export class SliceDetailProjector {
         phaseDefinitions: spec ? projectPhaseDefinitions(spec) : null,
       },
       acceptance: {
-        ...this.buildAcceptance(slice),
+        ...this.buildAcceptance(slice, readiness),
         currentStep: spec && binding
           ? projectCurrentStep(spec, binding.currentStepId, binding.hopCount, binding.status)
           : null,
@@ -470,7 +474,7 @@ export class SliceDetailProjector {
 
   // --- Acceptance tab ---
 
-  private buildAcceptance(slice: SliceRecord): Omit<AcceptancePayload, "currentStep"> {
+  private buildAcceptance(slice: SliceRecord, readiness: ScopeReadiness): Omit<AcceptancePayload, "currentStep"> {
     const items: AcceptanceItem[] = [];
     // Parse README + IMPLEMENTATION-PRD + PROGRESS.md for [ ]/[x] checkbox lines.
     // Source citation = file + 1-based line number so the operator can jump.
@@ -549,7 +553,7 @@ export class SliceDetailProjector {
       progressRows.length === GENERIC_SCAFFOLD_ACCEPTANCE.length &&
       progressRows.every((i) => !i.done) &&
       GENERIC_SCAFFOLD_ACCEPTANCE.every((lit) => progressRows.some((i) => i.text === lit));
-    const finalItems = pristineTriple
+    let finalItems = pristineTriple
       ? deduped.filter((i) => i.source.file !== "PROGRESS.md")
       : deduped;
     // VM-006 (progress-review-done-coherence): union the done-state for
@@ -626,10 +630,14 @@ export class SliceDetailProjector {
         if (item.done && item.doneVia === undefined) item.doneVia = "checkbox";
       }
     }
+    if (readiness.configured) {
+      // Current acceptance is the selected contract. Other checkbox rows remain historical sources.
+      finalItems = readiness.items.map(item => ({ text: item.text, done: !readiness.issues.length && item.state === "accepted", source: item.source }));
+    }
     const total = finalItems.length;
     const done = finalItems.filter((i) => i.done).length;
     const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-    const closureCallout = slice.status === "done"
+    const closureCallout = readiness.configured ? `Current proof readiness: ${readiness.state} · ${readiness.revision.slice(0, 12)}` : slice.status === "done"
       ? `Goal Met (status: ${slice.rawStatus ?? "done"})`
       : null;
     return {

@@ -16,9 +16,8 @@ metadata:
 
 **Canonical term: the Operating Model.** How an OpenRig topology organizes every
 kind of context so that any agent — cold, fresh, or five generations in — can
-find what it needs and knows where to write what it learns. Everything below
-runs on **markdown files, scripts, and conventions only**; the `rig` verbs that
-formalize pieces of it are conveniences, never dependencies.
+find what it needs and knows where to write what it learns. Authored context stays in addressed Markdown and manifests. Supported writers
+record semantic judgments; their read models remain rebuildable from those artifacts.
 
 This skill owns the structure: trees, chains, tracing, and placement of authored
 knowledge. Resolve installed context through its current library addresses and
@@ -91,7 +90,8 @@ its body. Alongside it sit three files with different jobs and different writers
 | `SPEC.md` | the node — `intent:` composes, body specifies | the node's owner |
 | `NOTES.md` | **LIVED** — what actually happened doing it, in the doer's own words | whoever is doing it |
 | `PROOF.md` | evidence the thing does what was intended | the prover |
-| `PROGRESS.md` | authored acceptance checklist — each checkbox is a stored mark; roll-ups above those marks are derived | the scope's owner and provers |
+| `PROGRESS.md` | authored narrative and historical checklist marks; current proof readiness is derived from attributed judgments | the scope's owner and provers |
+| `proof/judgments/` | retained item judgment receipts written by `rig proof judge` | judges selected by the owning proof policy |
 
 **A scaffold may create `NOTES.md` and its starter instructions; its lived entries are never
 generated or projected.** It is the work tree's lived file, the way `LEARNED.md` is the topology
@@ -104,14 +104,31 @@ content addressable; use `NOTES.md` for the chain because its name works at ever
 | Level | `SPEC.md` — frontmatter `intent:` (why) + body (what must be built) | progress | kept true by |
 |---|---|---|---|
 | project | `intent:` only — stable, changes at real pivots | derived roll-up | the project's PM |
-| mission | `intent:` and proportional mission-level specification; organizes slices | authored checklist marks; roll-up derived | the mission's PM |
-| slice | `intent:` and the concrete slice specification | authored checklist marks; roll-up derived | the slice's owner |
-| proof item | *(inherits)* | **the checkbox — the stored acceptance mark** | the prover |
+| mission | `intent:` and proportional mission-level specification; organizes slices | derived child readiness; distinct outcome judgment | the mission's PM |
+| slice | `intent:` and the concrete slice specification | derived proof readiness | the slice's owner |
+| proof item | authored promise in the proof contract | attributed evidence-backed judgment on that revision | the selected judge |
 
-**Progress checklists:** Checkbox items stored in a mission or slice
-`PROGRESS.md` are authored acceptance marks. In-process task tracking stays in the agent's own todo
-tool. Everything that rolls those marks up above the managed checklist is derived at render time,
-so authored checklists and the never-author-a-derived-roll-up rule are the same model.
+**Current acceptance:** Scope relationships and policy are authored in manifests; an item
+judgment is recorded once against its promise, evidence and policy revision. Slice, mission
+and project readiness derive upward. A distinct outcome or publication decision remains its
+own authority. Queue ownership and generic `done` are custody facts, not proof acceptance.
+Historical checkbox marks stay readable without acquiring current item authority.
+
+Use `rig proof --help` for the supported write/read path. The project owner selects
+`proofPolicy.judges` in `project.yaml`, `mission.yaml` or `slice.yaml` (nearest wins),
+using exact actor addresses. There is no implicit fixed-role review conveyor.
+`rig proof judge mission/slices/slice#1 --verdict accept --reason 'Observed the outcome' --evidence proof/result.md`
+resolves the item identity, revision, evidence digests and retry identity. Evidence may be
+an existing legacy artifact or a non-code outcome. A patch-equivalent subject also names
+its actual comparison/adoption receipt with `--comparison`; the agent owns that judgment.
+`rig proof show` returns the current basis and retained receipt; it does not publish anything.
+
+Correct with `reject`, or `withdraw` when prior acceptance no longer stands. History stays
+in the addressed proof home. A repeated request returns its original receipt and current
+readiness; `--replace` deliberately reaffirms an old identical judgment after a correction.
+Changed promises, policy or evidence require a current judgment. Explicit optional
+`<!-- proof-item: stable-id -->` markers preserve identity across wording edits; the
+product otherwise derives identity from the full promise and reports ambiguity.
 
 **Intent composes; the body does not.** The trace reads the `intent:` FIELD at every altitude, so
 four levels unfurl as four sentences rather than four documents. The body is read only when you
@@ -125,17 +142,11 @@ real information, never silently skipped.
 **Legacy `README.md` nodes stay valid indefinitely** — the resolver prefers `SPEC.md` and falls
 back, so nothing is forced to migrate and dormant missions need no attention.
 
-**PROGRESS stays separate.** Its checklist items are authored stored marks; everything above those
-marks renders from them. Folding a derived roll-up into an authored file is how a stored derivation
-becomes a confident lie.
-
-Two directions on the same trees: intent/values/practice **compose downward**
-(you trace UP to read them); progress **aggregates upward** (never hand-written
-above the stored marks). **And PROGRESS above the managed checklist is a RENDER, not a
-file**: the checkbox is the stored acceptance mark;
-`scripts/compose.py progress` derives the roll-up tree at render time. Keep legacy
-embedded roll-ups as historical records when needed, but derive the current view
-from its marks rather than maintaining another copy by hand.
+**PROGRESS stays separate.** Narrative and legacy marks are retained testimony. For a
+project with selected proof policy, current readiness comes from `rig proof show` and the
+shared existing views, not hand-maintained parent checkboxes or copied status prose.
+`scripts/compose.py progress` remains a legacy checklist renderer; it does not certify
+attributed acceptance. Intent composes downward; proof readiness aggregates upward.
 
 **The axis behind the columns:** every context kind has a *template* half
 (what ships — SOP, the default culture) and a *learned* half (what living

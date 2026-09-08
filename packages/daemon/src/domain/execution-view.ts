@@ -1,3 +1,4 @@
+import { readMissionReadiness, readProjectReadiness } from "./proof/judgments.js";
 import { lifecycleObligations, requiredLifecycleSteps } from "./lifecycle-obligations.js";
 import { QueueWakeRepository } from "./queue-wake-repository.js";
 // S27 (OPR.0.5.6.27) — the execution view: one JSON document answering the six
@@ -1084,6 +1085,13 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
       dfMargin = { available_kib: INDETERMINATE, path: dfPath, basis: "statfs failed" };
     }
   }
+  const readiness = missionsRoot && mission !== INDETERMINATE ? readMissionReadiness(path.join(missionsRoot, mission)) : null;
+  for (const sequenced of q2) {
+    const derived = readiness?.slices.find(s => s.scope === sequenced.dir);
+    if (!derived?.readiness.configured) continue;
+    sequenced.next_up = derived.eligible === null ? INDETERMINATE : derived.eligible && derived.readiness.state !== "ready";
+    sequenced.next_up_basis = `Attributed proof readiness ${readiness!.revision}; dependency eligibility ${derived.eligible}`;
+  }
   const q6 = {
     lanes_live: lanes.length,
     lanes_possible: q2.filter((s) => s.next_up === true).length,
@@ -1096,6 +1104,8 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
 
   return {
     view: "execution",
+    readiness,
+    project_readiness: missionsRoot ? readProjectReadiness(missionsRoot) : null,
     mission,
     derived_at: derivedAt,
     sources: {

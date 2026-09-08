@@ -71,7 +71,7 @@ export class DaemonClient {
   }
 
   private async get(route: string): Promise<unknown> {
-    const res = await this.fetchImpl(`${this.baseUrl}${route}`);
+    const res = await this.fetchImpl(`${this.baseUrl}${route}`, { signal: AbortSignal.timeout(5_000) });
     if (!res.ok) throw new Error(`daemon read failed: GET ${route} → ${res.status}`);
     return res.json();
   }

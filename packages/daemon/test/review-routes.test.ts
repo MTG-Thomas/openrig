@@ -118,7 +118,7 @@ describe("GET /api/review/*", () => {
       evidences: ["1"],
       selfCheck: "watched it against the mockup",
       fileName: "qa-2.md",
-      mtime: new Date("2026-07-04T11:00:00Z"),
+      mtime: new Date(Date.now() + 1000), // comparison deliberately later than the captured gate set
       body: "Comparison record.\n\n![phone journey](phone-journey.png)\n",
     });
 
@@ -138,7 +138,7 @@ describe("GET /api/review/*", () => {
     expect(body.delivered.items[0]).toMatchObject({
       promised: { text: "phone video" },
       verified: "verified",
-      note: "watched it against the mockup",
+      note: "Legacy recorded verification (item revision unbound). watched it against the mockup",
     });
     expect(body.delivered.items[0].proof).toEqual([
       { kind: "image", src: "proof/phone-journey.png", caption: "phone-journey.png" },
@@ -273,7 +273,7 @@ describe("GET /api/review/*", () => {
       artifactType: "qa",
       verdict: "PASS",
       fileName: "z-new.md",
-      mtime: new Date("2026-07-04T11:00:00Z"),
+      mtime: new Date(Date.now() + 1000), // comparison deliberately later than the captured gate set
     });
 
     const indexer = new SliceIndexer({ slicesRoot: ws.root, additionalSliceRoots: [], dogfoodEvidenceRoot: null, db });

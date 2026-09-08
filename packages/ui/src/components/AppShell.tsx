@@ -439,7 +439,7 @@ function AppShellInner({ children }: AppShellProps) {
   }, [isWideLayout, pathname]);
 
   // Mount global SSE event listener.
-  useGlobalEvents();
+  const proofConnection = useGlobalEvents();
 
   const explorerVisible = surface !== "none";
   // Slice 26.D OPT-D3 Topology mobile mount-suppression: rule lives
@@ -629,6 +629,7 @@ function AppShellInner({ children }: AppShellProps) {
                   paddingLeft: `var(--workspace-left-offset, 0px)`,
                 }}
               >
+                {!proofConnection.connected && <p role="status" className="px-4 py-1 text-sm">Live updates unavailable. Displayed readiness is the last confirmed basis; quiet refresh is active.</p>}
                 {/* Reset the workspace offset CSS vars to 0 inside main so that
                     legacy children (e.g., LiveNodeDetails → WorkspacePage which
                     also reads var(--workspace-left-offset) for its own padding)

@@ -376,6 +376,7 @@ export async function startServer(port?: number) {
         if (retentionTimer) clearInterval(retentionTimer);
         if (stuckSweepTimer) clearInterval(stuckSweepTimer);
       }],
+      ["proof-source-watch", () => deps.proofSourceWatch?.close()],
       ["health-diagnosis", () => deps.healthDiagnosis?.stop()],
       ["watchdog", () => deps.watchdogScheduler?.stop()],
       ["seat-activity", () => deps.seatActivityService?.stop()],

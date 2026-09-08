@@ -1,7 +1,8 @@
 import type { MissionStatus } from "../components/MissionStatusBadge.js";
-import type { SliceListEntry } from "../hooks/useSlices.js";
+import type { SliceListEntry, ProofReadiness } from "../hooks/useSlices.js";
 
 export type ProjectSliceRow = {
+  readiness?: ProofReadiness;
   name: string;
   displayName: string;
   status: string;
@@ -35,7 +36,8 @@ export function projectSliceFromListEntry(slice: SliceListEntry): ProjectSliceRo
   return {
     name: slice.name,
     displayName: slice.displayName,
-    status: slice.status,
+    readiness: slice.readiness,
+    status: slice.readiness?.configured ? `proof ${slice.readiness.state}` : slice.status,
     rawStatus: slice.rawStatus,
     qitemCount: slice.qitemCount,
     hasProofPacket: slice.hasProofPacket,
@@ -56,6 +58,7 @@ export function isRecentProjectActivity(
 }
 
 export function isCurrentProjectSlice(slice: ProjectSliceRow, now = Date.now()): boolean {
+  if (slice.readiness?.configured) return true;
   if (slice.qitemCount > 0) return true;
   if (slice.status === "blocked") return true;
   if (slice.status === "active" || slice.status === "draft") {
@@ -120,7 +123,12 @@ export function reconcileMissionStatus(
   authored: string | null,
   slices: ProjectSliceRow[],
   now = Date.now(),
+  readiness?: ProofReadiness,
 ): ReconciledMissionStatus {
+  if (readiness && slices.some(s => s.readiness?.configured)) {
+    const declared = readiness.historicalStatus ?? authored;
+    return { state: declared ? normalizeAuthored(declared).state : "active", label: `${declared ? `declared ${declared} · ` : ""}proof ${readiness.state}`, source: declared ? "authored" : "derived" };
+  }
   if (authored !== null && authored.trim().length > 0) {
     const { state, label } = normalizeAuthored(authored);
     return { state, label, source: "authored" };

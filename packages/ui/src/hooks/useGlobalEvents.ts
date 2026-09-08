@@ -1,22 +1,29 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { subscribeTopologyEvents } from "../lib/topology-events.js";
+import { subscribeTopologyEventStatus, subscribeTopologyEvents } from "../lib/topology-events.js";
 
 /**
  * Global event listener. Subscribes to the shared /api/events hub and
  * invalidates relevant queries when state-changing events arrive.
  * Mounted once in AppShell.
  */
-export function useGlobalEvents(): void {
+export function useGlobalEvents(): { connected: boolean } {
+  const [connected, setConnected] = useState(false);
   const queryClient = useQueryClient();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const pendingInvalidations = new Set<string>();
 
+    const unsubscribeStatus = subscribeTopologyEventStatus(status => {
+      setConnected(status.connected);
+      if (status.connected) for (const key of ["review", "slices", "mission"]) void queryClient.invalidateQueries({ queryKey: [key] });
+    });
     const unsubscribe = subscribeTopologyEvents((parsed) => {
       const { type, rigId } = parsed;
       if (!type) return;
+
+      if (type.startsWith("proof.")) for (const key of ["review", "slices", "mission"]) void queryClient.invalidateQueries({ queryKey: [key] });
 
       // Collect affected query keys
       if (type.startsWith("node.startup_") && rigId) {
@@ -68,7 +75,9 @@ export function useGlobalEvents(): void {
 
         // Flush all pending invalidations
         for (const key of pendingInvalidations) {
-          if (key === "rigs:summary") {
+          if (["review", "slices", "mission"].includes(key)) {
+            void queryClient.invalidateQueries({ queryKey: [key] });
+          } else if (key === "rigs:summary") {
             queryClient.invalidateQueries({ queryKey: ["rigs", "summary"] });
           } else if (key === "rigs:summary:archived") {
             // OPR.0.3.3.19: the Archive section's archived-only query (see
@@ -89,10 +98,12 @@ export function useGlobalEvents(): void {
 
     return () => {
       unsubscribe();
+      unsubscribeStatus();
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
         debounceRef.current = null;
       }
     };
   }, [queryClient]);
+  return { connected };
 }

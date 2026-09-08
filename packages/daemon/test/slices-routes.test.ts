@@ -156,7 +156,7 @@ describe("PL-slice-story-view-v0 slices routes", () => {
       const body = (await res.json()) as Record<string, unknown>;
       expect(Object.keys(body).sort()).toEqual([
         "acceptance", "commitRefs", "decisions", "displayName", "docs",
-        "lastActivityAt", "missionId", "name", "qitemIds", "railItem", "rawStatus",
+        "lastActivityAt", "missionId", "name", "qitemIds", "railItem", "rawStatus", "readiness",
         "slicePath", "status", "story", "tests", "topology", "workflowBinding",
       ]);
       const acc = (body.acceptance as { totalItems: number; doneItems: number; percentage: number });

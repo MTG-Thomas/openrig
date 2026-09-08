@@ -56,7 +56,7 @@ export function AcceptanceTab({ acceptance }: { acceptance: SliceDetail["accepta
         {closureCallout && (
           <div
             data-testid="acceptance-closure-callout"
-            className="mt-3 border border-emerald-300 bg-emerald-50 px-3 py-2 font-mono text-[10px] text-emerald-900"
+            className="mt-3 border border-outline-variant bg-surface-low px-3 py-2 font-mono text-[10px] text-on-surface"
           >
             {closureCallout}
           </div>

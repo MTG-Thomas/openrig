@@ -20,6 +20,7 @@ import { wrapDetailLines, detailPage, listItem, sectionRule, type ContentLine, t
 import { scopeContractLines, scopeIdentityLines, type MissionScopesSnap, type SliceScopeSnap } from "../scopes/scopes-model.js";
 
 export interface ExecutionViewSnap {
+  readiness?: { revision: string; state: string; slices: Array<{ scope: string; readiness: import("../scopes/scopes-model.js").ReadinessSnap }> };
   view: "execution";
   mission: string;
   derived_at?: string;
@@ -443,14 +444,15 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
   const build = shortSha(record(execution.sources?.["build_info"])["commit"]);
   const now = slices.filter((slice) => stateWord(slice) === "working").map((slice) => slice.id);
   const needsHuman = slices.filter((slice) => problemText(slice));
-  const done = slices.filter((slice) => declaredText(slice) === "done").length;
+  const attributed = execution.readiness?.slices.some(s => s.readiness.configured) === true;
+  const done = attributed ? execution.readiness!.slices.filter(s => s.readiness.state === "ready").length : slices.filter((slice) => declaredText(slice) === "done").length;
   const next = slices.find((slice) => nextText(slice) === "ready to start");
   const unknown = slices.filter((slice) => RUNGS.some((rung) => slice.cells[rung].state === "undetermined")).length;
-  const missionState = problems > 0 ? "NEEDS ATTENTION" : live > 0 ? "ACTIVE" : done === slices.length && slices.length > 0 ? "COMPLETE" : "QUIET";
+  const missionState = attributed ? `PROOF ${execution.readiness!.state.toUpperCase()}` : problems > 0 ? "NEEDS ATTENTION" : live > 0 ? "ACTIVE" : done === slices.length && slices.length > 0 ? "COMPLETE" : "QUIET";
   const missionToken: Token = problems > 0 ? "warn" : live > 0 || missionState === "COMPLETE" ? "ok" : "dim";
   const nowText = now.length ? now.join(", ") : "no live slice";
   const nextValue = next ? `${next.id} · ready to start` : "no sequenced next transition";
-  const progress = `${done}/${slices.length} declared done · ${live} working${problems ? ` · ${problems} with a problem` : ""}`;
+  const progress = `${done}/${slices.length} ${attributed ? "proof ready" : "declared done"} · ${live} working${problems ? ` · ${problems} with a problem` : ""}`;
   const fact = (label: string, value: string, token: Token): ContentLine => semantic([
     { text: `  ${label.padEnd(10)}`, token: "dim", bold: true },
     { text: value, token },

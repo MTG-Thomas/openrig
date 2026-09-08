@@ -417,7 +417,7 @@ describe("founder live-QA correction — slice information architecture", () => 
       if (cols > 84) {
         expect(body).toMatch(/STATE\s+#\s+REQUIREMENT\s+EVIDENCE/);
       } else {
-        expect(body).toContain("REQ 1 · PROVED");
+        expect(body).toContain("REQ 1 · PAIRED");
         expect(body).toContain("EVIDENCE");
       }
       expect(body).toContain("mission-84x28.ansi");

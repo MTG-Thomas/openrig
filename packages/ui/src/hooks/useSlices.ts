@@ -13,7 +13,10 @@ import { useSelectedHostId } from "./useHosts.js";
 export type SliceStatus = "active" | "done" | "blocked" | "draft";
 export type SliceFilter = "all" | "active" | "done" | "blocked";
 
+export interface ProofReadiness { state: string; revision: string; configured?: boolean; historicalStatus?: string | null; slices?: Array<{ readiness: { configured: boolean } }> }
+
 export interface SliceListEntry {
+  readiness?: ProofReadiness;
   name: string;
   missionId: string | null;
   displayName: string;
@@ -42,7 +45,7 @@ export interface SliceListResponse {
    *  the raw README frontmatter `status:` (null when absent). Chip surfaces
    *  feed it to reconcileMissionStatus so authored-wins precedence holds
    *  without a second round-trip. Optional: older daemons omit it. */
-  missions?: Record<string, { authoredStatus: string | null }>;
+  missions?: Record<string, { authoredStatus: string | null; readiness?: ProofReadiness }>;
   // Workflows in Spec Library v0 — present only when boundToWorkflow filter applied.
   boundToWorkflow?: {
     specName: string;
@@ -78,7 +81,7 @@ async function fetchSlicesList(
   }
   // OPR.0.4.6.MH2 FR-2 — selected-host envelope; origin shape verbatim;
   // local path unchanged (withHostParam is identity for local).
-  const res = await fetch(withHostParam(`/api/slices?${params.toString()}`, hostId));
+  const res = await fetch(withHostParam(`/api/slices?${params.toString()}`, hostId), { signal: AbortSignal.timeout(5_000) });
   if (res.status === 503) {
     const body = (await res.json().catch(() => ({}))) as Partial<SlicesUnavailable> & { error?: string; hint?: string };
     return {
@@ -103,6 +106,7 @@ export function useSlices(filter: SliceFilter, boundToWorkflow: BoundToWorkflowF
     ],
     queryFn: () => fetchSlicesList(filter, boundToWorkflow, hostId),
     staleTime: 30_000,
+    refetchInterval: 30_000,
     placeholderData: keepPreviousData,
     // V0.3.1 slice 17 walk-item 8 (Explorer auto-show): refetch on
     // window focus so an operator who switches away to `mkdir slices/...`
@@ -250,6 +254,7 @@ export interface TopologyRigEntry {
 }
 
 export interface SliceDetail {
+  readiness?: ProofReadiness;
   name: string;
   missionId: string | null;
   slicePath: string;
@@ -293,7 +298,7 @@ export interface SliceDetail {
 
 async function fetchSliceDetail(name: string, hostId: string): Promise<SliceDetail> {
   // OPR.0.4.6.MH2 FR-2 — selected-host envelope; origin shape verbatim.
-  const res = await fetch(withHostParam(`/api/slices/${encodeURIComponent(name)}`, hostId));
+  const res = await fetch(withHostParam(`/api/slices/${encodeURIComponent(name)}`, hostId), { signal: AbortSignal.timeout(5_000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as SliceDetail;
 }
@@ -305,6 +310,7 @@ export function useSliceDetail(name: string | null) {
     queryFn: () => fetchSliceDetail(name!, hostId),
     enabled: !!name,
     staleTime: 30_000,
+    refetchInterval: 30_000,
     placeholderData: keepPreviousData,
   });
 }
@@ -326,6 +332,7 @@ export function useSliceDetails(names: string[]): SliceDetailsMapResult {
       queryKey: ["slices", "detail", name, hostId],
       queryFn: () => fetchSliceDetail(name, hostId),
       staleTime: 30_000,
+      refetchInterval: 30_000,
     })),
   });
 

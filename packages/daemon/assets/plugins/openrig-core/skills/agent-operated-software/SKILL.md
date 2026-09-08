@@ -72,10 +72,13 @@ Consumers fail closed on the shared proof. A filename or exit code is not conten
 
 ## Build with an agent SDLC
 
-Map work onto **intent -> plan -> spec -> build -> verify -> review -> QA -> done**. The human supplies
-steering, judgment, taste, and the call on irreversible ambiguity; agents perform and coordinate the
-technical work. Locks freeze the agreed spec and accepted delivery so multiple seats can work without
-guessing whether the target moved.
+Select the rigor required by the outcome and the project's policy. Scope relationships,
+attributed evidence-backed item judgment, and genuinely distinct higher judgment have separate
+owners. One item judgment derives its upstream readiness; agents do not synchronize parent
+checkboxes, queue tags, or status prose. Capture alone is not acceptance, and readiness does not
+publish or advance a workflow. Use `openrig-operating-model` and `rig proof --help` for the
+supported judgment, correction, and read path. Keep historical locks and evidence addressable.
+The human supplies steering, taste, and decisions the project's authority reserves for them.
 
 For studio applications, the running product is usually the best iteration surface. A separate mockup
 earns its cost only when it resolves a real design uncertainty that the running app cannot expose as

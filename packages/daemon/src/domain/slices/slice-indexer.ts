@@ -271,6 +271,7 @@ export class SliceIndexer {
   private membershipIndex: MembershipIndex | null = null;
   // qitem-ccf87c0d corrective — depth of open withMembershipBatch scopes.
   private batchDepth = 0;
+  private compositionBasis: string | null = null;
   // VM-005: authored mission-status sidecar cache (same TTL as the listing).
   private missionStatusCache: {
     statuses: Record<string, { authoredStatus: string | null }>;
@@ -308,6 +309,7 @@ export class SliceIndexer {
    *     conditional on depth === 0).
    *  Synchronous by design — matches the synchronous list/get call graph. */
   withMembershipBatch<T>(fn: () => T): T {
+    if (this.batchDepth === 0) this.reconcileComposition();
     if (this.batchDepth === 0) this.membershipIndex = null;
     this.batchDepth++;
     try {
@@ -397,6 +399,7 @@ export class SliceIndexer {
 
   list(): SliceListEntry[] {
     if (!this.isReady()) return [];
+    if (this.batchDepth === 0) this.reconcileComposition();
     const now = Date.now();
     if (this.listingCache && this.listingCache.expiresAt > now) {
       return this.listingCache.entries;
@@ -419,6 +422,7 @@ export class SliceIndexer {
 
   get(name: string): SliceRecord | null {
     if (!this.isReady()) return null;
+    if (this.batchDepth === 0) this.reconcileComposition();
     const now = Date.now();
     const cached = this.detailCache.get(name);
     if (cached && cached.expiresAt > now) {
@@ -441,6 +445,23 @@ export class SliceIndexer {
     }
     this.detailCache.set(name, { record, expiresAt: now + this.cacheTtlMs });
     return record;
+  }
+
+  // Quiet reconciliation must notice new native membership before the legacy metadata TTL.
+  // This is a cache key over authored bytes and directory entries, not another scope parser.
+  private reconcileComposition(): void {
+    const rows = this.sliceRoots().flatMap(root => {
+      if (!fs.existsSync(root)) return [];
+      return fs.readdirSync(root, { withFileTypes: true }).filter(e => e.isDirectory()).flatMap(entry => {
+        const mission = path.join(root, entry.name), manifest = path.join(mission, "mission.yaml");
+        if (!fs.existsSync(manifest)) return [];
+        const children = path.join(mission, "slices");
+        return [[manifest, fs.readFileSync(manifest, "utf8"), fs.existsSync(children) ? fs.readdirSync(children).sort() : []]];
+      });
+    });
+    const next = JSON.stringify(rows);
+    if (this.compositionBasis !== null && this.compositionBasis !== next) this.invalidate();
+    this.compositionBasis = next;
   }
 
   // --- internals ---

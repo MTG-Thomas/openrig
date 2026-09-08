@@ -1,3 +1,4 @@
+import { readMissionReadiness, type MissionReadiness } from "./proof/judgments.js";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -25,6 +26,7 @@ export interface LifecycleGraphSource {
 }
 
 export interface LifecycleCompilation {
+  readiness: MissionReadiness;
   version: 1;
   eligible: boolean;
   identity: {
@@ -225,6 +227,7 @@ export function compileProjectLifecycle(input: {
   }
   if (unknowns.length > 0) advisories.push("Compilation is inspectable but ineligible for instantiation until every named unknown is resolved.");
   return {
+    readiness: readMissionReadiness(missionDir),
     version: 1,
     eligible: workflowSpec !== null && unknowns.length === 0,
     identity: { project: projectId, mission: missionName, lifecycleProfile },

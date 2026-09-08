@@ -54,7 +54,7 @@ describe("scopes view (store-direct render, v4 mock contract)", () => {
     expect(out).toContain("── REQUIREMENTS (2)");
     expect(out).toContain("── PROOF · 2/9 paired");
     expect(out).toMatch(/STATE\s+#\s+REQUIREMENT\s+EVIDENCE/);
-    expect(out).toMatch(/PROVED\s+1\s+The ack-after-delivery repair/);
+    expect(out).toMatch(/PAIRED\s+1\s+The ack-after-delivery repair/);
     expect(out).toMatch(/OPEN\s+2\s+A registered entity/);
     expect(out).toContain("↳ QA PASS");
     expect(out).toContain("qa-relay.md");
@@ -64,9 +64,9 @@ describe("scopes view (store-direct render, v4 mock contract)", () => {
   it("the founder lock-glyph form: 🔒 renders ONLY when delivery-locked; the count carries the honesty", () => {
     const snap = demoSnapshot();
     const cc = snap.scopes![0]!.slices.find((s) => s.dirName === "crash-cart")!;
-    expect(proofBadge(cc)).toBe("proof: 4/4 🔒");
+    expect(proofBadge(cc)).toBe("proof: 4/4 paired 🔒");
     const gm = snap.scopes![0]!.slices.find((s) => s.dirName === "gateway-m1")!;
-    expect(proofBadge(gm)).toBe("proof: 2/9"); // no del token, no unproven suffix — the count speaks
+    expect(proofBadge(gm)).toBe("proof: 2/9 paired"); // no del token, no unproven suffix — the count speaks
   });
 
   it("m collapses mini-requirements; n shows PROGRESS.md as narrative DISPLAY (never feeding counts)", () => {

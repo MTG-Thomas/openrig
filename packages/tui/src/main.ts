@@ -105,7 +105,7 @@ async function run(): Promise<void> {
   // daemon client (one oracle, with the owner's bounded quiet fallback; HTTP stays
   // in the client module).
   const activityEvents = live && client
-    ? subscribeActivityEvents({ open: () => client.openActivityEvents(), onEvent: () => { void live.refresh(); } })
+    ? subscribeActivityEvents({ open: () => client.openActivityEvents(), onEvent: (event) => { if (event.type.startsWith("proof.")) reviewCache.clear(); void live.invalidate(); }, onStatus: (status) => live.connectionStatus(status) })
     : null;
 
   function draw(): void {

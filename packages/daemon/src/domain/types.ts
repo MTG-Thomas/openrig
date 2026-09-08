@@ -103,6 +103,7 @@ export interface Session {
 // -- Event types --
 
 export type RigEvent =
+  | { type: "proof.judged" | "proof.sources_changed"; scope: string; revision: string }
   | { type: "event.delivery_poisoned"; poisonedSeq: number; error: string; payloadSha: string }
   | { type: "rig.created"; rigId: string }
   // B8 / slice-07 A3 — the durable model-divergence proclamation record: effective vs pinned at the

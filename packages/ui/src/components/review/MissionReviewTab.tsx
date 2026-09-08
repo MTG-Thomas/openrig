@@ -98,13 +98,13 @@ function BoardRowExpansion({ slot }: { slot: BoardSlot }) {
                           : "font-mono text-[10px] uppercase text-amber-700 dark:text-amber-400"
                     }
                   >
-                    {it.verified === "verified" ? "✓ QA-verified" : it.verified === "missing" ? "✗ missing" : "◇ unverified"}
+                    {it.verified === "verified" ? (d.readiness?.configured ? "✓ accepted" : "✓ legacy QA-verified") : it.verified === "missing" ? "✗ missing" : "◇ unverified"}
                   </span>
                 </li>
               ))}
             </ul>
             <p className="mt-1 font-mono text-[10px] text-on-surface-variant">
-              {verifiedCounts["verified"] ?? 0}/{d.delivered.items.length} QA-verified · full pairing on the slice page
+              {verifiedCounts["verified"] ?? 0}/{d.delivered.items.length} {d.readiness?.configured ? "accepted" : "legacy QA-verified"} · full pairing on the slice page
             </p>
           </>
         )}
@@ -310,6 +310,7 @@ export function MissionReviewTab({ missionId }: { missionId: string }) {
 
   return (
     <div data-testid="mission-review-tab" className="space-y-5">
+      {data.readiness && <p role="status" data-testid="proof-readiness">Proof readiness: {review.updatesUnavailable ? "source updates unavailable; last confirmed state " + data.readiness.state : review.basisInvalidated ? "change observed; confirming current basis" : data.readiness.state} · last confirmed {data.readiness.revision.slice(0, 12)} · publication is separate</p>}
       {/* FR-8: the brief's What & why — the founder's words, verbatim, never edited. */}
       {data.intent ? (
         <section data-testid="mission-intent" className="border border-outline-variant p-3">

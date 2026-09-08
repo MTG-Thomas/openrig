@@ -15,6 +15,7 @@
 // avoid `/proof-asset` being parsed as a slice-name.
 
 import { Hono } from "hono";
+import { readSliceReadiness, readProjectReadiness } from "../domain/proof/judgments.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { SliceIndexer, SliceListEntry, SliceStatus } from "../domain/slices/slice-indexer.js";
@@ -92,15 +93,20 @@ export function slicesRoutes(): Hono {
       // Sort by lastActivityAt DESC (most recently touched first); slices
       // without activity sort to the end.
       filtered.sort(compareByActivityDesc);
+      const authored = deps.indexer.missionAuthoredStatuses();
       return c.json({
-        slices: filtered,
+        slices: filtered.map(s => ({ ...s, readiness: readSliceReadiness(s.slicePath) })),
         totalCount: filtered.length,
         filter,
         boundToWorkflow: boundDiagnostic,
         // VM-005 (release-0.4.7): additive authored mission-status sidecar so
         // chip surfaces can honor authored-wins precedence without a second
         // round-trip. The `slices` array itself is byte-untouched.
-        missions: deps.indexer.missionAuthoredStatuses(),
+        missions: { ...authored, ...Object.fromEntries(readProjectReadiness(deps.indexer.slicesRoot).missions.map(m => [m.name, {
+          ...authored[m.name],
+          authoredStatus: m.historicalStatus ?? authored[m.name]?.authoredStatus ?? null,
+          readiness: m,
+        }])) },
       });
     });
   });

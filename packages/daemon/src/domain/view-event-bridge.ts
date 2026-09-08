@@ -43,6 +43,8 @@ import { BUILT_IN_VIEW_NAMES } from "./view-projector.js";
  */
 
 const EVENT_TO_VIEWS: Record<string, readonly string[]> = {
+  "proof.judged": ["execution"],
+  "proof.sources_changed": ["execution"],
   "queue.created":          ["recently-active", "founder", "pod-load", "activity"],
   "queue.handed_off":       ["recently-active", "pod-load", "activity"],
   "queue.claimed":          ["recently-active", "pod-load", "activity"],

@@ -129,14 +129,14 @@ function LockStamp({ lock, label }: { lock: LockState | null; label: string }) {
 
 // §3.1 verified → the founder's plain words. QA laziness is VISIBLE, never blocking.
 const VERIFIED_RENDER: Record<DeliveredItem["verified"], { label: string; cls: string }> = {
-  verified: { label: "✓ QA-verified against the plan", cls: "text-emerald-700 dark:text-emerald-400" },
+  verified: { label: "✓ legacy QA-verified (item revision unbound)", cls: "text-emerald-700 dark:text-emerald-400" },
   unverified: { label: "◇ unverified — no PASSING QA comparison", cls: "text-amber-700 dark:text-amber-400" },
   missing: { label: "✗ missing — promised, nothing delivered", cls: "font-bold text-red-700 dark:text-red-400" },
 };
 
 /** §3.3 DELIVERED — one planned deliverable paired with its curated proof,
  *  down the column. One item expands full-width at a time (tap). */
-function DeliveredSection({ d, ctx }: { d: ComposedSliceReview["delivered"]; ctx: EvidenceContext }) {
+function DeliveredSection({ d, ctx, attributed }: { d: ComposedSliceReview["delivered"]; ctx: EvidenceContext; attributed: boolean }) {
   const [openIdx, setOpenIdx] = useState<number | null>(() => {
     const boot = bootParam("item");
     return boot !== null ? Number(boot) : null;
@@ -161,7 +161,7 @@ function DeliveredSection({ d, ctx }: { d: ComposedSliceReview["delivered"]; ctx
                 className="flex w-full flex-col gap-y-1 px-3 py-2 text-left hover:bg-surface-variant/30 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-3"
               >
                 <span className="min-w-0 flex-1 text-[12px] leading-snug text-on-surface">{item.promised.text}</span>
-                <span className={cn("shrink-0 font-mono text-[10px] uppercase tracking-wide", v.cls)}>{v.label}</span>
+                <span className={cn("shrink-0 font-mono text-[10px] uppercase tracking-wide", v.cls)}>{attributed ? item.verified === "verified" ? "✓ accepted under selected policy" : "◇ current acceptance absent" : v.label}</span>
               </button>
               {open ? (
                 <div data-testid={`delivered-item-open-${i}`} className="space-y-3 border-t border-outline-variant/60 px-3 py-3">
@@ -191,7 +191,7 @@ function DeliveredSection({ d, ctx }: { d: ComposedSliceReview["delivered"]; ctx
                   )}
                   {item.note ? (
                     <p data-testid={`delivered-note-${i}`} className="font-mono text-[11px] text-on-surface-variant">
-                      QA note: {item.note}
+                      Judgment note: {item.note}
                     </p>
                   ) : null}
                 </div>
@@ -259,6 +259,7 @@ export function SliceReviewTab({
 
   return (
     <div data-testid="slice-review-tab" className="space-y-5">
+      {data.readiness && <p role="status" data-testid="proof-readiness">Proof readiness: {review.updatesUnavailable ? "source updates unavailable; last confirmed state " + data.readiness.state : review.basisInvalidated ? "change observed; confirming current basis" : data.readiness.state} · last confirmed {data.readiness.revision.slice(0, 12)} · publication is separate</p>}
       {data.defects.length > 0 ? (
         <section data-testid="review-defects" className="border border-red-300 bg-red-50 p-2 dark:bg-red-950/40">
           <ul className="space-y-0.5 font-mono text-[10px] text-red-800 dark:text-red-300">
@@ -355,7 +356,7 @@ export function SliceReviewTab({
         </div>
       </section>
 
-      <DeliveredSection d={data.delivered} ctx={ctx} />
+      <DeliveredSection d={data.delivered} ctx={ctx} attributed={data.readiness?.configured === true} />
 
       <VerifyLineageCard lineage={data.lineage} />
 
@@ -363,7 +364,7 @@ export function SliceReviewTab({
       <section data-testid="settled-band" className={cn(VELLUM_CARD, "space-y-1 p-3")}>
         <h3 className="font-mono text-[10px] uppercase tracking-wide text-on-surface-variant">SETTLED</h3>
         <LockStamp lock={data.plan.lock} label="gate 1 · plan-lock (plan ↔ intent)" />
-        <LockStamp lock={data.delivered.lock} label="gate 2 · proof-lock (delivered ↔ plan) — the done stamp" />
+        <LockStamp lock={data.delivered.lock} label={data.readiness?.configured ? "historical proof-lock (current judgment shown above)" : "gate 2 · proof-lock (delivered ↔ plan) — recorded stamp"} />
       </section>
     </div>
   );

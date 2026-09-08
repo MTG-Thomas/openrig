@@ -527,6 +527,9 @@ export interface HitTarget {
 /** S19 round-5 (guard): the refresh owner's honest load lifecycle — the ONLY
  * state the loading spinner may ride (data absence is not a lifecycle fact) */
 export interface LoadState {
+  /** Known change or lost authority contact; quiet elapsed time alone never sets this. */
+  stale?: boolean;
+  connection?: "connected" | "dropped" | "reconnecting" | "unavailable";
   /** a hydrate refresh is running right now */
   inFlight: boolean;
   /** at least one refresh has completed (success or failure) */

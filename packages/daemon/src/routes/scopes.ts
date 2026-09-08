@@ -4,12 +4,15 @@
 // GET /api/scopes/narrative?mission=&slice= -> PROGRESS.md RAW for the `n` DISPLAY only
 // Data path: README frontmatter locks + proof/ C1 drops — never PROGRESS.md for counts.
 import { Hono } from "hono";
+import { proofSourceObservation } from "../domain/proof/source-watch.js";
+import { readMissionReadiness } from "../domain/proof/judgments.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { SliceIndexer } from "../domain/slices/slice-indexer.js";
 import { projectMissionScopes, projectSliceScope, type ScopeFsDeps, type SliceScopeDetail } from "../domain/scope/scope-view-projection.js";
 
 const realFs: ScopeFsDeps = {
+  readBytes: p => { try { return fs.readFileSync(p); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; } },
   exists: (p) => fs.existsSync(p),
   readFile: (p) => { try { return fs.readFileSync(p, "utf-8"); } catch { return null; } },
   listDir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
@@ -42,16 +45,17 @@ export function scopesRoutes(): Hono {
     if (mission) {
       const m = projectMissionScopes(realFs, r.root, mission);
       if (!m) return c.json({ error: "mission_not_found", mission }, 404);
-      if (!wantDetail) return c.json(m);
-      return c.json({ mission: m.mission, slices: m.slices.map((sl) => detailFor(mission, sl.dirName)).filter(Boolean) });
+      const readiness = readMissionReadiness(path.join(r.root, mission));
+      if (!wantDetail) return c.json({ ...m, readiness });
+      return c.json({ mission: m.mission, readiness, slices: m.slices.map((sl) => detailFor(mission, sl.dirName)).filter(Boolean) });
     }
     // No mission param: list every mission (the explorer tree); ?detail=1 upgrades rows to details.
     const missionNames = realFs.listDir(r.root).filter((e) => realFs.isDirectory(path.join(r.root, e)));
     const missions = missionNames
       .map((e) => projectMissionScopes(realFs, r.root, e))
       .filter((m): m is NonNullable<typeof m> => m !== null)
-      .map((m) => (wantDetail ? { mission: m.mission, slices: m.slices.map((sl) => detailFor(m.mission, sl.dirName)).filter(Boolean) } : m));
-    return c.json({ missions });
+      .map((m) => ({ ...(wantDetail ? { mission: m.mission, slices: m.slices.map((sl) => detailFor(m.mission, sl.dirName)).filter(Boolean) } : m), readiness: readMissionReadiness(path.join(r.root, m.mission)) }));
+    return c.json({ missions, sourceObservation: proofSourceObservation(c) });
   });
 
   app.get("/slice", (c) => {

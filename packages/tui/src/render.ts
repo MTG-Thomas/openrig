@@ -1309,7 +1309,7 @@ function renderPulseScreen(state: ViewState, snap: FleetSnapshot, options: Rende
   const flashRows: number[] = [];
   let flashAck = false;
 
-  lines.push(pad(`cmd ▸ ${inputLine}▊${inputLine ? "" : "  Tab complete · ? help · timezone"}`, cols));
+  lines.push(pad(`cmd ▸ ${inputLine}▊${load.stale ? " · readiness unconfirmed — refreshing or authority unavailable" : load.connection && load.connection !== "connected" ? " · live updates unavailable — last HTTP basis; quiet refresh active" : inputLine ? "" : "  Tab complete · ? help · timezone"}`, cols));
   if (options.completion) {
     lines.push(pad(options.completion.message, cols));
     for (const candidate of options.completion.candidates.slice(0, 4)) lines.push(pad(`  ${candidate}`, cols));

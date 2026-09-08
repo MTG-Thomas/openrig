@@ -14,6 +14,8 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import {
+  projectSliceFromListEntry,
+  reconcileMissionStatus,
   projectMissionBucket,
   partitionProjectMissions,
   PROJECT_CURRENT_ACTIVITY_WINDOW_MS,
@@ -236,5 +238,15 @@ describe("Tier A — V5 bucket byte-identity (green at BOTH SHAs)", () => {
     expect(projectMissionBucket(current)).toBe("current");
     expect(projectMissionBucket(archived)).toBe("archive");
     expect(projectMissionBucket(empty)).toBe("current"); // zero-slice non-shipped stays current
+  });
+});
+
+
+describe("current proof readiness and retained declared state", () => {
+  it("shows the served proof basis without promoting readiness to publication", () => {
+    const row = projectSliceFromListEntry({ name: "one", displayName: "One", missionId: "trial", railItem: null, status: "done", rawStatus: "done", qitemCount: 0, hasProofPacket: true, lastActivityAt: null, readiness: { configured: true, state: "unknown", revision: "changed-evidence" } });
+    expect(row.status).toBe("proof unknown");
+    expect(reconcileMissionStatus("active", [row], NOW, { state: "unknown", revision: "changed-evidence", historicalStatus: "active" })).toMatchObject({ state: "active", label: "declared active · proof unknown" });
+    expect(reconcileMissionStatus("active", [row], NOW, { state: "ready", revision: "accepted", historicalStatus: "active" })).toMatchObject({ state: "active", label: "declared active · proof ready" });
   });
 });

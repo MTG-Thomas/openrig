@@ -16,6 +16,7 @@
 // completion green (FR-7 — a mission-altitude fact, not a slice structure).
 
 import YAML from "yaml";
+import type { ScopeReadiness, MissionReadiness } from "../proof/judgments.js";
 import * as posixPath from "node:path/posix";
 import { renderBriefSpine } from "./brief-spine.js";
 import {
@@ -533,7 +534,7 @@ export interface ComposedDelivered {
  *   missing    — promised, nothing delivered.
  * Fail-open by construction: these are render states, never blocks.
  */
-export function composeDelivered(promised: PromisedItem[], artifacts: ProofArtifact[]): ComposedDelivered {
+export function composeDelivered(promised: PromisedItem[], artifacts: ProofArtifact[], readiness?: ScopeReadiness): ComposedDelivered {
   const escaping = new Set<string>();
   const mediaOf = (a: ProofArtifact): ReviewMedia[] => {
     const out: ReviewMedia[] = [];
@@ -552,7 +553,8 @@ export function composeDelivered(promised: PromisedItem[], artifacts: ProofArtif
     const covering = artifacts.filter((a) => a.evidences.some((ref) => refMatches(ref, promised, i))).sort(byLatest);
     covering.forEach((a) => covered.add(a.relPath));
     const qaCovering = covering.filter((a) => a.artifactType === "qa" || a.artifactType === "adjudication");
-    const verifiedBy = qaCovering.find((a) => a.selfCheck !== null && a.artifactType !== null && isPassing(a.artifactType, a.verdict));
+    const winners = selectWinning(artifacts, deriveCandidateSha(artifacts));
+    const verifiedBy = qaCovering.find((a) => a.artifactType !== null && winners.get(a.artifactType) === a && a.selfCheck !== null && isPassing(a.artifactType, a.verdict));
     const noteSource = qaCovering.find((a) => a.selfCheck !== null) ?? covering.find((a) => a.selfCheck !== null);
     const plannedRef = p.plannedRef ? toReviewMedia(p.plannedRef, "") : null;
     if (p.plannedRef && !plannedRef && mediaKind(p.plannedRef)) escaping.add(p.plannedRef);
@@ -563,6 +565,12 @@ export function composeDelivered(promised: PromisedItem[], artifacts: ProofArtif
     };
     const note = noteSource?.selfCheck ?? null;
     if (note) item.note = note;
+    if (readiness?.configured) {
+      const text = p.rawText.replace(/<!--\s*proof-item:\s*[a-zA-Z0-9_-]+\s*-->/g, "").trim();
+      const current = readiness.items.find(i => i.text === text);
+      item.verified = current?.state === "accepted" && !readiness.issues.length ? "verified" : current?.judgment || covering.length ? "unverified" : "missing";
+      item.note = current ? `Judgment ${current.state}: ${current.reason}` : `Current judgment unavailable: ${readiness.issues.join("; ")}`;
+    } else if (verifiedBy) item.note = `Legacy recorded verification (item revision unbound). ${item.note ?? ""}`.trim();
     return item;
   });
 
@@ -1051,6 +1059,7 @@ export function composeAgentsBand(
 // ---------------------------------------------------------------------------
 
 export interface SliceComposeInputs {
+  readiness?: ScopeReadiness;
   slice: { name: string; id: string | null; title: string; missionId: string | null };
   /** Raw file contents (null = absent). */
   readme: string | null;
@@ -1129,7 +1138,7 @@ export function composeSliceReview(inputs: SliceComposeInputs): ComposedSliceRev
   ]);
 
   const promised = extractProofContractSelected(inputs.prd, legacyReadme, currentSpec).items;
-  const delivered = composeDelivered(promised, inputs.artifacts);
+  const delivered = composeDelivered(promised, inputs.artifacts, inputs.readiness);
   delivered.escapingRefs.forEach((r) => escaping.add(r));
 
   const claimedPass = proofClaimsPass(inputs.proofMd);
@@ -1156,7 +1165,7 @@ export function composeSliceReview(inputs: SliceComposeInputs): ComposedSliceRev
   // Regime 2: evidence present, NO recorded passing state -> confirm-faithful.
   const recordedGreen = computeRecordedGreen(gateCells, inputs.artifacts, candidateSha);
   const confirmFaithful: NeedsYouItem[] = [];
-  if (!recordedGreen.green && evidencePresent && claimedPass) {
+  if (!inputs.readiness?.configured && !recordedGreen.green && evidencePresent && claimedPass) {
     confirmFaithful.push({
       source: "agent",
       identity: `${slice.name}|confirm-faithful|${candidateSha ?? "no-sha"}`,
@@ -1251,6 +1260,7 @@ export function composeSliceReview(inputs: SliceComposeInputs): ComposedSliceRev
     agents,
     lineage,
     defects,
+    ...(inputs.readiness ? { readiness: inputs.readiness } : {}),
     composedAt: nowIso,
   };
 }
@@ -1268,6 +1278,7 @@ export interface MissionSliceEntry {
 }
 
 export interface MissionComposeInputs {
+  readiness?: MissionReadiness;
   mission: { name: string; id: string | null; title: string; intent?: string | null };
   slices: MissionSliceEntry[];
   missionAttention: AttentionInput[];
@@ -1299,6 +1310,7 @@ export function composeMissionReview(inputs: MissionComposeInputs): ComposedMiss
       default:
         stageCell = "intent";
     }
+    if (s.readiness?.configured) stageCell = `proof ${s.readiness.state} · ${s.readiness.revision.slice(0, 12)}`;
     const changedSinceStamp = s.needsYou.items.some((i) => i.derived?.kind === "stale-after-change");
     return {
       slice: s.slice,
@@ -1320,7 +1332,7 @@ export function composeMissionReview(inputs: MissionComposeInputs): ComposedMiss
     gateCells: s.lineage.gateCells,
     mergeSha: s.lineage.mergeSha,
     needsHumanCount: s.needsYou.items.length,
-    green,
+    green: s.readiness?.configured ? s.readiness.state === "ready" : green,
   }));
 
   // Cut-complete: TRUE only when EVERY in-cut slice is (a) green, (b) merged,
@@ -1351,6 +1363,7 @@ export function composeMissionReview(inputs: MissionComposeInputs): ComposedMiss
   const agents = composeAgentsBand(inputs.agents, `mission:${inputs.mission.name}`, [], nowIso);
 
   const composed: ComposedMissionReview = {
+    ...(inputs.readiness ? { readiness: inputs.readiness } : {}),
     mission: inputs.mission.name,
     missionId: inputs.mission.id,
     title: inputs.mission.title,
@@ -1359,9 +1372,9 @@ export function composeMissionReview(inputs: MissionComposeInputs): ComposedMiss
     board,
     ledger,
     cutComplete,
-    cutCompleteBasis: cutComplete
+    cutCompleteBasis: (inputs.slices.some(s => s.review.readiness?.configured) ? "Proof readiness plus historical merge/attention facts; distinct outcome/publication decisions remain separate. " : "") + (cutComplete
       ? `all ${ledger.length} in-cut slices green + merged + zero needs-human · computed at ${nowIso}`
-      : `${incomplete.length} of ${ledger.length} slices not cut-complete (${incomplete.map((r) => r.slice).join(", ") || "none"}) · computed at ${nowIso}`,
+      : `${incomplete.length} of ${ledger.length} slices not cut-complete (${incomplete.map((r) => r.slice).join(", ") || "none"}) · computed at ${nowIso}`),
     needsYou: {
       items: unionItems,
       provenance:

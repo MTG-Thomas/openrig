@@ -154,7 +154,7 @@ export function ProjectTreeView() {
         if (matchedSlices.length > 0) consumedKeys.add(m.name);
         const rec = reconcileMissionStatus(
           authoredStatuses[m.name]?.authoredStatus ?? null,
-          matchedSlices,
+          matchedSlices, undefined, authoredStatuses[m.name]?.readiness,
         );
         return {
           id: m.name,
@@ -174,7 +174,7 @@ export function ProjectTreeView() {
         if (consumedKeys.has(missionKey)) continue;
         const rec = reconcileMissionStatus(
           authoredStatuses[missionKey]?.authoredStatus ?? null,
-          slices,
+          slices, undefined, authoredStatuses[missionKey]?.readiness,
         );
         discovered.push({
           id: missionKey,
@@ -189,7 +189,7 @@ export function ProjectTreeView() {
     }
     // Fallback: missionId/railItem grouping only.
     return Array.from(slicesByMissionKey.entries()).map(([k, slices]) => {
-      const rec = reconcileMissionStatus(authoredStatuses[k]?.authoredStatus ?? null, slices);
+      const rec = reconcileMissionStatus(authoredStatuses[k]?.authoredStatus ?? null, slices, undefined, authoredStatuses[k]?.readiness);
       return {
         id: k,
         label: k === "unsorted" ? "Unsorted" : k,

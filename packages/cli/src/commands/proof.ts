@@ -2,16 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
 import YAML from "yaml";
+import { DaemonClient } from "../client.js";
 import { findSlice, resolveMissionsRoot } from "../lib/scope/scope-fs.js";
 import { ScopeCliError } from "../lib/scope/types.js";
 import { selectProofContractBody, isScaffoldPlaceholderText } from "../lib/scope/scaffold-placeholder.js";
 import { parseLogicalCheckboxes } from "../lib/scope/logical-checkbox.js";
 
 /**
- * `rig proof` — the proof-drop write path (OPR.0.4.4.19 FR-8 + FR-11;
+ * `rig proof add` — the evidence-capture write path (OPR.0.4.4.19 FR-8 + FR-11;
  * conventions C1 + C2 + C8, D2 attestation).
  *
- * CLI-side filesystem only (plan-review + arch-lead confirmed): the drop
+ * The capture leg is CLI-side filesystem only: the drop
  * validates the C1 header AT THE MOMENT THE EVIDENCE IS IN-HAND, writes the
  * artifact into the slice's proof/ dir, and echoes the parsed header (the
  * seat sees what the composer will see). No daemon involvement, no synthetic
@@ -100,9 +101,76 @@ function isVideoFile(filePath: string): boolean {
 
 export function proofCommand(): Command {
   const cmd = new Command("proof").description(
-    "Proof artifacts — drop gate/proof evidence into a slice's proof/ dir with the machine-readable C1 header, validated at the natural moment (OPR.0.4.4.19 FR-8). The drop is the SDLC's proof leg: --evidences joins it to the slice's ## Proof contract items (what the Living Notes DELIVERED section pairs + renders); proof-lock afterwards via rig scope slice approve --scope delivery. Conventions SSOT: docs/reference/sdlc-conventions.md (installed: $OPENRIG_HOME/reference/sdlc-conventions.md)."
+    "Capture evidence (add), record an attributed item judgment (judge), and read derived readiness (show). Capture, policy acceptance, higher outcome judgment and publication are separate."
   );
-  cmd.option("--workspace <path>", "Override workspace root (else cwd walk or $OPENRIG_WORK_ROOT)");
+  cmd.addHelpText("after", `
+The selected daemon owns show/judge. Scope addresses are mission/slices/slice#item.
+The project owner selects proofPolicy: { judges: [exact-seat-address] } in the
+owning slice.yaml, mission.yaml or project.yaml (nearest wins; no default gate roles).
+The contract is the authored ## Proof contract. A sole item needs no # selector.
+
+Example (existing evidence, no copied hashes or operation key):
+  rig proof judge trial/slices/01-build#1 --verdict accept --reason 'Observed the promised outcome' --evidence proof/result.md
+  rig proof show trial --json
+  rig proof judge trial/slices/01-build#1 --verdict withdraw --reason 'The result no longer supports acceptance'
+
+Corrections retain prior receipts in proof/judgments/. --replace deliberately
+reaffirms a historical identical judgment after a correction; an ordinary retry
+returns its original receipt plus current readiness and never reinstates old truth.
+Use judge --help for patch-equivalent comparison receipts and advanced identities.
+Legacy proof add artifacts may be referenced directly; queue done and stored
+checkboxes do not accept an item under the selected proof policy.
+`);
+  cmd.option("--workspace <path>", "Capture/add only: override workspace root; show/judge use the selected daemon workspace");
+
+  const client = () => {
+    if (cmd.opts().workspace) throw new Error("--workspace applies to proof add. Select the judgment daemon using OPENRIG_URL; proof show reports its scope basis.");
+    return new DaemonClient();
+  };
+  const response = async (r: { status: number; data: unknown }): Promise<Record<string, any>> => {
+    const data = r.data as Record<string, any>;
+    if (r.status >= 400) throw new Error(`${data.error ?? r.status}: ${data.message ?? "Read the named source and retry"}`);
+    return data;
+  };
+  cmd.command("show [scope]").description("Read current attributed proof readiness for a slice, mission or active project; no status files are changed.")
+    .option("--json", "Structured readiness, item revisions and retained judgment references")
+    .action(async (scope, opts) => {
+      try {
+        const data = await response(await client().get(`/api/proof${scope ? `?scope=${encodeURIComponent(scope)}` : ""}`));
+        console.log(opts.json ? JSON.stringify(data) : JSON.stringify(data, null, 2));
+      } catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exitCode = 1; }
+    });
+  cmd.command("judge <scope-item>").description("Record one attributed item judgment and derive readiness. Use mission/slices/slice#item (index, text or ID). Policy inherits proofPolicy.judges from owning slice, mission or project.")
+    .requiredOption("--verdict <verdict>", "accept | reject | withdraw")
+    .requiredOption("--reason <text>", "The evidence-backed judgment being made")
+    .option("--evidence <ref>", "Existing evidence, relative to slice or workspace missions/; repeat for multiple references", (v: string, prior: string[]) => [...prior, v], [])
+    .option("--subject <kind:ref>", "artifact, commit or patch-equivalent subject; artifact inferred when omitted")
+    .option("--comparison <ref>", "Patch-equivalent subject: actual comparison/adoption receipt alongside outcome evidence")
+    .option("--revision <revision>", "Advanced: deliberately require this item revision")
+    .option("--operation-id <id>", "Advanced: explicit retry identity")
+    .option("--replace", "Deliberately reaffirm a historical judgment after a later correction")
+    .option("--json", "Return committed receipt and current readiness")
+    .action(async (address: string, opts) => {
+      try {
+        const at = address.indexOf("#"), scope = at < 0 ? address : address.slice(0, at), selector = at < 0 ? null : address.slice(at + 1);
+        const refs = [...new Set<string>([...opts.evidence, ...(opts.comparison ? [opts.comparison] : [])])];
+        const query = new URLSearchParams({ scope });
+        for (const ref of refs) query.append("evidence", ref);
+        const c = client(), view = await response(await c.get(`/api/proof?${query}`));
+        const items = view.items as Array<{ id: string; text: string; index: number; revision: string; judgment: { id: string } | null }> | undefined;
+        const item = selector ? items?.find(i => i.id === selector || i.text === selector || String(i.index) === selector) : items?.length === 1 ? items[0] : undefined;
+        if (!item) throw new Error("Select one current item with scope#item; rig proof show lists IDs, text and indices");
+        const subjectAt = opts.subject?.indexOf(":") ?? -1;
+        if (opts.subject && subjectAt < 1) throw new Error("--subject must be kind:ref");
+        const body = { scope, item: item.id, verdict: opts.verdict, reason: opts.reason,
+          ...(refs.length ? { evidence: refs, expectedEvidence: view.preparedEvidence } : {}),
+          ...(opts.subject ? { subject: { kind: opts.subject.slice(0, subjectAt), ref: opts.subject.slice(subjectAt + 1), ...(opts.comparison ? { comparison: opts.comparison } : {}) } } : {}),
+          expectedRevision: opts.revision ?? item.revision, expectedPrevious: item.judgment?.id ?? null,
+          operationId: opts.operationId, replace: opts.replace === true };
+        const result = await response(await c.post("/api/proof/judge", body));
+        console.log(opts.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+      } catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exitCode = 1; }
+    });
 
   cmd
     .command("add <slice-path>")

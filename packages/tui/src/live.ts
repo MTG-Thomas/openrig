@@ -39,6 +39,8 @@ export interface LiveRefresh {
   /** run one refresh (single-flight); NEVER rejects — a failed hydrate
    * releases in-flight, keeps the prior snapshot, and the next call retries */
   refresh: () => Promise<void>;
+  invalidate: () => Promise<void>;
+  connectionStatus: (status: NonNullable<LoadState["connection"]>) => void;
   snapshot: () => FleetSnapshot;
   load: () => LoadState;
   flashes: () => RowFlash[];
@@ -59,6 +61,8 @@ function paneActivity(snap: FleetSnapshot): Map<string, boolean | null | undefin
 }
 
 export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
+  let invalidation = 0;
+  let lastConfirmedAt: number | null = null;
   let snapshot = emptySnapshot();
   const load: LoadState = { inFlight: false, settled: false };
   let flashes: RowFlash[] = [];
@@ -86,6 +90,7 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
 
   const runRefresh = singleFlight(async () => {
     clearQuietTimer();
+    const startedAtInvalidation = invalidation;
     load.inFlight = true;
     deps.onFrame();
     try {
@@ -100,7 +105,10 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
           if (active === true && prev.get(key) === false) flashes.push({ key, at: now });
       }
       snapshot = next;
+      load.stale = startedAtInvalidation !== invalidation || next.readErrors.some(e => /^(scopes|execution|slice-detail)/.test(e));
+      if (!load.stale) lastConfirmedAt = deps.now();
     } catch {
+      load.stale = true;
       // rejection-release: the prior snapshot stays (nothing fabricated),
       // in-flight clears below, and the next requested refresh retries
     } finally {
@@ -118,8 +126,15 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
 
   return {
     refresh,
+    invalidate: () => { invalidation += 1; load.stale = true; return refresh(); },
+    connectionStatus: (status) => {
+      load.connection = status;
+      if (status !== "connected") load.stale = true;
+      else void refresh();
+      deps.onFrame();
+    },
     snapshot: () => snapshot,
-    load: () => ({ ...load }),
+    load: () => ({ ...load, ...(lastConfirmedAt !== null && deps.now() - lastConfirmedAt > 60_000 ? { stale: true } : {}) }),
     flashes: () => [...flashes],
     close: () => {
       closed = true;

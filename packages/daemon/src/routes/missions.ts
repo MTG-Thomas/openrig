@@ -25,6 +25,7 @@
 // null when nothing is declared.
 
 import { Hono } from "hono";
+import { readMissionReadiness, readSliceReadiness } from "../domain/proof/judgments.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
@@ -72,11 +73,13 @@ export function missionsRoutes(): Hono {
       workflowSpec,
       c.get("workflowSpecCache" as never) as WorkflowSpecCache | undefined,
     );
-    const status = readMissionStatus(missionPath);
+    const readiness = readMissionReadiness(missionPath);
+    const status = readiness.historicalStatus ?? readMissionStatus(missionPath);
     return c.json({
       missionId,
       missionPath,
-      slices,
+      readiness,
+      slices: slices.map(s => ({ ...s, readiness: readSliceReadiness(s.slicePath) })),
       workflow_spec: workflowSpec,
       topology,
       status,

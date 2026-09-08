@@ -382,7 +382,7 @@ export async function hydrateSnapshot(
     // PULSE UP NEXT + JUST FINISHED lane reads (increment 3) — same shipped /list route
     safe<QueueItemRead[]>("queue-pending", () => client.queuePending()),
     safe<QueueItemRead[]>("queue-recently-finished", () => client.queueRecentlyFinished()),
-    safe<{ missions: unknown[] }>("scopes", () => client.scopesDetailed() as Promise<{ missions: unknown[] }>),
+    safe<{ missions: unknown[]; sourceObservation?: { state: string } }>("scopes", () => client.scopesDetailed() as Promise<{ missions: unknown[] }>),
     safe<{ rows: unknown[] }>("execution", () => client.execution(executionMission ?? undefined) as Promise<{ rows: unknown[] }>),
     sliceDetailName
       ? safe<SliceDetailSnap>(`slice-detail(${sliceDetailName})`, () => client.sliceDetail(sliceDetailName))
@@ -391,6 +391,7 @@ export async function hydrateSnapshot(
   ]);
 
   const agentSpecNames = new Set((library ?? []).filter((entry) => entry.kind === "agent").map((entry) => entry.name));
+  if (scopesRead?.sourceObservation?.state === "unavailable") readErrors.push("scopes: proof source updates unavailable; current HTTP basis only");
   if (review?.registryError) readErrors.push(`review-fleet registry: ${review.registryError}`);
   const recentTransitionsRig = currentRigName ?? summaries?.[0]?.name ?? null;
   const recentTransitionsScope = topologyLeaf?.kind === "host"

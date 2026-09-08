@@ -366,10 +366,17 @@ describe("§3.1 DELIVERED — the redesigned join (planned ↔ curated proof ↔
   it("verified REQUIRES a passing recorded QA comparison (self_check + passing verdict), never presence", () => {
     const qa = artifact({ artifactType: "qa", verdict: "PASS", evidences: ["1"], selfCheck: "watched it play", mediaRefs: ["playing.webm"] });
     const d = composeDelivered(promised, [qa]);
-    expect(d.items[0]).toMatchObject({ verified: "verified", note: "watched it play" });
+    expect(d.items[0]).toMatchObject({ verified: "verified", note: "Legacy recorded verification (item revision unbound). watched it play" });
     expect(d.items[0]!.proof).toEqual([{ kind: "video", src: "proof/playing.webm", caption: "playing.webm" }]);
     expect(d.items[1]).toMatchObject({ verified: "missing" });
     expect(d.missingCount).toBe(1);
+  });
+
+  it("does not retain old PASS verification after the same candidate receives NOT-CLEAR", () => {
+    const pass = artifact({ artifactType: "qa", verdict: "PASS", evidences: ["1"], selfCheck: "Observed the promised outcome", droppedAt: "2026-07-04T08:00:00Z" });
+    const correction = artifact({ artifactType: "qa", verdict: "NOT-CLEAR", evidences: ["1"], selfCheck: "Outcome failed the comparison", droppedAt: "2026-07-04T09:00:00Z", relPath: "proof/correction.md" });
+    expect(composeDelivered(promised, [pass]).items[0]!.verified).toBe("verified");
+    expect(composeDelivered(promised, [pass, correction]).items[0]).toMatchObject({ verified: "unverified", note: "Outcome failed the comparison" });
   });
 
   it("a covering artifact WITHOUT a recorded comparison leaves the item unverified — visible, not blocked", () => {
@@ -429,7 +436,7 @@ describe("§3.1 DELIVERED — the redesigned join (planned ↔ curated proof ↔
     const newer = artifact({ artifactType: "qa", verdict: "PASS", evidences: ["1"], selfCheck: "v2 — the canonical set", mediaRefs: ["b.png", "c.png"], droppedAt: "2026-07-04T09:30:00.000Z", relPath: "proof/qa-2.md" });
     const d = composeDelivered(promised, [older, newer]);
     expect(d.items[0]!.proof.map((p) => p.src)).toEqual(["proof/b.png", "proof/c.png", "proof/a.png"]);
-    expect(d.items[0]!.note).toBe("v2 — the canonical set"); // latest recorded comparison wins the note
+    expect(d.items[0]!.note).toBe("Legacy recorded verification (item revision unbound). v2 — the canonical set"); // latest recorded comparison wins the note
   });
 
   it("feeds the ▲ insufficient-proof signal from the delivered.items MISSING count (§11 re-bind)", () => {
