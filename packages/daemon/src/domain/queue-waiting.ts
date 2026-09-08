@@ -51,7 +51,9 @@ export interface WaitingView {
   blocker: { ref: string; owner: string | null; state: string | null } | null;
   lastMeaningfulChange: { id: number; at: string } | null;
   liveness: { subject: string; activity: string; needsInput: { count: number; reason: string | null }; confidence: "oracle" | "unknown" };
-  nextBackstop: { owner: string; mechanism: string; dueAt: string | null; intervalSeconds: number | null };
+  nextBackstop: { owner: string; mechanism: string; dueAt: string | null; intervalSeconds: number | null; suspendedUntil?: string; recovery?: { qitemId: string; state: string }; note?: string };
+  /** Conditional later safety net, retained when delivery/recovery owns the next action. */
+  laterBackstop?: WaitingView["nextBackstop"];
   deadlineAt: string | null;
   attention?: { scope: string; revision: string; source: "last observed by wait timer" };
 }

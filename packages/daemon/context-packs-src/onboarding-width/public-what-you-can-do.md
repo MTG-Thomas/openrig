@@ -512,7 +512,9 @@ database. It is one more set of primitives on a machine full of them.
   Delivery status is separate from content: inspect its receipt before claiming it was consumed.
 - **"What am I waiting on?"** — the queue row's `waiting` view derives its owner, exact blocker
   and blocker owner, last meaningful change, activity confidence and next backstop from live
-  domain facts. A working activity observation is not proof of task progress; unknown stays
+  domain facts. A failed handoff names the delivery ladder before the later unclaimed safety
+  net; its due time is earliest eligibility, with suspension or current recovery disposition
+  shown explicitly. The executing scheduler still checks live state at that time. A working activity observation is not proof of task progress; unknown stays
   unknown. A repeating wait sends one compact notice per blocker transition, with the existing
   stuck sweep owning a failed or unconsumed notice after the pickup grace. Real changes use the
   event path; scheduler reconciliation repairs missed events. A returned result and its dependent

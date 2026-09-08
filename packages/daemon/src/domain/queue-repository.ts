@@ -1,3 +1,4 @@
+import { readWakeLadderBackstop } from "./queue-wake-ladder.js";
 import type Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import type { EventBus } from "./event-bus.js";
@@ -3418,7 +3419,17 @@ export class QueueRepository {
     try { return this.activityReader?.(session) ?? null; } catch { return null; }
   }
 
-  waitingView(qitemId: string): WaitingView | null { return readWaitingView(this.db, qitemId, this.activityReader); }
+  waitingView(qitemId: string): WaitingView | null {
+    const view = readWaitingView(this.db, qitemId, this.activityReader);
+    if (view && ["pending", "in-progress"].includes(view.state)) {
+      const recovery = readWakeLadderBackstop(this.db, qitemId);
+      if (recovery) {
+        view.laterBackstop = { ...view.nextBackstop, note: "Conditional safety net; current delivery/recovery ownership is evaluated first." };
+        view.nextBackstop = recovery;
+      }
+    }
+    return view;
+  }
 
   private rowToItem(row: QueueItemRow, includeWaiting = true): QueueItem {
     // S04 — derive the pickup receipt at the ONE shared projection point (list/show/overdue

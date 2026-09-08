@@ -1,5 +1,5 @@
 import { findQueueRecovery, recoveryTag } from "./queue-recovery.js";
-import { lastMeaningfulTransition } from "./queue-waiting.js";
+import { lastMeaningfulTransition, type WaitingView } from "./queue-waiting.js";
 // S01 (OPR.0.5.5.1) — WAKE OR ESCALATE ON BATONS. A handoff whose wake fails must never
 // silently park: today one failed nudge is recorded and nothing follows (the measured
 // dominant 0.5.3 failure class — a perfect surviving packet, a recipient never woken).
@@ -289,7 +289,7 @@ function readLadder(db: Database.Database, qitemId: string): LadderView {
 
 /** Pickup evidence (the S04 receipt join, F1): a claim, a heartbeat, or any transition
  *  that is neither a founding record nor ladder machinery — someone real moved. */
-function hasPickupEvidence(db: Database.Database, row: QueueItem): boolean {
+function hasPickupEvidence(db: Database.Database, row: Pick<QueueItem, "qitemId" | "claimedAt" | "lastHeartbeat">): boolean {
   if (row.claimedAt) return true;
   // Keep this null arm for the 0.5.7 mechanized-pull turn-end hook that knows the in-flight row;
   // it is the first honest row-scoped writer, and wiring reopens only in that slice.
@@ -352,12 +352,12 @@ export function queueRecoveryOwnsWake(db: Database.Database, row: QueueItem | nu
 
 /** F2 — derived suspension: the destination's post-swap grace (nodes.handover_at within
  *  the bound), or the operator-declared override. Returns the reason, or null. */
-function suspensionReason(
+function readSuspension(
   db: Database.Database,
   destination: string,
   graceSeconds: number,
   now: Date,
-): string | null {
+): { reason: string; until: string } | null {
   const override = process.env[WAKE_SUSPEND_OVERRIDE_ENV];
   if (override) {
     for (const entry of override.split(",")) {
@@ -368,7 +368,7 @@ function suspensionReason(
       if (session === destination) {
         const until = Date.parse(untilIso);
         if (!Number.isNaN(until) && now.getTime() < until) {
-          return `operator override (${WAKE_SUSPEND_OVERRIDE_ENV}) until ${untilIso}`;
+          return { reason: `operator override (${WAKE_SUSPEND_OVERRIDE_ENV}) until ${untilIso}`, until: untilIso };
         }
       }
     }
@@ -385,9 +385,74 @@ function suspensionReason(
   if (Number.isNaN(swapAt)) return null;
   const ageS = (now.getTime() - swapAt) / 1000;
   if (ageS >= 0 && ageS < graceSeconds) {
-    return `destination in post-swap grace (handover ${Math.round(ageS)}s ago, grace ${graceSeconds}s)`;
+    return { reason: `destination in post-swap grace (handover ${Math.round(ageS)}s ago, grace ${graceSeconds}s)`, until: new Date(swapAt + graceSeconds * 1000).toISOString() };
   }
   return null;
+}
+
+function suspensionReason(db: Database.Database, destination: string, graceSeconds: number, now: Date): string | null {
+  return readSuspension(db, destination, graceSeconds, now)?.reason ?? null;
+}
+
+/** Read the existing ladder's next eligible action; never create an intent,
+ * reserve a retry, consume provider state or change its policy. The scheduler
+ * still makes the final live-state decision at delivery time. */
+export function readWakeLadderBackstop(db: Database.Database, qitemId: string): WaitingView["nextBackstop"] | null {
+  const row = db.prepare(`SELECT qitem_id AS qitemId, state, source_session AS sourceSession,
+    destination_session AS destinationSession, claimed_at AS claimedAt, handed_off_from AS handedOffFrom,
+    last_heartbeat AS lastHeartbeat, last_nudge_result AS lastNudgeResult,
+    last_nudge_attempt AS lastNudgeAttempt, ts_created AS tsCreated FROM queue_items WHERE qitem_id = ?`)
+    .get(qitemId) as Pick<QueueItem, "qitemId" | "state" | "sourceSession" | "destinationSession" | "claimedAt" | "handedOffFrom" | "lastHeartbeat" | "lastNudgeResult" | "lastNudgeAttempt" | "tsCreated"> | undefined;
+  if (!row || !["pending", "in-progress"].includes(row.state)) return null;
+  const recovery = findQueueRecovery(db, qitemId);
+  const disposition = recovery ? db.prepare("SELECT destination_session, tags FROM queue_items WHERE qitem_id = ?")
+    .get(recovery.qitemId) as { destination_session: string; tags: string | null } : null;
+  const recoveryBackstop = (): WaitingView["nextBackstop"] => ({
+    owner: disposition!.destination_session, mechanism: `queue-recovery:${["pending", "in-progress", "blocked"].includes(recovery!.state) ? "delegated" : "resolved"}`,
+    dueAt: null, intervalSeconds: null, recovery: { qitemId: recovery!.qitemId, state: recovery!.state },
+    note: "Current recovery disposition owns the continuation; inspect that row. New source evidence is evaluated afresh.",
+  });
+  if (recovery && !["pending", "in-progress", "blocked"].includes(recovery.state)) return recoveryBackstop();
+  const mode = classifyWakeResult(row.lastNudgeResult);
+  const eligible = (row.state === "pending" && !row.claimedAt && row.handedOffFrom)
+    || (row.state === "in-progress" && row.claimedAt && mode === "failed" && db.prepare(
+      "SELECT 1 FROM queue_transitions WHERE qitem_id = ? AND transition_note LIKE 'parked-owner wake delivery failed:%' LIMIT 1",
+    ).get(qitemId));
+  if (!eligible || !mode || (mode === "unconfirmed" && hasPickupEvidence(db, row))) return recovery ? recoveryBackstop() : null;
+  const ladder = readLadder(db, qitemId);
+  if (ladder.exhausted) return recovery ? recoveryBackstop() : {
+    owner: defaultResolveOrchestrator(db, row.destinationSession) ?? row.destinationSession,
+    mechanism: "queue-wake-ladder:exhausted; queue-stuck-sweep:undelivered", dueAt: null, intervalSeconds: null,
+    note: "No further ladder retry. Inspect the retained exhaustion and delivery evidence; the stuck sweep is the safety net.",
+  };
+  const interval = resolveWakeRetryIntervalSeconds(), cap = resolveWakeRetryCap(), now = new Date();
+  const retry = mode === "failed" && ladder.attempts < cap;
+  if (!retry && recovery && !JSON.parse(disposition!.tags ?? "[]").includes(WAKE_ESCALATION_TAG)) return recoveryBackstop();
+  const last = ladder.lastMarkerTs ?? (row.lastNudgeAttempt ? Date.parse(row.lastNudgeAttempt) : null);
+  let due = last === null || Number.isNaN(last) ? now.getTime() : last + interval * 1000;
+  if (mode === "unconfirmed") {
+    // The existing gate compares rounded age-minutes; display its actual
+    // earliest eligibility, without changing that policy to fit the face.
+    due = Math.max(due, Date.parse(row.tsCreated) + Math.max(0, resolveWakeUnconfirmedWindowMinutes() - 0.5) * 60_000);
+  }
+  if (retry) {
+    // Same per-destination attempt budget as the executing ladder. An attempt
+    // exactly on the lower bound still counts, hence the one millisecond edge.
+    const attempts = db.prepare(`SELECT t.ts FROM queue_transitions t JOIN queue_items q ON q.qitem_id = t.qitem_id
+      WHERE q.destination_session = ? AND t.transition_note LIKE ? AND t.ts >= ? ORDER BY t.ts DESC LIMIT ?`)
+      .all(row.destinationSession, `${LADDER_ATTEMPT_PREFIX}%`, new Date(now.getTime() - interval * 1000).toISOString(), cap) as Array<{ ts: string }>;
+    if (attempts.length >= cap) due = Math.max(due, Date.parse(attempts[cap - 1]!.ts) + interval * 1000 + 1);
+  }
+  const suspension = readSuspension(db, row.destinationSession, resolveWakeSwapGraceSeconds(), now);
+  if (suspension) due = Math.max(due, Date.parse(suspension.until));
+  const orch = defaultResolveOrchestrator(db, row.destinationSession);
+  const operator = ladder.orchRung || orch === null || orch === row.destinationSession;
+  return {
+    owner: retry ? row.destinationSession : operator ? resolveOperatorSeat() ?? row.sourceSession : orch!,
+    mechanism: retry ? "queue-wake-ladder:retry" : ladder.opEngineDispatched ? "queue-wake-ladder:operator-outcome" : operator ? "queue-wake-ladder:operator" : "queue-wake-ladder:orchestrator",
+    dueAt: ladder.opEngineDispatched ? null : new Date(due).toISOString(), intervalSeconds: interval,
+    ...(suspension ? { suspendedUntil: suspension.until, note: suspension.reason } : { note: "Earliest eligibility; the next scheduler pass rechecks provider state, custody and the shared destination budget." }),
+  };
 }
 
 function appendMarker(repo: QueueRepository, row: QueueItem, note: string): void {
