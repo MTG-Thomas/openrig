@@ -13,7 +13,8 @@ terminal-provider support does not change the harness or account being used.
 ## Prepare and launch
 
 Type `rig` in an ordinary terminal to open the startup and work TUI. It shows
-the selected instance and daemon address. If the daemon is stopped, press Enter
+the daemon address; **d** expands the selected instance path and diagnostics.
+If the daemon is stopped, press Enter
 to start that daemon, then choose the rigs and seats you want. Kernel is
 recommended first; selecting its operator does not start every kernel seat.
 The same view is available with **S** from ordinary TUI work.

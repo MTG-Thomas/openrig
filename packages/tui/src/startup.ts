@@ -217,10 +217,10 @@ export class StartupController {
 export function startupLines(s: StartupState): Array<{ text: string; action?: Action }> {
   const button = (text: string, key: string) => ({ text, action: { type: "startup" as const, key } });
   const lines: Array<{ text: string; action?: Action }> = [
-    { text: "OpenRig · Start and return" }, { text: `Instance: ${s.home}` }, { text: `Daemon: ${s.target}` }, { text: "" }, { text: s.notice }, { text: "" },
+    { text: "OpenRig · Start and return" }, { text: `Daemon: ${s.target}` }, { text: "" }, { text: s.notice }, { text: "" },
   ];
   lines.push(button("?  Help", "?"), button("w  Skip startup · ordinary views", "w"));
-  lines.push(button("L  Local Specs / project / mission / slice reading", "L"));
+  lines.push(button("L  Local reading · Specs and intent", "L"));
   if (s.local) return localLines(s.local);
   if (s.busy) return [...lines, { text: "Working… repeated input will not start another operation." }, { text: "Esc Back / skip · q Quit; an accepted operation continues." }];
   if (s.page === "down") lines.push(button("Enter / s  Start daemon; choose seats next", "s"));
@@ -257,6 +257,6 @@ export function startupLines(s: StartupState): Array<{ text: string; action?: Ac
       button("y  Confirm this fresh start", "y"), button("Esc  Decline; leave stopped", "escape"));
   }
   lines.push(button("r  Refresh actual state", "r"), button("d  Diagnostic details", "d"), button("Esc  Back / decline", "escape"), { text: "↑↓ choose · q quit · S opens startup from ordinary work" });
-  if (s.expanded) lines.push({ text: "" }, { text: s.detail || JSON.stringify(s.rig?.seats[s.selected] ?? s.probe ?? {}) });
+  if (s.expanded) lines.push({ text: "" }, { text: `Instance: ${s.home}` }, { text: s.detail || JSON.stringify(s.rig?.seats[s.selected] ?? s.probe ?? {}) });
   return lines;
 }
