@@ -26,6 +26,7 @@ import { RigSpecCodec } from "../domain/rigspec-codec.js";
 import { RigSpecSchema } from "../domain/rigspec-schema.js";
 import { seatLifecycleService } from "./seat.js";
 import { authBearerTokenMiddleware } from "../middleware/auth-bearer-token.js";
+import { readFreshOccupantRelations } from "../domain/fresh-occupant-relation.js";
 
 export const startupRoutes = new Hono();
 startupRoutes.use("*", async (c, next) => {
@@ -120,7 +121,7 @@ startupRoutes.get("/:rigId", async (c) => {
   const rig = repo(c).getRig(c.req.param("rigId"));
   if (!rig) return c.json({ ok: false, message: "Rig is no longer available." }, 404);
   const snapshot = currentSnapshot(c, rig);
-  const plan = buildRestorePlanPreview(rig, snapshot, collectPreviewSessionRows(repo(c).db, rig, snapshot));
+  const plan = buildRestorePlanPreview(rig, snapshot, collectPreviewSessionRows(repo(c).db, rig, snapshot), undefined, Date.now(), readFreshOccupantRelations(repo(c).db, rig.rig.id));
   const auth = await defaultProbeRuntimes();
   const history = sessions(c).getSessionsForRig(rig.rig.id);
   const seats = [];

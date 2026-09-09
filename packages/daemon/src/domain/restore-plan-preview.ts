@@ -211,6 +211,7 @@ export function buildRestorePlanPreview(
   sessionRows: PreviewSessionRow[],
   freshLogicalIds?: string[],
   nowMs: number = Date.now(),
+  recorded: Record<string, string | null> = {},
 ): RestorePlanPreview {
   // OPR.0.5.7.1 — the relation the resolution consumes: the snapshot's own
   // when previewing a snapshot; for the live no-snapshot case, the SAME
@@ -218,7 +219,7 @@ export function buildRestorePlanPreview(
   // sibling paths cannot drift).
   const relationMap = snapshot
     ? snapshot.data.activeSessionIdByNode
-    : deriveRehydrateSessionIdByNode(sessionRows, rig.nodes.map((n) => n.id));
+    : deriveRehydrateSessionIdByNode(sessionRows, rig.nodes.map((n) => n.id), recorded);
   const nodes: RestorePlanPreviewNode[] = rig.nodes.map((node) => {
     const freshRequested = freshLogicalIds?.includes(node.logicalId) ?? false;
     const resolution = snapshot

@@ -10,6 +10,7 @@ import type { SnapshotCapture } from "../domain/snapshot-capture.js";
 import type { RestoreOrchestrator } from "../domain/restore-orchestrator.js";
 import { assessCurrentStateRehydrateEligibility, snapshotMatchesCurrentOccupants } from "../domain/rehydrate-eligibility.js";
 import { buildRestorePlanPreview, collectPreviewSessionRows } from "../domain/restore-plan-preview.js";
+import { readFreshOccupantRelations } from "../domain/fresh-occupant-relation.js";
 import { loadTopologyManifest } from "../domain/topology/topology-manifest.js";
 import { MultiRigLauncher } from "../domain/topology/multi-rig-launcher.js";
 import { remoteUpLeaf } from "../domain/topology/remote-up-leaf.js";
@@ -129,7 +130,7 @@ async function restoreByRigId(rigId: string, rigName: string | null, deps: Retur
   // snapshot capture (itself a mutation) is reported as would-happen, never
   // performed.
   if (plan) {
-    return c.json(buildRestorePlanPreview(rig, snapshot ?? null, collectPreviewSessionRows(snapshotRepo.db, rig, snapshot ?? null), freshLogicalIds), 200);
+    return c.json(buildRestorePlanPreview(rig, snapshot ?? null, collectPreviewSessionRows(snapshotRepo.db, rig, snapshot ?? null), freshLogicalIds, Date.now(), readFreshOccupantRelations(snapshotRepo.db, rig.rig.id)), 200);
   }
 
   if (!snapshot) {

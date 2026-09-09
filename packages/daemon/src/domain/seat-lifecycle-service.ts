@@ -385,7 +385,11 @@ export class SeatLifecycleService {
         guidance: "Stop the adopted process yourself, then run rig seat clean before launching fresh.",
       };
     }
-    const supersededSessionIds = retiringRows.map((row) => row.id);
+    // Detached is terminal for process cleanup, but remains a reboot candidate.
+    // A deliberate fresh launch must retire that prior history as well.
+    const supersededSessionIds = (this.db.prepare(
+      "SELECT id FROM sessions WHERE node_id = ? AND status NOT IN ('superseded', 'exited')",
+    ).all(node.id) as Array<{ id: string }>).map((row) => row.id);
     const retiringGeneration = this.sessionRegistry.currentOccupantTenure(node.id)?.generationUuid ?? null;
 
     const canonicalProbe = await this.probeLiveness(

@@ -138,15 +138,16 @@ export function deriveActiveOccupantsByNode(
 export function deriveRehydrateOccupantsByNode(
   sessions: OccupantCandidateRow[],
   nodeIds: string[],
+  recorded: Record<string, string | null> = {},
 ): Record<string, SnapshotOccupantState> {
   const candidates = sessions.filter((session) => session.status !== "superseded" && session.status !== "exited");
   const relation: Record<string, SnapshotOccupantState> = {};
   for (const nodeId of nodeIds) {
     const rows = candidates.filter((session) => session.nodeId === nodeId);
-    const resolved = resolveActiveOccupantRow(candidates, undefined, nodeId);
+    const resolved = resolveActiveOccupantRow(candidates, Object.prototype.hasOwnProperty.call(recorded, nodeId) ? recorded : undefined, nodeId);
     relation[nodeId] = resolved.kind === "resolved"
       ? { kind: "resolved", sessionId: resolved.session.id }
-      : rows.length === 0
+      : resolved.kind === "none"
         ? { kind: "absent" }
         : { kind: "ambiguous", candidateIds: rows.map((row) => row.id) };
   }
@@ -161,11 +162,12 @@ export function deriveRehydrateOccupantsByNode(
 export function deriveRehydrateSessionIdByNode(
   sessions: OccupantCandidateRow[],
   nodeIds: string[],
+  recorded: Record<string, string | null> = {},
 ): Record<string, string | null> {
   const candidates = sessions.filter((session) => session.status !== "superseded" && session.status !== "exited");
   const relation: Record<string, string | null> = {};
   for (const nodeId of nodeIds) {
-    const resolved = resolveActiveOccupantRow(candidates, undefined, nodeId);
+    const resolved = resolveActiveOccupantRow(candidates, Object.prototype.hasOwnProperty.call(recorded, nodeId) ? recorded : undefined, nodeId);
     relation[nodeId] = resolved.kind === "resolved" ? resolved.session.id : null;
   }
   return relation;
