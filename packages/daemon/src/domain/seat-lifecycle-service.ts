@@ -359,7 +359,7 @@ export class SeatLifecycleService {
       binding: { ...binding, cwd: node.cwd ?? ".", model: node.model ?? undefined, codexConfigProfile: node.codexConfigProfile ?? undefined },
       adapter, plan: startup.context.plan, resolvedStartupFiles: startup.context.resolvedStartupFiles,
       startupActions: startup.context.startupActions, isRestore: false,
-      sessionName: session.session_name, skipHarnessLaunch: true, continueFreshStartup: true, allowFreshFallback: false,
+      sessionName: session.session_name, skipHarnessLaunch: true, continueFreshStartup: true, includeDurableObligations: true, allowFreshFallback: false,
     });
     return { ...result, message: result.ok ? "Configured context delivered to the existing fresh conversation." : result.errors.join("; ") };
   }
@@ -566,6 +566,7 @@ export class SeatLifecycleService {
       resolvedStartupFiles: startup.context.resolvedStartupFiles,
       startupActions: startup.context.startupActions,
       isRestore: false,
+      includeDurableObligations: true,
       sessionName: canonicalSessionName,
       allowFreshFallback: false,
     });

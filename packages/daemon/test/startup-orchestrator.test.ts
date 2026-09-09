@@ -131,6 +131,14 @@ describe("StartupOrchestrator", () => {
     };
   }
 
+  it("deliberate fresh replacement appends the named durable obligation read without an extra message", async () => {
+    const seed = seedSession();
+    await createOrchestrator().startNode(makeInput(seed, { startupActions: [makeIdentityAction()], includeDurableObligations: true }));
+    expect(tmux.sendText).toHaveBeenCalledTimes(1);
+    expect(tmux.sendText).toHaveBeenCalledWith("r01-impl", expect.stringContaining("rig queue list --destination r01-impl --state pending,in-progress,blocked"));
+    expect(tmux.sendText).toHaveBeenCalledWith("r01-impl", expect.stringContaining(makeIdentityAction().value));
+  });
+
   it("persists the authored context before a native gate and exposes only the matching continuation", async () => {
     const seed = seedSession(); const orch = createOrchestrator();
     const action = makeAction({ type: "send_text", value: "configured role and durable queue instructions" });
