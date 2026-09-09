@@ -84,6 +84,12 @@ function drillEntry(resource: ResourceKind): CommandEntry {
 }
 
 export const COMMAND_REGISTRY: readonly CommandEntry[] = [
+  { name: "read", aliases: [], args: "<root>/<path>[#heading]", description: "read a current file within an explicitly configured root", context: "standard", sample: "read workspace/README.md", complete: ({ snapshot }) => (snapshot.fileRoots ?? []).map((root) => `${root.name}/`), build: (value) => {
+    const slash = value.indexOf("/");
+    if (slash < 1 || slash === value.length - 1) return { type: "error", message: "read needs <root>/<path>[#heading] from the configured readable roots" };
+    const hash = value.indexOf("#", slash);
+    return { type: "file-open", target: { root: value.slice(0, slash), path: value.slice(slash + 1, hash < 0 ? undefined : hash), ...(hash < 0 ? {} : { anchor: value.slice(hash + 1) }) } };
+  } },
   { name: "config", aliases: [], args: "[category]", description: "browse instance settings; Slack is one category", context: "standard", sample: "config", complete: () => CONFIG_CATEGORIES.map((c) => c.id), build: (category) => category ? { type: "config-category", category } : { type: "jump", section: "config" } },
   { name: "setting", aliases: [], args: "<key>", description: "open a setting with its full value, source and scope", context: "standard", sample: "setting workspace.root", complete: ({ snapshot }) => (snapshot.config?.entries ?? []).map((e) => e.key), build: (key) => key ? { type: "config-setting", key } : { type: "error", message: "setting needs a key" } },
   { name: "refresh", aliases: [], args: "", description: "read the current view again; stored values do not prove runtime adoption", context: "standard", sample: "refresh", build: () => ({ type: "noop" }) },

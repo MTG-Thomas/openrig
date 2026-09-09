@@ -22,7 +22,13 @@ export interface ContentLine {
  * retain their own layout; callers opt in only for detail pages. */
 export function wrapDetailLines(lines: ContentLine[], width: number): ContentLine[] {
   const room = Math.max(8, width);
-  return lines.flatMap((line) => {
+  // A ContentLine is one logical terminal row. YAML block scalars and current
+  // source files may contain CR/LF; never emit those inside a physical row.
+  const logical = lines.flatMap((line) => line.text.split(/\r\n|\r|\n/).map((text, i) => ({
+    ...line, text: text.replace(/\t/g, "    ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`),
+    ...(i ? { action: undefined, zones: undefined, segs: undefined } : {}),
+  })));
+  return logical.flatMap((line) => {
     if (line.zones) return [line]; // tab hit zones retain the renderer's existing clipping rules
     if (line.text.startsWith("  ──") && line.text.replace(/─+$/, "").length <= room) return [{ ...line, text: line.text.slice(0, room) }];
     if (line.text.length <= room) return [line];

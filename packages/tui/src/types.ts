@@ -129,6 +129,7 @@ export interface SpecEntry {
   sourceState?: "draft" | "file_preview" | "library_item";
   sourceType?: "builtin" | "user_file";
   sourcePath?: string;
+  resolvedSourcePath?: string | null;
   relativePath?: string;
   /** Agent library folder grouping, e.g. review/ or orchestration/. */
   namespace?: string;
@@ -323,6 +324,9 @@ export interface HealthSnapshot {
 }
 
 export interface FleetSnapshot {
+  fileRead?: { target: import("./reading.js").FileTarget; result: import("./reading.js").FileReadResult; readAt: string };
+  fileRoots?: import("./reading.js").FileRoot[];
+  specsLoaded?: boolean;
   config?: import("./config/config-model.js").ConfigRead | null;
   connections?: import("./connections/connections-model.js").ConnectionsRead | null;
   controlPlane?: import("./connections/connections-model.js").ControlPlaneRead | null;
@@ -403,6 +407,8 @@ export interface DrillSegment {
 export type ViewTab = "table" | "recent" | "overview" | "graph" | "health" | "topology" | "configuration" | "yaml" | "pulse";
 
 export type Action =
+  | { type: "file-open"; target: import("./reading.js").FileTarget }
+  | { type: "external-open"; url: string }
   | { type: "startup"; key: string }
   | { type: "timezone" }
   | { type: "recent-open"; transitionId: number }
@@ -459,6 +465,8 @@ export interface SectionDef {
 }
 
 export interface ViewState {
+  file?: import("./reading.js").FileTarget | null;
+  externalUrl?: string | null;
   timeZone: string;
   timeZoneWarning: string | null;
   timeZoneHelp: boolean;
@@ -505,7 +513,7 @@ export interface ViewState {
   lastError: string | null;
 }
 
-export type NavigationFrame = Pick<ViewState, "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
+export type NavigationFrame = Pick<ViewState, "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
 
 export interface ViewStateStore {
   instanceId: string;

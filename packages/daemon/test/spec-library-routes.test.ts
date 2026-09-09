@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SpecLibraryService } from "../src/domain/spec-library-service.js";
@@ -53,6 +53,13 @@ describe("spec library routes", () => {
     app.route("/api/specs/library", specLibraryRoutes());
     return app;
   }
+
+  it("keeps source provenance and serves canonical source identity for file-root mapping", async () => {
+    const res = await createApp().request("/api/specs/library");
+    const entries = await res.json() as Array<{ sourcePath: string; resolvedSourcePath: string }>;
+    expect(entries[0]!.sourcePath).toBe(join(tmpDir, "rig.yaml"));
+    expect(entries[0]!.resolvedSourcePath).toBe(realpathSync(join(tmpDir, "rig.yaml")));
+  });
 
   it("GET /api/specs/library returns library entries", async () => {
     const app = createApp();

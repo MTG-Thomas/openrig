@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type Database from "better-sqlite3";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { ActiveLensStore } from "../domain/active-lens-store.js";
@@ -82,7 +82,13 @@ export function specLibraryRoutes(): Hono {
     const lib = refreshWorkflowEntries(c);
     const kind = c.req.query("kind") as "rig" | "agent" | "workflow" | undefined;
     const entries = lib.list(kind ? { kind } : undefined);
-    return c.json(entries);
+    return c.json(entries.map((entry) => {
+      // Preserve the authored/catalog path and also identify its actual source.
+      // Consumers still read through the existing file-root boundary.
+      let resolvedSourcePath: string | null = null;
+      try { resolvedSourcePath = realpathSync(entry.sourcePath); } catch { /* missing/denied source stays explicit */ }
+      return { ...entry, resolvedSourcePath };
+    }));
   });
 
   // GET /:id — entry metadata + YAML content

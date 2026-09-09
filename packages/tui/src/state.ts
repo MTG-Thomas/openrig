@@ -82,7 +82,7 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 
   function dispatch(action: Action): ViewState {
     const previous = state;
-    if (["jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, recentOpen: null, timeZoneHelp: false };
+    if (["jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, file: null, externalUrl: null, recentOpen: null, timeZoneHelp: false };
     state = reduce(state, action, getSnapshot());
     // Connections is a side trip from work, including explorer/palette entry.
     if (action.type === "jump" && !["connections", "config"].includes(action.section) && !["connections", "config"].includes(previous.section)) state.history = [];
@@ -109,6 +109,10 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewState {
   const next: ViewState = { ...state, lastError: null, notice: action.type === "notice" || action.type === "act" ? state.notice : null };
   switch (action.type) {
+    case "file-open":
+      return { ...resetContent({ ...next, file: action.target, externalUrl: null, healthOpen: null, recentOpen: null, timeZoneHelp: false }), focusedPane: "content" };
+    case "external-open":
+      return { ...resetContent({ ...next, externalUrl: action.url, file: null, healthOpen: null, recentOpen: null, timeZoneHelp: false }), focusedPane: "content" };
     case "timezone":
       return resetContent({ ...next, timeZoneHelp: true, viewTab: "table", healthOpen: null });
     case "recent-open": {
@@ -209,6 +213,9 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
     case "copy-mode":
       return { ...next, copyMode: action.on ?? !state.copyMode };
     case "layout":
+      // Do not clamp a restored bookmark against another page's in-flight snapshot.
+      if (state.file && JSON.stringify(state.file) !== JSON.stringify(snap.fileRead?.target)) return next;
+      if (!state.file && state.section === "specs" && !snap.specsLoaded && (snap.fileRead || snap.config)) return next;
       return {
         ...next,
         contentMaxOffset: Math.max(action.contentMaxOffset, 0),
@@ -265,12 +272,12 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
 }
 
 function location(s: ViewState): string {
-  return JSON.stringify([s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey]);
+  return JSON.stringify([s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey, s.file, s.externalUrl]);
 }
 
 function navigationFrame(s: ViewState): NavigationFrame {
-  const { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
-  return { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
+  const { file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
+  return { file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
 }
 
 function clearScopeCoordinatesOnSectionChange(previous: ViewState, next: ViewState): ViewState {
@@ -292,7 +299,7 @@ function resetContent(state: ViewState): ViewState {
  *  footer/indicator affordances (render.ts) both read this ONE predicate, so
  *  the hint can never again promise a gesture the keys don't perform. */
 export function specDetailArrowsScroll(state: ViewState): boolean {
-  return ((state.section === "specs" && state.drill.length > 0) || (state.section === "config" && !!state.configKey)) && state.contentMaxOffset > 0 && state.focusedPane !== "content";
+  return (!!state.file || !!state.externalUrl || (state.section === "specs" && state.drill.length > 0) || (state.section === "config" && !!state.configKey)) && state.contentMaxOffset > 0 && state.focusedPane !== "content";
 }
 
 /** The explorer key for the state's current location (drill leaf or section). */
@@ -460,7 +467,9 @@ function drillTo(state: ViewState, resource: string, name: string, snap: FleetSn
       return { ...state, section: "topology", drill, selection: 0, runningOf: null };
     }
     case "spec": {
-      if (!findSpec(snap, name)) return { ...state, lastError: `no such spec "${name}"` };
+      // Another section may intentionally omit Specs. Its absence there is not
+      // evidence that this source is missing; judge after the catalog read.
+      if (snap.specsLoaded && !findSpec(snap, name)) return { ...state, lastError: `no such spec "${name}"` };
       return { ...state, section: "specs", drill: [{ kind: "spec", name }], selection: 0, runningOf: null };
     }
     default:

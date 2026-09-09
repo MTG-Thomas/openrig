@@ -1,3 +1,4 @@
+import { fileLines, externalLines, fileTargetForPath, referenceLines, referenceAction } from "./reading.js";
 import { DEFAULT_TIME_ZONE, displayTime } from "./time.js";
 import { startupLines, type StartupState } from "./startup.js";
 import { configLines } from "./config/config-model.js";
@@ -453,11 +454,11 @@ function timeZoneLines(state: ViewState, width: number): ContentLine[] {
   ], width);
 }
 
-function specTabsLine(state: ViewState, name: string): ContentLine {
+function specTabsLine(state: ViewState): ContentLine {
   const active = state.viewTab === "topology" || state.viewTab === "yaml" ? state.viewTab : "configuration";
   const labels = ["topology", "configuration", "yaml"] as const;
   const parts = labels.map((tab) => (tab === active ? `[ ${tab.toUpperCase()} ]` : `  ${tab.toUpperCase()}  `));
-  const text = `rig spec ${name}   ${parts.join(" ")}`;
+  const text = parts.join(" ");
   return {
     text,
     zones: labels.map((tab, index) => {
@@ -487,6 +488,21 @@ function sourceProvenance(spec: FleetSnapshot["specs"][number]): string {
   if (spec.sourceType === "builtin") return "built-in library";
   if (spec.sourceType === "user_file") return "user library";
   return spec.sourceState === "library_item" ? "library" : "source unknown";
+}
+
+function specSourceLines(spec: FleetSnapshot["specs"][number], snap: FleetSnapshot): ContentLine[] {
+  if (!spec.sourcePath) return [{ text: "Source path unavailable; no current-file claim." }];
+  const target = fileTargetForPath(spec.resolvedSourcePath ?? spec.sourcePath, snap.fileRoots ?? []) ?? { root: "", path: spec.sourcePath };
+  const lines = [fieldLine({ label: "source", value: `${displayPath(spec.sourcePath, 56)} · ${sourceProvenance(spec)}` }), listItem("View current source", { type: "file-open", target })];
+  if (!target.root) lines.push({ text: "Source is not mapped to a configured readable root." });
+  if (target.root) {
+    lines.push({ text: `Readable root: ${target.root}` }, ...referenceLines(spec.description ?? "", target));
+    // Prose paths stay relative to the named source, not an inferred checkout.
+    for (const match of (spec.description ?? "").matchAll(/(?:[\w.-]+\/)+[\w.-]+\.(?:md|txt|ya?ml)(?:#[\w-]+)?/g)) {
+      lines.push(listItem(`Reference: ${match[0]} · relative to source`, referenceAction(target, match[0])));
+    }
+  }
+  return lines;
 }
 
 function displayPath(path: string, max = 68): string {
@@ -663,6 +679,11 @@ function instanceContentLines(
 }
 
 function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: number, motion: MotionCtx): ContentLine[] {
+  if (state.file) {
+    const read = JSON.stringify(snap.fileRead?.target) === JSON.stringify(state.file) ? snap.fileRead?.result : null;
+    return fileLines(read, state.file, contentWidth);
+  }
+  if (state.externalUrl) return externalLines(state.externalUrl, contentWidth);
   const contentWidthForGraph = contentWidth;
   void contentWidthForGraph;
   const lines: ContentLine[] = [];
@@ -873,12 +894,12 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     const leaf = state.drill.at(-1);
     if (leaf?.kind === "spec") {
       const spec = findSpec(snap, leaf.name);
-      if (!spec) return [{ text: `spec "${leaf.name}" not in the current snapshot` }];
-      if (spec.kind === "rig") lines.push(specTabsLine(state, spec.name));
+      if (!spec) return [{ text: snap.readErrors.find((error) => error.startsWith("specs-library")) ?? (!snap.specsLoaded ? "Specs catalog read pending" : `spec "${leaf.name}" not in the current catalog`) }];
+      if (spec.kind === "rig") lines.push(specTabsLine(state));
       lines.push({ text: `${spec.kind} spec ${spec.name}` });
       lines.push(fieldLine({ label: "purpose", value: spec.description ?? "not declared in the available source" }));
       lines.push(fieldLine({ label: "provenance", value: `${sourceProvenance(spec)} · ${spec.sourceState ?? "source state not served"}` }));
-      lines.push(fieldLine({ label: "source", value: spec.sourcePath ?? "path unavailable" }));
+      lines.push(...specSourceLines(spec, snap));
       lines.push({ text: "  Authored declaration. Resource availability is not the effective loadout of a running seat." });
       lines.push(sectionRule("Observed consumers · open for effective runtime/configuration", contentWidth));
       for (const consumer of spec.consumers ?? []) {
@@ -891,7 +912,6 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       lines.push(listItem("Back · Esc", { type: "back" }));
       if (spec.sourceUnavailable) return wrapDetailLines([...lines, { text: `  Source unavailable: ${spec.sourceUnavailable}` }], contentWidth);
       if (spec.kind === "rig") {
-        if (spec.sourcePath) lines.push(fieldLine({ label: "source", value: `${displayPath(spec.sourcePath, 56)} · ${sourceProvenance(spec)}` }));
         if (state.viewTab === "topology") {
           // ROUND-4 item 1: the established table treatment, not unformatted rows
           const nodes = spec.graph?.nodes ?? [];
@@ -1020,54 +1040,25 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       }
       return wrapDetailLines(lines, contentWidth);
     }
-    lines.push({ text: "SPEC LIBRARY" });
-    lines.push({ text: state.filter ? `/ filter specs: ${state.filter} · / replace · esc clear` : "/ filter specs…" });
-    // mirrors the explorer exactly (same grouping, same expansion state, same
-    // filter-overrides-collapse rule) — glance consistency across panes
-    const expandedSet = new Set(state.expanded);
-    for (const kind of ["rig", "agent", "workflow"] as const) {
-      const shown = snap.specs.filter((s) => s.kind === kind).filter((s) => !state.filter || s.name.includes(state.filter));
-      if (shown.length === 0 && !snap.specs.some((s) => s.kind === kind)) continue;
-      lines.push({ text: `  ${kind.toUpperCase()} (${shown.length})` });
-      if (kind !== "agent") {
-        for (const s of shown)
-          lines.push({ text: `    ▪ ${s.name}`, action: { type: "drill", resource: "spec", name: s.name } });
-        continue;
-      }
-      const groups = new Map<string, typeof shown>();
-      for (const s of shown) {
-        const namespace = s.namespace ?? "(root)";
-        groups.set(namespace, [...(groups.get(namespace) ?? []), s]);
-      }
-      for (const [namespace, specs] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-        const open = namespace === "(root)" || expandedSet.has(`folder:${namespace}`) || !!state.filter;
-        if (namespace !== "(root)")
-          lines.push({
-            text: `    ${open ? "▾" : "▸"} ${namespace}/ (${specs.length})`,
-            action: { type: "toggle-expand", key: `folder:${namespace}` },
-          });
-        if (!open) continue;
-        for (const s of specs)
-          lines.push({
-            text: `${namespace === "(root)" ? "    " : "      "}▪ ${s.name}`,
-            action: { type: "drill", resource: "spec", name: s.name },
-          });
-      }
+    const selected = computeExplorerRows(state, snap)[state.selection]?.action;
+    const spec = selected?.type === "drill" && selected.resource === "spec" ? findSpec(snap, selected.name) : null;
+    if (spec) {
+      lines.push({ text: `${spec.name} · ${spec.kind} · ${sourceProvenance(spec)}` });
+      lines.push({ text: "" }, { text: spec.description?.trim() || "Purpose not declared in the available source." });
+      if (spec.kind === "rig") lines.push(fieldLine({ label: "contents", value: `${spec.pods?.length ?? 0} pods · ${spec.pods?.reduce((n, p) => n + p.members.length, 0) ?? spec.legacyNodes?.length ?? 0} members · ${spec.agentRefs?.join(", ") || "no member references served"}` }));
+      else if (spec.kind === "agent") lines.push(fieldLine({ label: "contents", value: `${spec.runtime ?? "runtime not declared"} · ${(spec.skills ?? []).length} skills · ${(spec.startupFiles ?? []).length} startup files` }));
+      else lines.push(fieldLine({ label: "contents", value: `${spec.rolesCount ?? "unknown"} roles · ${spec.stepsCount ?? "unknown"} steps` }));
+      lines.push({ text: "" }, listItem("Read details · Enter", { type: "drill", resource: "spec", name: spec.name }), ...specSourceLines(spec, snap));
+      if (spec.sourceUnavailable) lines.push({ text: `Source unavailable: ${spec.sourceUnavailable}` });
+    } else {
+      lines.push({ text: "SPEC LIBRARY" }, { text: "Choose a spec at left to preview its purpose, contents and source." },
+        { text: "Enter reads details · / filters · source opens current disk content" }, { text: "" });
+      for (const kind of ["rig", "agent", "workflow"] as const) lines.push({ text: `${kind}: ${snap.specs.filter((spec) => spec.kind === kind).length} available` });
+      if (!snap.specs.length) lines.push({ text: motion.loading ? "Library read pending" : snap.readErrors.find((e) => e.startsWith("specs-library")) ?? "Library empty — no specs served" });
     }
-    if (snap.specs.length === 0) {
-      // round-5 (guard): spin only while the owner is loading; settled empty
-      // is PROVEN empty and a settled failure is named — neither spins
-      if (motion.loading) {
-        if (!motion.reduced) motion.used = true;
-        lines.push({ text: `  ${motion.frame} library read pending — honest-empty` });
-      } else if (snap.readErrors.some((e) => e.startsWith("specs-library"))) {
-        lines.push({ text: "  ✕ library read failed — named in the status line" });
-      } else {
-        lines.push({ text: "  (library empty — proven, no specs served)" });
-      }
-    }
-    return lines;
+    return wrapDetailLines(lines, contentWidth);
   }
+
   if (state.section === "needs") {
     lines.push({ text: "NEEDS-YOU" });
     for (const item of snap.needs) {
@@ -1551,7 +1542,8 @@ function crashCartShell(
 
 export function renderScreen(state: ViewState, snap: FleetSnapshot, options: RenderOptions = {}, inputLine = ""): Screen {
   const { cols = 120, rows = 32, nowMs = 0 } = options;
-  const explW = explorerWidth(cols);
+  const fullReading = !options.startup?.open && (!!state.file || !!state.externalUrl || (cols <= 90 && state.section === "specs" && state.drill.length > 0));
+  const explW = fullReading ? 0 : explorerWidth(cols);
   if (options.startup?.open) {
     const startup = options.startup;
     const content = wrapContentLines(startupLines(startup).map((line) => ({ ...line,
@@ -1661,13 +1653,13 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
   // active-pane emphasis (k9s-class chrome): the focused pane's title is bracketed
   const explorerTitle = state.focusedPane === "explorer" ? "{ EXPLORER }" : "EXPLORER";
   const contentTitle = state.focusedPane === "content" ? `{ ${sectionTitle} }` : sectionTitle;
-  lines.push(paneRule(cols, explW, "top", explorerTitle, contentTitle));
+  lines.push(fullReading ? pad(`━ ${state.file ? "READ" : state.externalUrl ? "EXTERNAL URL" : "SPECS"} · Esc / ← Back `, cols) : paneRule(cols, explW, "top", explorerTitle, contentTitle));
 
-  const explorer = computeExplorerRows(state, snap);
+  const explorer = fullReading ? [] : computeExplorerRows(state, snap);
   // Slice-17: the file-tree re-skin is a DISPLAY transform only — rows, keys,
   // actions, and the hit-map all keep resolving against the row model above.
   const { labels: explorerDisplay, metas: explorerMetas } = navigatorDisplay(explorer, snap, explW - 1);
-  const content = contentLines(state, snap, Math.max(cols - explW - 2, 0), motion);
+  const content = contentLines(state, snap, Math.max(cols - explW - (fullReading ? 1 : 2), 0), motion);
   const footer = state.footerOn ? snap.stream.at(-1) : undefined;
   // round-5 (guard): the tmux-style ONE-SHOT activity flash targets the
   // flashed agent's EXPLORER row — per-seat pane-output events from the
@@ -1738,7 +1730,7 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
         if (rowSegs) rowSegs = spliceMarkerIntoSegs(rowSegs, selectedZone.start - 1);
       } else contentMarker = "›";
     }
-    lines.push(pad(`${left}┃${contentMarker}${contentText}`, cols));
+    lines.push(pad(fullReading ? `${contentMarker}${contentText}` : `${left}┃${contentMarker}${contentText}`, cols));
     if (row) {
       pushExplorerTargets(hitMap, row, explorerDisplay[explorerIndex] ?? row.label, y, explW);
       explorerRows.push({ ...row, y });
@@ -1748,12 +1740,12 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
     }
     // zones first: hit lookup takes the first match, so a zone wins over the row-wide action
     for (const z of zones) {
-      const target = { y, x1: explW + 3 + z.start, x2: explW + 2 + z.end, action: z.action };
+      const target = { y, x1: (fullReading ? 2 : explW + 3) + z.start, x2: (fullReading ? 1 : explW + 2) + z.end, action: z.action };
       hitMap.push(target);
       contentTargets.push(target);
     }
     if (item?.action) {
-      const target = { y, x1: explW + 3, x2: cols, action: item.action };
+      const target = { y, x1: fullReading ? 2 : explW + 3, x2: cols, action: item.action };
       hitMap.push(target);
       contentTargets.push(target);
     }
@@ -1763,8 +1755,8 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
   if (footer) lines.push(pad(`≋ ${displayTime(footer.tsEmitted, state.timeZone)} ${footer.sourceSession}: ${footer.body}`, cols));
   const drillPath = state.drill.map((d) => d.name).join(" → ");
   const readWarn = snap.readErrors.length > 0 ? `  ⚠ ${snap.readErrors.length} read(s) failed: ${snap.readErrors[0]}` : "";
-  lines.push(paneRule(cols, explW, "bottom"));
-  lines.push(pad(keybindHints(state), cols));
+  lines.push(fullReading ? "━".repeat(cols) : paneRule(cols, explW, "bottom"));
+  lines.push(pad(fullReading ? "↑↓ scroll / links · → links · Enter open · Esc Back · refresh · v copy" : keybindHints(state), cols));
   lines.push(
     pad(
       `[${state.instanceId}] ${state.section}${drillPath ? " · " + drillPath : ""}${state.lastError ? "  ✗ " + state.lastError : ""}${state.notice ? "  ▸ " + state.notice : ""}${readWarn}${state.timeZoneWarning ? " · ⚠ timezone; run timezone" : ""}`,

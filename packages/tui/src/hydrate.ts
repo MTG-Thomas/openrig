@@ -1,3 +1,4 @@
+import { fileTargetForPath } from "./reading.js";
 // Snapshot hydrator: maps the §4.A daemon reads (via DaemonClient, the one
 // HTTP module) into FleetSnapshot for the renderer. Mapping discipline
 // (PIN 2/PIN 3, planner Phase-2 reminders):
@@ -96,6 +97,7 @@ interface SpecLibraryRead {
   name: string;
   version?: string;
   sourcePath?: string;
+  resolvedSourcePath?: string | null;
   sourceType?: "builtin" | "user_file";
   relativePath?: string;
   updatedAt?: string;
@@ -342,7 +344,7 @@ function agentSpecTruth(raw?: string): { runtime?: string; skills: string[] } {
  * avoids re-reading every spec every refresh; the key rolls when the library
  * entry's updatedAt changes. Owned by the caller (instance-scoped, no module state). */
 export type SpecReviewCache = Map<string, SpecLibraryReviewRead>;
-export type HydrateViewContext = Pick<ViewState, "section" | "viewTab" | "drill">;
+export type HydrateViewContext = Pick<ViewState, "section" | "viewTab" | "drill" | "file" | "externalUrl">;
 
 export async function hydrateSnapshot(
   client: DaemonClient,
@@ -362,6 +364,17 @@ export async function hydrateSnapshot(
     }
   }
 
+  if (viewContext?.file) {
+    const target = viewContext.file;
+    const [result, roots] = await Promise.all([client.readFile(target), safe<Awaited<ReturnType<DaemonClient["fileRoots"]>>>("file-roots", () => client.fileRoots())]);
+    if (!("error" in result) && !result.resolvedPath) {
+      const canonical = fileTargetForPath(result.absolutePath, roots?.roots ?? []);
+      if (canonical?.root === target.root) result.resolvedPath = canonical.path;
+    }
+    return { ...emptySnapshot(), fileRead: { target, result, readAt: new Date().toISOString() }, fileRoots: roots?.roots ?? [], readErrors, hydratedAt: new Date().toISOString() };
+  }
+  if (viewContext?.externalUrl) return { ...emptySnapshot(), hydratedAt: new Date().toISOString() };
+
   // CONFIG never invokes fleet aggregation, host probes, queue enrichment or provider checks.
   // Failures replace earlier values with an explicit unavailable state.
   if (viewContext?.section === "config") {
@@ -378,6 +391,8 @@ export async function hydrateSnapshot(
     return { ...emptySnapshot(), config, controlPlane, connections, daemonTarget, hydratedAt: new Date().toISOString(), readErrors };
   }
 
+  const readingOnly = viewContext?.section === "specs";
+  const fileRoots = readingOnly ? await safe<Awaited<ReturnType<DaemonClient["fileRoots"]>>>("file-roots", () => client.fileRoots()) : null;
   const topologyLeaf = viewContext?.section === "topology" ? viewContext.drill.at(-1) : undefined;
   const wantsConnections = viewContext?.section === "connections";
   const wantsSpecs = !viewContext || viewContext.section === "specs" || topologyLeaf?.kind === "agent";
@@ -387,22 +402,22 @@ export async function hydrateSnapshot(
 
   const [instanceHealth, healthProjection, agg, summaries, library, review, streamItems, attention, blocked, inProgress, pending, recentlyFinished, scopesRead, executionRead, sliceDetailRead, connectionsRead] = await Promise.all([
     safe<InstanceHealthRead>("health", () => client.health()),
-    safe<HealthProjectionRead>("health-findings", () => client.healthFindings()),
-    safe<AttentionAggregateRead>("attention-aggregate", () => client.attentionAggregate()),
-    safe<RigSummaryRead[]>("rigs-summary", () => client.rigsSummary()),
+    readingOnly ? Promise.resolve(null) : safe<HealthProjectionRead>("health-findings", () => client.healthFindings()),
+    readingOnly ? Promise.resolve(null) : safe<AttentionAggregateRead>("attention-aggregate", () => client.attentionAggregate()),
+    readingOnly ? Promise.resolve(null) : safe<RigSummaryRead[]>("rigs-summary", () => client.rigsSummary()),
     (wantsSpecs || wantsConnections) ? safe<SpecLibraryRead[]>("specs-library", () => client.specsLibrary()) : Promise.resolve(null),
-    safe<ReviewFleetRead>("review-fleet", () => client.reviewFleet()),
-    safe<StreamItemRead[]>("stream-tail", () => client.streamLatest()),
+    readingOnly ? Promise.resolve(null) : safe<ReviewFleetRead>("review-fleet", () => client.reviewFleet()),
+    readingOnly ? Promise.resolve(null) : safe<StreamItemRead[]>("stream-tail", () => client.streamLatest()),
     // PULSE ▲ NEEDS YOU + ⧗ BLOCKED + ◌ PARKED — the shipped queue reads (increments 2/2b)
-    safe<QueueItemRead[]>("queue-attention", () => client.queueAttention()),
-    safe<QueueItemRead[]>("queue-blocked", () => client.queueBlocked()),
-    safe<QueueItemRead[]>("queue-in-progress", () => client.queueInProgress()),
+    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-attention", () => client.queueAttention()),
+    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-blocked", () => client.queueBlocked()),
+    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-in-progress", () => client.queueInProgress()),
     // PULSE UP NEXT + JUST FINISHED lane reads (increment 3) — same shipped /list route
-    safe<QueueItemRead[]>("queue-pending", () => client.queuePending()),
-    safe<QueueItemRead[]>("queue-recently-finished", () => client.queueRecentlyFinished()),
-    safe<{ missions: unknown[]; sourceObservation?: { state: string } }>("scopes", () => client.scopesDetailed() as Promise<{ missions: unknown[] }>),
-    safe<{ rows: unknown[] }>("execution", () => client.execution(executionMission ?? undefined) as Promise<{ rows: unknown[] }>),
-    sliceDetailName
+    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-pending", () => client.queuePending()),
+    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-recently-finished", () => client.queueRecentlyFinished()),
+    readingOnly ? Promise.resolve(null) : safe<{ missions: unknown[]; sourceObservation?: { state: string } }>("scopes", () => client.scopesDetailed() as Promise<{ missions: unknown[] }>),
+    readingOnly ? Promise.resolve(null) : safe<{ rows: unknown[] }>("execution", () => client.execution(executionMission ?? undefined) as Promise<{ rows: unknown[] }>),
+    !readingOnly && sliceDetailName
       ? safe<SliceDetailSnap>(`slice-detail(${sliceDetailName})`, () => client.sliceDetail(sliceDetailName))
       : Promise.resolve(null),
     wantsConnections ? safe<ConnectionsRead>("connections", () => client.connections()) : Promise.resolve(null),
@@ -560,9 +575,10 @@ export async function hydrateSnapshot(
         name: entry.name,
         version: entry.version,
         sourcePath: entry.sourcePath,
+        resolvedSourcePath: entry.resolvedSourcePath,
         sourceType: entry.sourceType,
         relativePath: entry.relativePath,
-        consumers: entry.kind === "rig" ? rigConsumers.get(entry.name) ?? [] : entry.kind === "agent" ? localHost.rigs.flatMap((rig) => rig.pods.flatMap((pod) => pod.agents.filter((agent) => agent.spec === entry.name).map((agent) => ({ rig: rig.name, host: localHost.name, agent: agent.name, runtime: agent.runtime, model: agent.model, status: agent.status })))) : undefined,
+        consumers: readingOnly ? undefined : entry.kind === "rig" ? rigConsumers.get(entry.name) ?? [] : entry.kind === "agent" ? localHost.rigs.flatMap((rig) => rig.pods.flatMap((pod) => pod.agents.filter((agent) => agent.spec === entry.name).map((agent) => ({ rig: rig.name, host: localHost.name, agent: agent.name, runtime: agent.runtime, model: agent.model, status: agent.status })))) : undefined,
       };
       const detail = reviewed.get(entry.id);
       const sourceUnavailable = readErrors.find((error) => error.startsWith(`spec-review(${entry.name}):`)) ?? "source review unavailable";
@@ -654,6 +670,8 @@ export async function hydrateSnapshot(
       : { availability: "unavailable", evaluatedAt: null, total: 0, truncated: false, records: [] },
     hosts: [localHost, ...remoteHosts],
     specs,
+    specsLoaded: wantsSpecs && library != null,
+    fileRoots: fileRoots?.roots,
     needs,
     humanQueueProbed: review != null && !review.registryError && Array.isArray(review.hosts) && review.hosts.length > 0
       && review.hosts.every((host) => host.status.status === "ok"),

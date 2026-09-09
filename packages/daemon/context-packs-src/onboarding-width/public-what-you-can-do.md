@@ -514,6 +514,13 @@ your circumstances is configuration, and the ones that are not, another agent ca
   Open the instance row for one continuous cross-rig agent table with pod separators and material
   `RECENT` transitions; drill into a rig, mission, slice, or agent without losing the owning
   identity. Use the mission's workflow/packet view and Specs purpose/source to understand work.
+  In **Specs**, selection previews purpose, contents and provenance; Enter opens details.
+  **View current source** reads disk within the explicitly configured readable roots. Relative
+  Markdown links resolve against that source; headings open with a labelled starting point.
+  Escape or `back` restores the caller's selection and scroll. Detail uses the full width on
+  narrow terminals. The TUI command `read <root>/<path>#heading` also opens a named source;
+  missing, denied, binary, truncated and missing-heading results stay explicit. HTTP(S) links
+  show a selectable destination without opening a browser; `v` enables terminal text selection.
   Tab completes commands and snapshot arguments; Recent opens original events. **CONFIG**
   browses instance/work roots, context, display, waiting, recovery, activity and advanced settings;
   Slack and people are one category. Select a category, use right/left to change panes,

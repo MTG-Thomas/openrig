@@ -136,6 +136,7 @@ export function resolveEscapeAction(
   commandEditing = false,
 ): Action | null {
   if (event.key !== "escape" || commandEditing) return null;
+  if ((state.file || state.externalUrl) && state.history?.length) return { type: "back" };
   if (state.healthOpen) return { type: "health-close" };
   if (state.filter) return { type: "filter", text: "" };
   if (state.history?.length) return { type: "back" };
@@ -157,7 +158,7 @@ export function resolveKeyAction(
   // it uses the SAME input as every other view: ←→ switch panes (the sidebar is
   // the founder's action path), ↑↓ move the focused pane, Enter drills. No pulse
   // special-case — the lane cells are the content pane's selection targets.
-  if (event.key === "left") return { type: "focus", pane: "explorer" };
+  if (event.key === "left") return screen.explorerWidth === 0 ? { type: "back" } : { type: "focus", pane: "explorer" };
   if (event.key === "right") return screen.contentTargets.length > 0 ? { type: "focus", pane: "content" } : null;
   if (event.key === "up" || event.key === "down") {
     const delta = event.key === "down" ? 1 : -1;
@@ -166,7 +167,7 @@ export function resolveKeyAction(
     // enters its links. Non-scrolling spec details and every other view fall through
     // to the unchanged explorer-move / content-select behavior.
     if (specDetailArrowsScroll(state)) return { type: "content-scroll", delta };
-    if (state.focusedPane === "content") {
+    if (state.focusedPane === "content" || screen.explorerWidth === 0) {
       // k9s selection-driven auto-scroll: at the viewport EDGE with more content beyond, the arrow
       // SCROLLS the viewport (reveal) instead of clamping — so ↑↓ reach every row without PgUp/PgDn
       // (most keyboards lack them — the founder fix). Away from the edge it moves the selection.
@@ -179,7 +180,7 @@ export function resolveKeyAction(
     return { type: "select", delta, rowCount: explorerCount };
   }
   if (event.key === "enter") {
-    return state.focusedPane === "content"
+    return state.focusedPane === "content" || screen.explorerWidth === 0
       ? (screen.contentTargets[state.contentSelection]?.action ?? { type: "error", message: "nothing selected in content" })
       : { type: "activate" };
   }
