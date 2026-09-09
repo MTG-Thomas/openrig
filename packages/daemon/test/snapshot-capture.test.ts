@@ -19,6 +19,10 @@ import { CheckpointStore } from "../src/domain/checkpoint-store.js";
 import { SnapshotCapture } from "../src/domain/snapshot-capture.js";
 import type { PersistedEvent } from "../src/domain/types.js";
 import { createFullTestDb } from "./helpers/test-app.js";
+import { snapshotMatchesCurrentOccupants } from "../src/domain/rehydrate-eligibility.js";
+import { buildRestorePlanPreview, collectPreviewSessionRows } from "../src/domain/restore-plan-preview.js";
+import { readFreshOccupantRelations } from "../src/domain/fresh-occupant-relation.js";
+import { deriveRehydrateOccupantsByNode } from "../src/domain/active-occupant.js";
 
 function setupDb(): Database.Database {
   return createFullTestDb();
@@ -55,6 +59,32 @@ describe("SnapshotCapture", () => {
     sessionRegistry.updateBinding(n1.id, { tmuxSession: "r99-demo1-lead", cmuxSurface: "s-1" });
     return { rig, n1, n2 };
   }
+
+  it("does not collapse a dangling current effect into a never-occupied seat", () => {
+    expect(deriveRehydrateOccupantsByNode([], ["n1"], { n1: "missing-session" }).n1).toEqual({ kind: "ambiguous", candidateIds: [] });
+  });
+
+  it("uses the current fresh effect consistently in reboot capture, live preview and snapshot matching", () => {
+    const { rig, n1 } = seedRig();
+    const old = sessionRegistry.registerSession(n1.id, "r99-demo1-lead");
+    const successor = sessionRegistry.registerSession(n1.id, "r99-demo1-lead", "fresh");
+    sessionRegistry.markDetached(old.id);
+    sessionRegistry.markDetached(successor.id);
+    sessionRegistry.updateResumeToken(successor.id, "claude_id", "native-successor", "hook");
+    const generation = sessionRegistry.currentOccupantTenure(n1.id)!.generationUuid;
+    const event = { nodeId: n1.id, sessionId: successor.id, newGeneration: generation };
+    db.prepare("INSERT INTO events (rig_id, type, payload) VALUES (?, 'seat.fresh_launched', ?)").run(rig.id, JSON.stringify(event));
+    const current = rigRepo.getRig(rig.id)!;
+    const snapshot = capture.captureSnapshot(rig.id, "auto-rehydrate");
+    expect(snapshot.data.activeOccupantsByNode?.[n1.id]).toEqual({ kind: "resolved", sessionId: successor.id });
+    expect(snapshotMatchesCurrentOccupants(db, current, snapshot)).toBe(true);
+    const preview = buildRestorePlanPreview(current, null, collectPreviewSessionRows(db, current, null), undefined, Date.now(), readFreshOccupantRelations(db, rig.id));
+    expect(preview.nodes.find((node) => node.logicalId === n1.logicalId)).toMatchObject({ occupantSessionId: successor.id, intendedAction: "resume-original" });
+    // Conflicting effects under the same generation cannot select either history.
+    db.prepare("INSERT INTO events (rig_id, type, payload) VALUES (?, 'seat.fresh_launched', ?)").run(rig.id, JSON.stringify({ ...event, sessionId: old.id }));
+    expect(snapshotMatchesCurrentOccupants(db, current, snapshot)).toBe(false);
+    expect(capture.captureSnapshot(rig.id, "auto-rehydrate").data.activeOccupantsByNode?.[n1.id]?.kind).toBe("ambiguous");
+  });
 
   it("assembles correct SnapshotData (rig + nodes + edges + bindings)", () => {
     const { rig, n1 } = seedRig();

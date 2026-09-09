@@ -208,6 +208,7 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
     case "footer":
       return { ...next, footerOn: action.on ?? !state.footerOn };
     case "act":
+    case "startup":
       // Acts are daemon writes executed by the driver loop, never view-state
       // mutations — the view is untouched; the loop reports via 'notice'.
       return next;

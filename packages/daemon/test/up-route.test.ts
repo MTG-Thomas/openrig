@@ -402,7 +402,7 @@ describe("Up API route", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.nodes[0].intendedAction).toBe("awaiting-decision");
-      expect(body.nodes[0].reason).toContain("no token");
+      expect(body.nodes[0].reason).toContain("no usable native resume identity");
     });
 
     it("plan:true + freshLogicalIds previews fresh-primed for the listed RESUMABLE seat (operation-B honesty), zero mutation", async () => {

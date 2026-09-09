@@ -3324,6 +3324,7 @@ describe("RestoreOrchestrator", () => {
       expect(result.result.nodes[0]!.status).toBe("resumed");
       const allSent = (tmux.sendText as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[1] ?? ""));
       expect(allSent.every((s) => !s.includes("OpenRig session identity:"))).toBe(true);
+      expect((db.prepare("SELECT startup_actions_json FROM node_startup_context WHERE node_id=?").get(node.id) as {startup_actions_json:string}).startup_actions_json).toContain("guard03-test-identity");
     });
   });
 

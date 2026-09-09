@@ -1,7 +1,6 @@
 // Crash-cart C3 unit-C — map the parsed `rig crash-cart --json` verdict onto the renderScreen
-// daemon-down opts. The verb is the SSOT; this is the TUI's thin interpretation. RAIL 3: a DOWN
-// verdict that carries a REFUSAL (the read fail-closed because a daemon actually answered) NEVER
-// renders the cockpit — it falls to the normal TUI.
+// daemon-down opts. Refusals and unavailable prerequisites stay visible, without
+// turning a failed discovery into permission to restore or mint an identity.
 import type { DaemonState, DaemonUnverifiedEvidence } from "./contract.js";
 import { buildCrashCartModel, type CrashCartDiscoveryInput, type CrashCartModel } from "./crash-cart-model.js";
 import type { RestoreLifecycleVM } from "./restore-lifecycle.js";
@@ -16,6 +15,9 @@ export interface CrashCartEmit {
 
 /** The daemon-down subset of RenderOptions the TUI feeds renderScreen (empty ⇒ normal fleet views). */
 export interface CrashCartRenderOpts {
+  unavailable?: string;
+  unavailableExpanded?: boolean;
+  starting?: string;
   daemonState?: DaemonState;
   crashCart?: CrashCartModel;
   daemonEvidence?: DaemonUnverifiedEvidence;
@@ -29,9 +31,9 @@ export interface CrashCartRenderOpts {
   confirm?: string;
 }
 
-/** Verdict → render opts. DOWN+discovery → cockpit; UNVERIFIED+evidence → cannot-verify; else (UP, or
- *  DOWN+refusal) → normal TUI (never the cockpit from a refusal). */
+/** A refusal is an unavailable read, never an empty instance. */
 export function crashCartRenderOpts(emit: CrashCartEmit): CrashCartRenderOpts {
+  if (emit.refusal) return { unavailable: emit.refusal };
   if (emit.state === "down" && emit.discovery) {
     return { daemonState: "down", crashCart: buildCrashCartModel(emit.discovery) };
   }
@@ -42,16 +44,20 @@ export function crashCartRenderOpts(emit: CrashCartEmit): CrashCartRenderOpts {
 }
 
 /**
- * Run the `rig crash-cart --json` verb (injected) + map its JSON → render opts. Any failure (the verb
- * erroring, or unparseable output) yields normal-TUI opts — the probe NEVER fabricates a cockpit from a
- * failed run (honest-degraded).
+ * Run the public read. Failure is visible and does not authorize recovery effects.
  */
 export async function probeCrashCart(runVerb: () => Promise<string>): Promise<CrashCartRenderOpts> {
   try {
     const emit = JSON.parse(await runVerb()) as CrashCartEmit;
-    if (!emit || typeof emit.state !== "string") return {};
+    if (!emit || !["up", "down", "unverified"].includes(emit.state)) {
+      const error = emit as unknown as { error?: { message?: string } | string };
+      const detail = typeof error?.error === "string" ? error.error : error?.error?.message;
+      return { unavailable: detail ?? "Crash-cart did not return a daemon verdict." };
+    }
+    if (emit.state === "down" && !emit.discovery && !emit.refusal) return { unavailable: "Daemon is down; its saved state could not be read." };
+    if (emit.state === "unverified" && !emit.evidence) return { unavailable: "Daemon state could not be verified; probe evidence is unavailable." };
     return crashCartRenderOpts(emit);
-  } catch {
-    return {};
+  } catch (error) {
+    return { unavailable: `Startup prerequisite unavailable: ${error instanceof Error ? error.message : String(error)}` };
   }
 }

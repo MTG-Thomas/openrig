@@ -143,6 +143,12 @@ export function assessNativeResumeProbe(
   }
 
   if (runtime === "codex") {
+    if (/requires a newer version of Codex/i.test(paneContent.replace(/\s+/g, " "))) {
+      return {
+        status: "attention_required", code: "codex_client_incompatible",
+        detail: "The selected Codex client cannot use the configured model. Use a compatible client and retry; replacing history or changing credentials will not repair this prerequisite.",
+      };
+    }
     if (paneContent.includes("No saved session found")) {
       return {
         status: "failed",
@@ -164,6 +170,15 @@ export function assessNativeResumeProbe(
         detail: "Codex is waiting for model selection before the session can become interactive.",
       };
     }
+    // Native review panels can overlay a normal Codex header. The header
+    // alone does not prove the prompt can receive startup context.
+    if (looksLikeCodexHookReviewPrompt(paneContent)) {
+      return {
+        status: "inconclusive",
+        code: "hook_trust_gate",
+        detail: "Codex is waiting for hook trust approval before the session can become interactive.",
+      };
+    }
     if (looksLikeCodexTui(paneContent)) {
       return {
         status: "resumed",
@@ -178,25 +193,11 @@ export function assessNativeResumeProbe(
         detail: "Codex is waiting for workspace trust approval before the session can become interactive.",
       };
     }
-    if (looksLikeCodexHookReviewPrompt(paneContent)) {
-      return {
-        status: "inconclusive",
-        code: "hook_trust_gate",
-        detail: "Codex is waiting for hook trust approval before the session can become interactive.",
-      };
-    }
     if (paneContent.includes("Update available!") || paneContent.includes("Updating Codex")) {
       return {
         status: "inconclusive",
         code: "update_gate",
         detail: "Codex reached an update flow, so process-alive alone is not proof of a restored conversation.",
-      };
-    }
-    if (paneCommand.startsWith("codex")) {
-      return {
-        status: "resumed",
-        code: "active_runtime",
-        detail: "Codex is the active foreground process in the probe pane.",
       };
     }
     if (SHELL_COMMANDS.has(paneCommand)) {
@@ -209,7 +210,7 @@ export function assessNativeResumeProbe(
     return {
       status: "inconclusive",
       code: "awaiting_runtime",
-      detail: "Codex did not report an explicit failure, but it is not yet the active pane process.",
+      detail: "Codex did not report an explicit failure, but an interactive conversation has not been observed.",
     };
   }
 
@@ -291,15 +292,15 @@ function looksLikeClaudeMcpApprovalPrompt(paneContent: string): boolean {
 }
 
 function looksLikeCodexTui(paneContent: string): boolean {
-  if (paneContent.includes("OpenAI Codex (v")) {
-    return true;
-  }
-
-  const recentLines = paneContent.split("\n").slice(-12).join("\n");
-  const hasPromptLine = /(^|\n)\s*›(?:\s|$)/.test(recentLines);
+  const current = paneContent.slice(Math.max(0, paneContent.lastIndexOf("OpenAI Codex (v")));
+  if (/model:\s*loading\b/i.test(current)) return false;
+  const recentLines = current.trimEnd().split("\n").slice(-20).join("\n");
+  const hasPromptLine = recentLines.split("\n").some((line) => {
+    const text = line.trimStart();
+    return text.startsWith("›") && !/^\d+\.\s/.test(text.slice(1).trimStart());
+  });
   const hasModelFooter = /(^|\n)\s{2,}gpt-[^\n]+ · [^\n]+(?:\n|$)/.test(recentLines);
-
-  return hasPromptLine && hasModelFooter;
+  return hasPromptLine && (current.includes("OpenAI Codex (v") || hasModelFooter);
 }
 
 // Codex prints these messages when its stored OAuth access token can no
@@ -329,8 +330,15 @@ function looksLikeCodexTrustPrompt(paneContent: string): boolean {
 }
 
 function looksLikeCodexHookReviewPrompt(paneContent: string): boolean {
-  return paneContent.includes("Hooks need review")
-    && paneContent.includes("Trust all and continue");
+  // A newer header supersedes a dismissed prompt retained in scrollback.
+  const current = paneContent.slice(Math.max(0, paneContent.lastIndexOf("OpenAI Codex (v")));
+  // Closing a review panel may redraw only the input prompt, without a new
+  // header. A later non-menu conversation prompt supersedes that old panel.
+  const gateEnd = Math.max(current.lastIndexOf("Press t to trust"), current.lastIndexOf("Trust all and continue"));
+  if (gateEnd >= 0 && current.slice(gateEnd).split("\n").some((line) => /^\s*›(?:\s|$)/.test(line) && !/^\s*›\s*\d+\.\s/.test(line))) return false;
+  return (current.includes("Hooks need review") && current.includes("Trust all and continue"))
+    || (/hooks? needs? review before (?:it|they) can run\./.test(current)
+      && /Press t to trust(?: all)?;/.test(current));
 }
 
 function looksLikeCodexModelSelectionPrompt(paneContent: string): boolean {

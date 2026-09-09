@@ -327,6 +327,43 @@ export class SeatLifecycleService {
     return { ok: true, seat, actions: { sessionsExited, bindingCleared: binding !== null } };
   }
 
+  /** Finish context delivery to the same fresh occupant after its native gate.
+   * This never launches a process or replays an uncertain/finished delivery.
+   */
+  async continueFreshStartup(seatRef: string) {
+    const resolved = this.resolveSeat(seatRef);
+    if ("code" in resolved) return resolved;
+    const seat = this.describe(resolved);
+    const node = this.rigRepo.getRig(seat.rigId)?.nodes.find((n) => n.id === seat.nodeId);
+    const session = this.latestSession(seat.nodeId);
+    const binding = this.sessionRegistry.getBindingForNode(seat.nodeId);
+    if (!node || !session || !binding?.tmuxSession || !this.startupOrchestrator
+      || !this.startupOrchestrator.canContinueFresh(node.id, session.id)) {
+      return { ok: false as const, code: "continuation_unavailable", message: "No verified pending fresh-context delivery exists for this occupant. Refresh to inspect its actual state." };
+    }
+    const pane = await observeSolePane(this.tmuxAdapter, binding.tmuxSession);
+    if (!pane.ok || pane.pane !== binding.tmuxPane) return { ok: false as const, code: "binding_changed", message: "The managed terminal binding changed; context was not delivered." };
+    const adapter = node.runtime ? this.runtimeAdapters[node.runtime] : undefined;
+    if (!adapter) return { ok: false as const, code: "runtime_adapter_missing", message: "The configured runtime adapter is unavailable." };
+    const ready = await adapter.checkReady({ ...binding, cwd: node.cwd ?? "." });
+    if (!ready.ready) return { ok: false as const, code: "attention_required", message: ready.reason ?? "Resolve the native prerequisite first." };
+    const startup = this.readStartupContext(node.id, node.cwd ?? ".");
+    if (!startup.ok) return startup.refusal;
+    if (startup.context.runtime !== node.runtime) return { ok: false as const, code: "startup_context_runtime_mismatch", message: "The saved startup context belongs to a different runtime." };
+    // Recheck after the asynchronous native observation; startNode immediately
+    // records pending before its first await, consuming the retained permission.
+    if (this.latestSession(node.id)?.id !== session.id || this.sessionRegistry.getBindingForNode(node.id)?.tmuxPane !== pane.pane
+      || !this.startupOrchestrator.canContinueFresh(node.id, session.id)) return { ok: false as const, code: "continuation_unavailable", message: "Startup changed during the readiness check. Refresh." };
+    const result = await this.startupOrchestrator.startNode({
+      rigId: seat.rigId, nodeId: node.id, sessionId: session.id,
+      binding: { ...binding, cwd: node.cwd ?? ".", model: node.model ?? undefined, codexConfigProfile: node.codexConfigProfile ?? undefined },
+      adapter, plan: startup.context.plan, resolvedStartupFiles: startup.context.resolvedStartupFiles,
+      startupActions: startup.context.startupActions, isRestore: false,
+      sessionName: session.session_name, skipHarnessLaunch: true, continueFreshStartup: true, includeDurableObligations: true, allowFreshFallback: false,
+    });
+    return { ...result, message: result.ok ? "Configured context delivered to the existing fresh conversation." : result.errors.join("; ") };
+  }
+
   /** Deliberately replace exactly one managed seat with a blank native occupant. */
   async launchFresh(input: {
     seatRef: string;
@@ -385,7 +422,11 @@ export class SeatLifecycleService {
         guidance: "Stop the adopted process yourself, then run rig seat clean before launching fresh.",
       };
     }
-    const supersededSessionIds = retiringRows.map((row) => row.id);
+    // Detached is terminal for process cleanup, but remains a reboot candidate.
+    // A deliberate fresh launch must retire that prior history as well.
+    const supersededSessionIds = (this.db.prepare(
+      "SELECT id FROM sessions WHERE node_id = ? AND status NOT IN ('superseded', 'exited')",
+    ).all(node.id) as Array<{ id: string }>).map((row) => row.id);
     const retiringGeneration = this.sessionRegistry.currentOccupantTenure(node.id)?.generationUuid ?? null;
 
     const canonicalProbe = await this.probeLiveness(
@@ -525,6 +566,7 @@ export class SeatLifecycleService {
       resolvedStartupFiles: startup.context.resolvedStartupFiles,
       startupActions: startup.context.startupActions,
       isRestore: false,
+      includeDurableObligations: true,
       sessionName: canonicalSessionName,
       allowFreshFallback: false,
     });

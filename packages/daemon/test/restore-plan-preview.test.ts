@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildRestorePlanPreview, collectPreviewSessionRows, type PreviewSessionRow } from "../src/domain/restore-plan-preview.js";
-import type { RigWithRelations } from "../src/domain/types.js";
+import type { RigWithRelations, Snapshot } from "../src/domain/types.js";
 import { createFullTestDb } from "./helpers/test-app.js";
 import { SessionRegistry } from "../src/domain/session-registry.js";
 
@@ -34,6 +34,24 @@ const FRESH = "2026-07-02 11:59:00"; // 1 min ago (< 1h threshold)
 const OLD = "2026-07-02 10:00:00";   // 2h ago (> 1h threshold)
 
 describe("FR-6 restore-plan token state", () => {
+  it("presents a never-occupied current seat as new, without a history warning", () => {
+    const rig = rigWith([{ id: "n1", logicalId: "a", runtime: "codex" }]);
+    const result = buildRestorePlanPreview(rig, null, []).nodes[0]!;
+    expect(result).toMatchObject({ hasHistory: false, intendedAction: "fresh-primed" });
+    expect(result.reason).toBeUndefined();
+  });
+  it("honors explicit snapshot occupant state over the legacy relation", () => {
+    const rig = rigWith([{ id: "n1", logicalId: "a", runtime: "claude-code" }]);
+    const rows = [row("n1")];
+    const snapshot = { id: "snap", kind: "manual", createdAt: "now", data: {
+      sessions: rows, activeSessionIdByNode: { n1: "s-n1" },
+      activeOccupantsByNode: { n1: { kind: "ambiguous", candidateIds: ["s-n1", "other"] } },
+    } } as unknown as Snapshot;
+    const result = buildRestorePlanPreview(rig, snapshot, rows).nodes[0]!;
+    expect(result.intendedAction).toBe("awaiting-decision");
+    expect(result.freshRequired).toBe(false);
+    expect(result.reason).toContain("multiple live occupant");
+  });
   it("missing: no token → freshRequired, --fresh would be needed", () => {
     const rig = rigWith([{ id: "n1", logicalId: "a", runtime: "claude-code" }]);
     const p = buildRestorePlanPreview(rig, null, [row("n1", { resumeToken: null, resumeType: null, resumeProvenance: null })], undefined, NOW);

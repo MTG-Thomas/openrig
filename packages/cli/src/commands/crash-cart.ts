@@ -1,7 +1,8 @@
 import { Command } from "commander";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { ConfigStore } from "../config-store.js";
 
 // `rig crash-cart --json` — the daemon-DOWN recovery verdict emit (plan c015d9ed §C3, coupling ruling
 // option A). Prints ONE JSON = the 3-state detector verdict + (on DOWN) the discovery — READ-ONLY, a
@@ -37,16 +38,22 @@ function openrigHome(): string {
  *  the detector's readDaemonJson omits it). */
 function readDaemonJsonWithDb(home: string): { pid: number; port: number; host?: string; db: string } | undefined {
   const p = join(home, "daemon.json");
-  if (!existsSync(p)) return undefined;
+  if (!existsOrThrow(p)) return undefined;
   try {
     const j = JSON.parse(readFileSync(p, "utf8")) as { pid?: unknown; port?: unknown; host?: unknown; db?: unknown };
     if (typeof j.pid === "number" && typeof j.port === "number" && typeof j.db === "string") {
       return { pid: j.pid, port: j.port, host: typeof j.host === "string" ? j.host : undefined, db: j.db };
     }
-    return undefined;
-  } catch {
-    return undefined;
+    throw new Error("daemon.json has no usable PID, port and database path");
+  } catch (error) {
+    throw new Error(`Cannot read recorded daemon state at ${p}: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/** Only ENOENT means absent; permissions and dangling links must fail visibly. */
+function existsOrThrow(path: string): boolean {
+  try { lstatSync(path); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
 }
 
 /**
@@ -91,7 +98,8 @@ async function realEmit(): Promise<CrashCartEmit> {
         isProcessAlive: cc.isProcessAlive,
         probeHealthz: (url) => probeClassified(url).then((r) => r === "answered"),
         copyFile: copyFileSync,
-        exists: existsSync,
+        exists: existsOrThrow,
+        configuredDbPath: new ConfigStore().resolve().db.path,
         makeScratchDir: () => mkdtempSync(join(tmpdir(), "crash-cart-")),
         removeScratchDir: (d) => rmSync(d, { recursive: true, force: true }),
         openDb: cc.openDaemonDbReadonly,

@@ -120,6 +120,7 @@ function isSessionAbsenceError(err: unknown): boolean {
   const msg = err.message.toLowerCase();
   return msg.includes("session not found") ||
     msg.includes("can't find session") ||
+    msg.includes("no current target") ||
     msg.includes("no session");
 }
 
@@ -239,6 +240,24 @@ function parseLines<T>(output: string, parser: (line: string) => T | null): T[] 
 
 export class TmuxAdapter {
   constructor(private exec: ExecFn, private fileOps: TmuxFileOps = defaultTmuxFileOps()) {}
+
+  /** Start an empty native terminal server, without inventing a seat/session. */
+  async startServer(): Promise<TmuxResult> {
+    const probeName = `openrig-startup-${randomUUID()}`;
+    try {
+      if ((await this.probeSession(probeName)).state !== "transport_unavailable") return { ok: true };
+      // tmux -D keeps an empty server alive. Native socket ownership arbitrates
+      // concurrent starts; the readback below, not shell exit, proves availability.
+      await this.exec("tmux -D </dev/null >/dev/null 2>&1 &");
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        if ((await this.probeSession(probeName)).state !== "transport_unavailable") return { ok: true };
+      }
+      return { ok: false, code: "tmux_unavailable", message: "The terminal server did not become available. Check tmux and its socket permissions." };
+    } catch (error) {
+      return { ok: false, code: "tmux_unavailable", message: `Terminal server unavailable: ${(error as Error).message}` };
+    }
+  }
 
   async listSessions(): Promise<TmuxSession[]> {
     try {

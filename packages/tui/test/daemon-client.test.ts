@@ -134,4 +134,15 @@ describe("daemon client = the §4.A table, one module, nothing else (FR-8/FR-9)"
     const c = new DaemonClient({ baseUrl: "http://x", fetchImpl });
     await expect(c.ps()).rejects.toThrow(/GET \/api\/ps → 503/);
   });
+  it("reads the current terminal credential after first daemon start", async () => {
+    let headers: Record<string, string> = {};
+    const seen: unknown[] = [];
+    const c = new DaemonClient({ baseUrl: "http://x", headers: () => headers,
+      fetchImpl: (async (_url, init) => { seen.push(init?.headers); return new Response("{}"); }) as typeof fetch });
+    await c.startupRequest("/r1");
+    headers = { Authorization: "Bearer newly-created-test-token" };
+    await c.startupRequest("/r1");
+    expect(seen).toEqual([{ "Content-Type": "application/json" },
+      { Authorization: "Bearer newly-created-test-token", "Content-Type": "application/json" }]);
+  });
 });

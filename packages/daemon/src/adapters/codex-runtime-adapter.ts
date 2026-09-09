@@ -58,6 +58,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
   private sleep: (ms: number) => Promise<void>;
   private resolveHomeDirByPid: ResolveHomeDirByPid;
   private codexHome?: string;
+  private launchPath?: string;
   // Housekeeping B1 fixback (guard-blocking, arch HK-AR-1 = whole-probe DI):
   // the Codex profile-LOAD probe is an injectable dep in the adapter's
   // established optional-deps shape. Default = the REAL probe
@@ -80,11 +81,14 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     sleep?: (ms: number) => Promise<void>;
     activityRelayPath?: string;
     codexHome?: string;
+    /** Match the daemon's prerequisite probe even if the pane's login shell rewrites PATH. */
+    launchPath?: string;
     verifyProfilePreflight?: (profile: string) => Promise<CodexProfileProbeResult>;
   }) {
     this.tmux = deps.tmux;
     this.fs = deps.fsOps;
     this.codexHome = deps.codexHome;
+    this.launchPath = deps.launchPath;
     this.activityRelayPath = deps.activityRelayPath;
     this.listProcesses = deps.listProcesses ?? defaultListProcesses;
     this.readThreadIdByPid = deps.readThreadIdByPid ?? ((pid) => this.readThreadIdFromLogs(pid));
@@ -126,9 +130,9 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
    * command is `node "<activityRelayPath>"` (the daemon's OWN shipped relay, FR-B —
    * cwd-independent, version-matched, NOT `${PLUGIN_ROOT}` nor a per-cwd copy). Also
    * pins `[features].hooks = true` (canonical key; the deprecated `codex_hooks` alias
-   * is intentionally NOT used here). Trust is granted at launch by the hook_trust_gate
-   * auto-clear (dismissCodexInteractiveGates → "2" Trust all and continue, verified on
-   * Codex 0.139). The relay inherits the seat's OPENRIG_* env from the tmux session.
+   * is intentionally NOT used here). Trust is scoped to the exact authored hook
+   * hashes below; remaining native review prompts require an operator decision.
+   * The relay inherits the seat's OPENRIG_* env from the tmux session.
    *
    * Fail-safe: skips + warns when the relay asset is missing — never writes a hook that
    * points at a nonexistent script. Verified-firsthand (Codex 0.139, dev1-qa AC-2 proof):
@@ -158,8 +162,8 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     // ([hooks.state."<key>"] trusted_hash) for exactly our 4 authored hooks, on the SAME
     // seam that provisions them, so the daemon's unmanaged inline hooks are trusted from
     // clean config on EVERY path a fresh Codex process reads config (launch/adopt/reconcile)
-    // — not just the launch keystroke gate. Layer-2 floor (dismissCodexInteractiveGates)
-    // stays as the fail-safe if a Codex-version drift changes the identity/hash. Idempotent
+    // — without a blanket native trust keystroke. If native identity/hash semantics
+    // change, the remaining review is surfaced for a decision. Idempotent
     // + non-clobbering; only touches our 4 keys. See applyCodexActivityHookTrust for the RTFM.
     const trusted = this.applyCodexActivityHookTrust(withHooks, configPath, relay);
     if (trusted !== withHooks) {
@@ -351,7 +355,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
       // -s workspace-write floor flag.
       // 0.5.2-07 A2-3: the FORK path threads the SPEC model too (fork-instantiate reverted it before).
       const cmd = `codex${postureArg}${modelArg} fork${queueStateDirArg} ${shellQuote(parentId)}`;
-      const textResult = await this.tmux.sendText(binding.tmuxSession, cmd);
+      const textResult = await this.tmux.sendText(binding.tmuxSession, this.launchPath ? `env PATH=${shellQuote(this.launchPath)} ${cmd}` : cmd);
       if (!textResult.ok) {
         return { ok: false, error: `Failed to send launch command: ${textResult.message}` };
       }
@@ -379,7 +383,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
       ? buildCodexResumeCore(opts.resumeToken, profile, false, queueStateDirArg.trim() || undefined, binding.launchPosture, model, postureArg)
       : `codex${postureArg} -C ${shellQuote(binding.cwd)}${gitDirArg}${queueStateDirArg}${modelArg}`;
 
-    const textResult = await this.tmux.sendText(binding.tmuxSession, cmd);
+    const textResult = await this.tmux.sendText(binding.tmuxSession, this.launchPath ? `env PATH=${shellQuote(this.launchPath)} ${cmd}` : cmd);
     if (!textResult.ok) {
       return { ok: false, error: `Failed to send launch command: ${textResult.message}` };
     }
@@ -415,6 +419,13 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     return ` --add-dir ${shellQuote(queueStateRoot)}`;
   }
 
+  private async captureProbeScreen(target: string): Promise<string> {
+    // Current readiness belongs to the rendered screen. Scrollback may retain
+    // dismissed prompts, loading headers, or refusals from earlier attempts.
+    if (this.tmux.capturePaneScreen) return await this.tmux.capturePaneScreen(target) ?? "";
+    return await this.tmux.capturePaneContent(target, 40) ?? "";
+  }
+
   async checkReady(binding: NodeBinding): Promise<ReadinessResult> {
     if (!binding.tmuxSession) {
       return { ready: false, reason: "No tmux session bound" };
@@ -425,7 +436,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     }
 
     const paneCommand = await this.tmux.getPaneCommand(binding.tmuxSession);
-    const paneContent = (await this.tmux.capturePaneContent(binding.tmuxSession, 40)) ?? "";
+    const paneContent = await this.captureProbeScreen(binding.tmuxSession);
     const probe = assessNativeResumeProbe({
       runtime: "codex",
       paneCommand,
@@ -439,7 +450,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
   private async dismissSkippableCodexUpdatePrompt(tmuxSession: string, attempts = 6): Promise<boolean> {
     for (let attempt = 0; attempt < attempts; attempt++) {
       const paneCommand = await this.tmux.getPaneCommand(tmuxSession);
-      const paneContent = (await this.tmux.capturePaneContent(tmuxSession, 40)) ?? "";
+      const paneContent = await this.captureProbeScreen(tmuxSession);
       const probe = assessNativeResumeProbe({
         runtime: "codex",
         paneCommand,
@@ -472,7 +483,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
   private async dismissCodexInteractiveGates(tmuxSession: string, attempts = 8): Promise<void> {
     for (let attempt = 0; attempt < attempts; attempt++) {
       const paneCommand = await this.tmux.getPaneCommand(tmuxSession);
-      const paneContent = (await this.tmux.capturePaneContent(tmuxSession, 40)) ?? "";
+      const paneContent = await this.captureProbeScreen(tmuxSession);
       const probe = assessNativeResumeProbe({
         runtime: "codex",
         paneCommand,
@@ -489,14 +500,10 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
         continue;
       }
 
-      if (probe.code === "hook_trust_gate") {
-        const textResult = await this.tmux.sendText(tmuxSession, "2");
-        if (!textResult.ok) return;
-        const enterResult = await this.tmux.sendKeys(tmuxSession, ["Enter"]);
-        if (!enterResult.ok) return;
-        await this.sleep(500);
-        continue;
-      }
+      // Activity hooks are provisioned by exact authored hash above. A remaining
+      // review can include unrelated hooks or a changed native UI; never type
+      // a blanket trust choice into it. The TUI exposes the native decision.
+      if (probe.code === "hook_trust_gate") return;
 
       if (probe.status === "resumed" || probe.code === "trust_gate") {
         return;
@@ -753,7 +760,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
       }
 
       const paneCommand = await this.tmux.getPaneCommand(tmuxSession);
-      const paneContent = (await this.tmux.capturePaneContent(tmuxSession, 40)) ?? "";
+      const paneContent = await this.captureProbeScreen(tmuxSession);
       lastPaneContent = paneContent;
       const probe = assessNativeResumeProbe({
         runtime: "codex",
@@ -879,7 +886,7 @@ function upsertCodexProjectTrust(content: string, projectPath: string): string {
 // open source (RTFM, cited) and are PROVISIONAL until pinned by a byte-for-byte read-back of a
 // real Codex `[hooks.state]` after `/hooks`->"Trust all" (the QA VM proof — see the unit test
 // fixture marked PIN-TO-VM). A mismatch is fail-safe: Codex re-shows the gate and the launch-time
-// Layer-2 keystroke floor (dismissCodexInteractiveGates) clears it — never a false-trusted run.
+// review remains visible for the operator — never a blanket trust keystroke.
 //
 // RTFM sources (cite):
 //   - https://developers.openai.com/codex/hooks

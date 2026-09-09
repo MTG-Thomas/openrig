@@ -147,7 +147,7 @@ export function selectVariant(probe: RuntimeProbeResult): string {
 }
 
 /** Default auth probe — shells out to the runtime CLIs. */
-async function defaultProbeRuntimes(): Promise<RuntimeProbeResult> {
+export async function defaultProbeRuntimes(): Promise<RuntimeProbeResult> {
   const { exec } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execAsync = promisify(exec);

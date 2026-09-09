@@ -7,6 +7,35 @@ import {
 } from "../src/domain/native-resume-probe.js";
 
 describe("native resume probe", () => {
+  it("accepts a new input prompt after dismissed hook review without requiring another header", () => {
+    const paneContent = "OpenAI Codex (v0.153.4)\n1 hook needs review before it can run.\nPress t to trust; esc to go back\n› Ask Codex to do anything\n  gpt-6-astra xhigh · /work";
+    expect(assessNativeResumeProbe({ runtime: "codex", paneCommand: "node", paneContent }).status).toBe("resumed");
+  });
+  it.each(["", "OpenAI Codex (v0.153.4)", "OpenAI Codex (v0.153.4)\nmodel: loading\n› Ask Codex to do anything"])("does not treat process/header startup as an interactive conversation: %s", (paneContent) => {
+    expect(assessNativeResumeProbe({ runtime: "codex", paneCommand: "codex", paneContent }).status).toBe("inconclusive");
+  });
+  it.each([
+    "Hooks need review\n2 hooks are new or changed.\n2. Trust all and continue",
+    "Hooks\nLifecycle hooks from config and enabled plugins.\n2 hooks need review before they can run.\nPress t to trust all; enter to review hooks; esc to close",
+    "PostCompact hooks\n1 hook needs review before it can run.\nTrust     New hook - review required\nPress t to trust; esc to go back",
+  ])("keeps hook review unavailable even with the native header: %s", (panel) => {
+    const result = assessNativeResumeProbe({ runtime: "codex", paneCommand: "node",
+      paneContent: `OpenAI Codex (v0.153.4)\nmodel: gpt-6-astra\n${panel}` });
+    expect(result).toMatchObject({ status: "inconclusive", code: "hook_trust_gate" });
+  });
+
+  it("does not treat hook review before a newer native header as a current gate", () => {
+    const result = assessNativeResumeProbe({ runtime: "codex", paneCommand: "node",
+      paneContent: "Hooks need review\n2. Trust all and continue\nOpenAI Codex (v0.153.4)\n› Ready" });
+    expect(result.status).toBe("resumed");
+  });
+
+  it("keeps a visible client/model compatibility failure distinct from a usable TUI", () => {
+    const result = assessNativeResumeProbe({ runtime: "codex", paneCommand: "node",
+      paneContent: "OpenAI Codex\n■ The configured model requires a\nnewer version of Codex. Please upgrade.\n› Write tests for @filename" });
+    expect(result).toMatchObject({ status: "attention_required", code: "codex_client_incompatible" });
+    expect(result.detail).toContain("changing credentials will not repair");
+  });
   it("builds a Claude resume command with the canonical session name when provided", () => {
     expect(
       buildNativeResumeCommand("claude-code", "abc-123", "dev-impl@demo-rig")
@@ -398,7 +427,7 @@ describe("native resume probe", () => {
     });
   });
 
-  it("classifies a live Codex foreground process without failure markers as resumed", () => {
+  it("keeps a foreground Codex process without a native prompt unverified", () => {
     expect(
       assessNativeResumeProbe({
         runtime: "codex",
@@ -406,9 +435,9 @@ describe("native resume probe", () => {
         paneContent: "Ready.",
       })
     ).toEqual({
-      status: "resumed",
-      code: "active_runtime",
-      detail: "Codex is the active foreground process in the probe pane.",
+      status: "inconclusive",
+      code: "awaiting_runtime",
+      detail: "Codex did not report an explicit failure, but an interactive conversation has not been observed.",
     });
   });
 

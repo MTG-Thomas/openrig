@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
-import { resolveActiveOccupantRow } from "./active-occupant.js";
+import { resolveActiveOccupantRow, resolveActiveSnapshotSession } from "./active-occupant.js";
+import { readFreshOccupantRelations } from "./fresh-occupant-relation.js";
 import type { RigWithRelations, Snapshot } from "./types.js";
 
 export interface CurrentStateRehydrateEligibility {
@@ -36,15 +37,12 @@ export function snapshotMatchesCurrentOccupants(
     resumeToken: string | null;
   }>;
 
+  const recorded = readFreshOccupantRelations(db, rig.rig.id);
   for (const node of rig.nodes) {
-    const current = resolveActiveOccupantRow(rows, undefined, node.id);
+    const current = resolveActiveOccupantRow(rows, Object.prototype.hasOwnProperty.call(recorded, node.id) ? recorded : undefined, node.id);
     if (current.kind === "none") continue;
     if (current.kind === "ambiguous") return false;
-    const captured = resolveActiveOccupantRow(
-      snapshot.data.sessions ?? [],
-      snapshot.data.activeSessionIdByNode,
-      node.id,
-    );
+    const captured = resolveActiveSnapshotSession(snapshot.data, node.id);
     if (
       captured.kind !== "resolved"
       || captured.session.id !== current.session.id

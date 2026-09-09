@@ -1,4 +1,5 @@
 import { DEFAULT_TIME_ZONE, displayTime } from "./time.js";
+import { startupLines, type StartupState } from "./startup.js";
 import { connectionsLines } from "./connections/connections-model.js";
 // Hand-rolled ANSI renderer (Phase-0 substrate decision). Pure function:
 // (state, snapshot) → {lines, hitMap, explorerRows}. BOTH panes emit hit
@@ -1149,6 +1150,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
 }
 
 export interface RenderOptions {
+  startup?: StartupState;
   /** I5 — the live command context (from the C3 detector); default "standard". */
   commandContext?: string;
   completion?: { candidates: string[]; message: string } | null;
@@ -1170,6 +1172,9 @@ export interface RenderOptions {
   /** 5.2 crash-cart: the resolved daemon-down signal. Present ⇒ the whole screen is the daemon-down
    *  path — the normal fleet views have no data when the daemon isn't serving. */
   daemonState?: DaemonState;
+  unavailable?: string;
+  unavailableExpanded?: boolean;
+  starting?: string;
   /** the cockpit model — rendered when daemonState === "down". */
   crashCart?: CrashCartModel;
   /** evidence for the UNVERIFIED screen — rendered when daemonState === "unverified". */
@@ -1229,7 +1234,7 @@ function keybindHints(state: ViewState): string {
   const nav = arrowsScroll ? "↑↓ scroll" : "↑↓ move";
   const pageScroll = state.contentMaxOffset > 0 && !arrowsScroll ? "⇞⇟ scroll · " : "";
   const filter = state.filter ? "/ replace · esc clear" : "/ filter";
-  return `${nav} · ←→ pane · ⏎ open · ${pageScroll}: command · ${filter} · v select/copy · f footer · q quit`;
+  return `${nav} · ←→ pane · ⏎ open · ${pageScroll}: command · ${filter} · S startup · v select/copy · f footer · q quit`;
 }
 
 /** The PULSE view renders FULL-WIDTH with NO explorer sidebar (increment 2). A
@@ -1455,7 +1460,7 @@ function renderPulseScreen(state: ViewState, snap: FleetSnapshot, options: Rende
 // standard explorer│content shell — the LEDGER-FED explorer on the left (honestly marked), the
 // approved content on the right. Mirrors renderPulseScreen's split; content segs paint via the normal
 // split-pane path (stylize │ branch), so no full-width bypass. All rails live in the content builders.
-type PaneContentLine = { text: string; segs?: Array<{ text: string; token?: Token; bold?: boolean; bg?: Token; inverse?: boolean }> };
+type PaneContentLine = { text: string; action?: Action; segs?: Array<{ text: string; token?: Token; bold?: boolean; bg?: Token; inverse?: boolean }> };
 
 /** Word-wrap long content lines to the pane width with a hanging indent, so nothing is silently
  *  clipped off the right edge. Used ONLY where the content is short enough to afford the extra rows
@@ -1481,7 +1486,7 @@ function wrapContentLines(content: PaneContentLine[], width: number): PaneConten
       }
       const chunk = rest.slice(0, cut).trimEnd();
       rest = rest.slice(cut).replace(/^\s+/, "");
-      out.push(first ? { text: chunk, segs: item.segs } : { text: indent + chunk });
+      out.push(first ? { text: chunk, segs: item.segs, action: item.action } : { text: indent + chunk });
       first = false;
     }
   }
@@ -1500,6 +1505,7 @@ function crashCartShell(
   const explW = explorerWidth(cols);
   const lines: string[] = [];
   const segRows: NonNullable<Screen["segRows"]> = {};
+  const hitMap: Screen["hitMap"] = [];
   lines.push(pad(`cmd ▸ ${inputLine}▊`, cols));
   lines.push(paneRule(cols, explW, "top", "{ EXPLORER }", contentTitle));
 
@@ -1518,6 +1524,7 @@ function crashCartShell(
     const left = pad(leftRows[i] ?? "", explW);
     const citem = content[scroll + i];
     const contentText = (citem?.text ?? "").slice(0, contentWidth);
+    if (citem?.action) hitMap.push({ y, x1: explW + 2, x2: cols, action: citem.action });
     lines.push(pad(`${left}┃ ${contentText}`, cols));
     if (citem?.segs) segRows[y] = truncateSegs(citem.segs, contentWidth);
   }
@@ -1529,7 +1536,7 @@ function crashCartShell(
   return {
     lines: lines.slice(0, rows),
     explorerWidth: explW,
-    hitMap: [],
+    hitMap,
     contentTargets: [],
     contentMaxOffset,
     explorerRows: [],
@@ -1540,6 +1547,18 @@ function crashCartShell(
 export function renderScreen(state: ViewState, snap: FleetSnapshot, options: RenderOptions = {}, inputLine = ""): Screen {
   const { cols = 120, rows = 32, nowMs = 0 } = options;
   const explW = explorerWidth(cols);
+  if (options.startup?.open) {
+    const startup = options.startup;
+    const content = wrapContentLines(startupLines(startup).map((line) => ({ ...line,
+      text: line.text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/[\x00-\x1f\x7f]/g, " ")
+        .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@").replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]"),
+    })), Math.max(1, cols - explW - 2));
+    const selected = content.findIndex((line) => line.action?.type === "startup" && line.action.key === `select:${startup.selected}`);
+    const scroll = startup.expanded ? startup.scroll : Math.max(0, selected - Math.max(1, rows - 12));
+    const screen = crashCartShell(content, { note: "startup", rows: [] }, "START AND RETURN", cols, rows, "", { scroll });
+    screen.lines[rows - 1] = pad("↑↓ choose · Enter select · r refresh · d details · Esc back · q quit", cols);
+    return screen;
+  }
   // 5.2 crash-cart (shell-placement rework, ruling 3c6c2be0): daemon-DOWN renders as a CONTENT-PANE
   // view inside the standard shell — the explorer sidebar is ALWAYS present, ledger-fed + honestly
   // marked (from the SAME one-JSON discovery, never a second read). Content moves into the right pane
@@ -1556,11 +1575,32 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
       scroll: options.restoreScroll ?? 0,
     });
   }
+  if (options.unavailable) {
+    const detail = options.unavailable
+      .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+      .replace(/[\x00-\x1f\x7f]/g, " ")
+      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@")
+      .replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]");
+    const summary = /NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|better-sqlite3/i.test(detail)
+      ? "The installed native module cannot load in this runtime. Repair the installation prerequisite, then retry."
+      : "Startup state could not be read. Retry after resolving the reported prerequisite.";
+    return crashCartShell([
+      { text: "Startup prerequisite unavailable" },
+      { text: summary },
+      { text: "Saved identity and conversation history have not been classified as missing." },
+      { text: "" },
+      { text: "r retry · d details · q quit" },
+      ...(options.unavailableExpanded ? [{ text: "" }, { text: detail }] : []),
+    ], { note: "state unavailable", rows: [] }, "STARTUP", cols, rows, inputLine,
+    { wrap: true, scroll: options.restoreScroll ?? 0 });
+  }
   if (options.daemonState === "down" && options.crashCart) {
     const led = buildLedgerExplorer(options.crashCart.foundOnHost);
     // B1 ROUND 10 — when a confirm is armed, render it at the TOP of the cockpit (where the operator
     // looks) so the first ⏎ is visibly acknowledged; wrap so the sentence is not clipped at the pane edge.
-    const content = options.confirm
+    const content = options.starting
+      ? [{ text: `Starting daemon at ${options.starting}…` }, { text: "Seats remain stopped until selected." }]
+      : options.confirm
       ? [...renderConfirmBanner(options.confirm), ...renderCrashCartView(options.crashCart)]
       : renderCrashCartView(options.crashCart);
     return crashCartShell(content, led, "CRASH-CART", cols, rows, inputLine, options.confirm ? { wrap: true } : undefined);

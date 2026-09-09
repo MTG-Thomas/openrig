@@ -37,6 +37,36 @@ function baseDeps(over: Record<string, unknown> = {}) {
 }
 
 describe("loadCrashCartDiscovery — fail-closed FIRST, always clean up", () => {
+  it("an empty private instance does not borrow the unrelated default daemon's identity", async () => {
+    const probeHealthz = vi.fn(async (url: string) => url.includes(":7433/"));
+    const deps = baseDeps({ readDaemonJson: () => undefined, exists: () => false,
+      openrigUrl: "http://127.0.0.1:17433", probeHealthz });
+    const result = await loadCrashCartDiscovery(deps);
+    expect(result.discovery.foundOnHost).toEqual([]);
+    expect(result.discovery.header.hostId).toBeNull();
+    expect(probeHealthz).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:17433/healthz");
+    expect(deps.makeScratchDir).not.toHaveBeenCalled();
+  });
+  it("an explicit target does not override a recorded live owner of the local database", async () => {
+    const deps = baseDeps({ openrigUrl: "http://127.0.0.1:17433", isProcessAlive: () => true });
+    await expect(loadCrashCartDiscovery(deps)).rejects.toBeInstanceOf(DaemonLiveError);
+    expect(deps.makeScratchDir).not.toHaveBeenCalled();
+  });
+  it("uses the configured database before the first recorded daemon boot", async () => {
+    const deps = baseDeps({ readDaemonJson: () => undefined, configuredDbPath: "/private/custom.sqlite" });
+    const result = await loadCrashCartDiscovery(deps);
+    expect(result.dbPath.path).toBe("/private/custom.sqlite");
+    expect(deps.copyFile).toHaveBeenCalledWith("/private/custom.sqlite", "/scratch/tmp/cc-xyz/custom.sqlite");
+  });
+  it("does not turn a permission failure into an empty instance", async () => {
+    const deps = baseDeps({ readDaemonJson: () => undefined, exists: () => { throw new Error("EACCES"); } });
+    await expect(loadCrashCartDiscovery(deps)).rejects.toThrow("EACCES");
+    expect(deps.makeScratchDir).not.toHaveBeenCalled();
+  });
+  it("a missing recorded database remains a read failure, not first setup", async () => {
+    const deps = baseDeps({ exists: () => false });
+    await expect(loadCrashCartDiscovery(deps)).rejects.toBeInstanceOf(CrashCartReadError);
+  });
   it("refuses (DaemonLiveError) before making any scratch dir or copy when the daemon is live", async () => {
     const deps = baseDeps({ isProcessAlive: () => true });
     await expect(loadCrashCartDiscovery(deps)).rejects.toBeInstanceOf(DaemonLiveError);

@@ -32,9 +32,9 @@ describe("crashCartRenderOpts — verdict → render opts", () => {
     expect(crashCartRenderOpts({ state: "up" })).toEqual({});
   });
 
-  it("DOWN + refusal → normal TUI, NEVER the cockpit (rail 3: a refusal means a daemon answered)", () => {
+  it("DOWN + refusal stays visible and does not authorize daemon-down recovery", () => {
     const o = crashCartRenderOpts({ state: "down", refusal: "a daemon answered /healthz — refusing the direct read" });
-    expect(o).toEqual({});
+    expect(o.unavailable).toContain("a daemon answered");
     expect(o.daemonState).toBeUndefined();
   });
 });
@@ -44,10 +44,17 @@ describe("probeCrashCart — run the verb + map; failures never fabricate a cock
     const o = await probeCrashCart(async () => JSON.stringify({ state: "unverified", evidence: { pidState: "p", probeResult: "timeout", failedSignal: "s" } }));
     expect(o.daemonState).toBe("unverified");
   });
-  it("verb errors → normal TUI ({})", async () => {
-    expect(await probeCrashCart(async () => { throw new Error("spawn failed"); })).toEqual({});
+  it("verb errors retain a named unavailable prerequisite", async () => {
+    expect((await probeCrashCart(async () => { throw new Error("spawn failed"); })).unavailable).toContain("spawn failed");
   });
-  it("unparseable output → normal TUI ({})", async () => {
-    expect(await probeCrashCart(async () => "not json")).toEqual({});
+  it("unparseable output never becomes an empty instance", async () => {
+    const result = await probeCrashCart(async () => "not json");
+    expect(result.unavailable).toBeTruthy();
+    expect(result.crashCart).toBeUndefined();
+  });
+  it("retains the public CLI's native-load failure detail", async () => {
+    const result = await probeCrashCart(async () => JSON.stringify({ error: { message: "ERR_DLOPEN_FAILED: NODE_MODULE_VERSION mismatch" } }));
+    expect(result.unavailable).toContain("ERR_DLOPEN_FAILED");
+    expect(result.daemonState).toBeUndefined();
   });
 });

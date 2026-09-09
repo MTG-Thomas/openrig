@@ -93,7 +93,10 @@ export async function assertDaemonDown(deps: AssertDaemonDownDeps): Promise<void
     return;
   }
 
-  // No state file — a daemon could still be up without a readable one; probe the default address.
+  // With an explicit target and no local state, an unrelated default daemon
+  // does not own this instance. The recorded PID/target guards above still win.
+  if (openrigUrl?.trim()) return;
+  // No explicit target or state file: probe the default address.
   if (await probeHealthz(`http://${DEFAULT_HOST}:${DEFAULT_PORT}/healthz`)) {
     throw new DaemonLiveError(
       `a daemon answered the default http://${DEFAULT_HOST}:${DEFAULT_PORT}/healthz — refusing the direct read`,
@@ -117,12 +120,14 @@ export interface ResolvedDbPath {
 export function resolveDaemonDbPath(
   openrigHome: string,
   readDaemonJson: (openrigHome: string) => DaemonJson | undefined,
+  configuredDbPath?: string,
 ): ResolvedDbPath {
   const state = readDaemonJson(openrigHome);
   if (state?.db && state.db.trim().length > 0) {
     return { path: state.db, fromStateFile: true, relative: !isAbsolute(state.db) };
   }
-  return { path: join(openrigHome, DAEMON_DB_BASENAME), fromStateFile: false, relative: false };
+  const path = configuredDbPath ?? join(openrigHome, DAEMON_DB_BASENAME);
+  return { path, fromStateFile: false, relative: !isAbsolute(path) };
 }
 
 export interface SnapshotDeps {
@@ -282,6 +287,8 @@ function readFoundOnHost(db: Database.Database): RigFound[] {
 }
 
 export interface LoadCrashCartDiscoveryDeps extends AssertDaemonDownDeps {
+  /** Current CLI configuration, used only when no daemon has recorded its opened DB. */
+  configuredDbPath?: string;
   /** Copy one file (e.g. `copyFileSync`). */
   copyFile: (src: string, dest: string) => void;
   /** True if the path exists (e.g. `existsSync`). */
@@ -305,11 +312,18 @@ export async function loadCrashCartDiscovery(
   // Refuse before any disk work if a daemon holds the DB.
   await assertDaemonDown(deps);
 
-  const resolved = resolveDaemonDbPath(deps.openrigHome, deps.readDaemonJson);
+  const resolved = resolveDaemonDbPath(deps.openrigHome, deps.readDaemonJson, deps.configuredDbPath);
   if (resolved.relative) {
     throw new CrashCartReadError(
       `daemon DB path '${resolved.path}' is relative — the daemon CWD is unknown, cannot locate it daemon-down`,
     );
+  }
+
+  if (!resolved.fromStateFile && !deps.exists(resolved.path)) {
+    return { dbPath: resolved, discovery: {
+      header: { lastActivityAt: null, lastBootAt: null, firstBootAt: null, hostId: null, stopReason: null, priorUptimeMs: null },
+      foundOnHost: [], whereWorkStopped: [],
+    } };
   }
 
   const scratchDir = deps.makeScratchDir();

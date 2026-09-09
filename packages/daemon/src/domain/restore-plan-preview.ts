@@ -11,7 +11,7 @@
 // only reported as would-happen), no projection writes.
 
 import type Database from "better-sqlite3";
-import { resolveActiveOccupantRow, deriveRehydrateSessionIdByNode, activeOccupantAmbiguityError, type ActiveOccupantResolution } from "./active-occupant.js";
+import { resolveActiveOccupantRow, resolveActiveSnapshotSession, deriveRehydrateSessionIdByNode, activeOccupantAmbiguityError, type ActiveOccupantResolution } from "./active-occupant.js";
 import type { RigWithRelations, Snapshot } from "./types.js";
 
 /** OPR.0.4.3.20 FR-6 — a present token whose last verification is older than this
@@ -24,6 +24,9 @@ export type ResumeTokenState = "present" | "missing" | "stale" | "unverified";
 
 export interface RestorePlanPreviewNode {
   logicalId: string;
+  /** Consent version, not a guessed native conversation id. */
+  occupantSessionId?: string | null;
+  hasHistory?: boolean;
   /** The slice-02 vocabulary, as a forecast: what apply mode WOULD do. */
   intendedAction: "resume-original" | "fresh-primed" | "awaiting-decision";
   reason?: string;
@@ -68,9 +71,9 @@ export interface PreviewSessionRow {
   resumeToken: string | null;
   // OPR.0.4.3.20 FR-6 — provenance + verification freshness (nullable/degrading
   // for pre-45 rows and old snapshots → rendered as unverified, never a crash).
-  resumeProvenance: string | null;
-  resumeLastVerified: string | null;
-  resumeLastProbeStatus: string | null;
+  resumeProvenance?: string | null;
+  resumeLastVerified?: string | null;
+  resumeLastProbeStatus?: string | null;
   /** Row id (ULID). Selection is by the shared ACTIVE-OCCUPANT resolution
    *  (active-occupant.ts) — the same truth the restore execution consumes —
    *  never by newest-id inference. */
@@ -151,10 +154,10 @@ function intendedActionFor(resolution: ActiveOccupantResolution<PreviewSessionRo
   if (policy === "resume_if_possible" && sourceRecorded && occupant?.resumeToken) {
     return { intendedAction: "resume-original" };
   }
-  if (policy === "resume_if_possible" && sourceRecorded && !occupant?.resumeToken) {
+  if (policy === "resume_if_possible" && occupant && (!sourceRecorded || !occupant.resumeToken)) {
     return {
       intendedAction: "awaiting-decision",
-      reason: `resume source '${occupant?.resumeType}' recorded but no token available — apply would stop and ask (zero session)`,
+      reason: "Prior occupant has no usable native resume identity. No session will be started without a fresh-start decision.",
     };
   }
   return { intendedAction: "fresh-primed" };
@@ -208,6 +211,7 @@ export function buildRestorePlanPreview(
   sessionRows: PreviewSessionRow[],
   freshLogicalIds?: string[],
   nowMs: number = Date.now(),
+  recorded: Record<string, string | null> = {},
 ): RestorePlanPreview {
   // OPR.0.5.7.1 — the relation the resolution consumes: the snapshot's own
   // when previewing a snapshot; for the live no-snapshot case, the SAME
@@ -215,10 +219,14 @@ export function buildRestorePlanPreview(
   // sibling paths cannot drift).
   const relationMap = snapshot
     ? snapshot.data.activeSessionIdByNode
-    : deriveRehydrateSessionIdByNode(sessionRows, rig.nodes.map((n) => n.id));
+    : deriveRehydrateSessionIdByNode(sessionRows, rig.nodes.map((n) => n.id), recorded);
   const nodes: RestorePlanPreviewNode[] = rig.nodes.map((node) => {
     const freshRequested = freshLogicalIds?.includes(node.logicalId) ?? false;
-    const resolution = resolveActiveOccupantRow(sessionRows, relationMap, node.id);
+    const resolution = snapshot
+      ? resolveActiveSnapshotSession(snapshot.data, node.id)
+      : sessionRows.some((row) => row.nodeId === node.id)
+        ? resolveActiveOccupantRow(sessionRows, relationMap, node.id)
+        : { kind: "none" as const };
     const { intendedAction, reason } = intendedActionFor(resolution, freshRequested);
     // OPR.0.4.3.20 FR-6 — per-seat token state (read-only), derived from the
     // RESOLVED occupant only — never from a historical row.
@@ -227,6 +235,8 @@ export function buildRestorePlanPreview(
     const runtimePrompt = runtimePromptFor(node.runtime, tokenState);
     return {
       logicalId: node.logicalId,
+      occupantSessionId: occupant?.id ?? null,
+      hasHistory: sessionRows.some((row) => row.nodeId === node.id),
       intendedAction,
       ...(reason ? { reason } : {}),
       tokenState,

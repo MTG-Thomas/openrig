@@ -65,6 +65,7 @@ export const ATTENTION_REQUIRED_READINESS_CODES = new Set([
   // through the launch path so the readiness fallback shouldn't see this code,
   // but adding it here keeps the two paths semantically aligned.
   "codex_auth_refusal",
+  "codex_client_incompatible",
 ]);
 
 export function isAttentionRequiredReadinessCode(code: string | undefined): boolean {

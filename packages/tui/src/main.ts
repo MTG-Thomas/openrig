@@ -27,6 +27,10 @@ import { resolveCrashCartKey, type CrashCartKeyAction } from "./crash-cart/keys.
 import { driveRestoreLifecycle, buildRestoreLifecycleVM } from "./crash-cart/restore-lifecycle.js";
 import { restoreKeyAction, type RestoreInputEvent } from "./crash-cart/restore-input.js";
 import { evaluateOneClickGate, restoreConfirmMessage } from "./crash-cart/one-click-gate.js";
+import { daemonStartArgs } from "./crash-cart/start-daemon.js";
+import { StartupController } from "./startup.js";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Action, FleetSnapshot, Screen } from "./types.js";
 import type { SpecReviewCache } from "./hydrate.js";
 import { MOTION_FRAME_MS } from "./visual-layout.js";
@@ -40,6 +44,10 @@ async function run(): Promise<void> {
   const args = process.argv.slice(2);
   const instanceId = argOf(args, "--instance") ?? "tui-1";
   const demo = args.includes("--demo");
+  // Reuse the entry/runtime that opened this TUI, even under a conflicting PATH.
+  const cliEntry = process.env["OPENRIG_TUI_CLI_ENTRY"];
+  const cliExecutable = cliEntry ? process.execPath : "rig";
+  const cliArgs = (args: string[]): string[] => cliEntry ? [cliEntry, ...args] : args;
 
   // --demo renders the labeled fixture; otherwise the §4.A reads hydrate the
   // snapshot (honest-empty until the first read answers; failed reads surface
@@ -47,7 +55,7 @@ async function run(): Promise<void> {
   let snapshot: FleetSnapshot = demo ? demoSnapshot() : emptySnapshot();
   let timeReadWarning = false;
   const timeSetting = await new Promise<unknown>((resolve) => {
-    execFile("rig", ["config", "get", "ui.timezone", "--json"], { timeout: 5000, maxBuffer: 8192 }, (err, stdout, stderr) => {
+    execFile(cliExecutable, cliArgs(["config", "get", "ui.timezone", "--json"]), { timeout: 5000, maxBuffer: 8192 }, (err, stdout, stderr) => {
       timeReadWarning = !!err || stderr.includes("ui.timezone");
       if (err) return resolve(null);
       try { resolve(JSON.parse(stdout).value); } catch { resolve(null); }
@@ -55,7 +63,16 @@ async function run(): Promise<void> {
   });
   const timezone = resolveTimeZone(timeSetting, timeReadWarning);
   const view = createViewState({ instanceId, getSnapshot: () => snapshot, timeZone: timezone.timeZone, timeZoneWarning: timezone.warning });
-  const client = demo ? null : new DaemonClient({ baseUrl: argOf(args, "--url") });
+  let startupHeaders: () => Record<string, string> = () => ({});
+  if (cliEntry) {
+    try {
+      const cli = await import(pathToFileURL(join(dirname(cliEntry), "client.js")).href);
+      startupHeaders = cli.terminalAuthHeaders;
+    } catch { /* the startup read will expose an unavailable/unauthorized prerequisite */ }
+  }
+  const client = demo ? null : new DaemonClient({ baseUrl: argOf(args, "--url"), headers: startupHeaders });
+  let startup: StartupController | null = null;
+  let nativeAttached = false;
 
   let inputLine = "";
   let completion: ReturnType<typeof completeCommand> | null = null;
@@ -63,6 +80,7 @@ async function run(): Promise<void> {
   // 5.2 crash-cart: the daemon-down verdict (probed from the `rig crash-cart --json` verb). Empty ⇒
   // normal fleet views; DOWN ⇒ the recovery cockpit; UNVERIFIED ⇒ the cannot-verify screen.
   let crashCartOpts: CrashCartRenderOpts = {};
+  let startingDaemon = false;
   // H2 — a non-zero-generation ⏎ arms a confirm: the NEXT ⏎ proceeds, Esc cancels. Never a silent
   // resume→fresh downgrade — the confirm NAMES the seats that will need a decision.
   let pendingRestoreConfirm = false;
@@ -109,11 +127,12 @@ async function run(): Promise<void> {
     : null;
 
   function draw(): void {
+    if (nativeAttached) return;
     const cols = process.stdout.columns ?? 120;
     const rows = process.stdout.rows ?? 32;
     const nowMs = Date.now();
     if (live) snapshot = { ...live.snapshot(), launchingCli: process.env["OPENRIG_TUI_CLI_IDENTITY"]?.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) };
-    const opts = { cols, rows, nowMs, completion, colorMode: style.mode, commandContext: currentCommandContext(crashCartOpts.daemonState ?? null), ...crashCartOpts, restoreScroll: restoreScrollOffset, ...(live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
+    const opts = { cols, rows, nowMs, completion, colorMode: style.mode, commandContext: currentCommandContext(crashCartOpts.daemonState ?? null), ...crashCartOpts, ...(startup?.state.open ? { startup: startup.state } : {}), restoreScroll: restoreScrollOffset, ...(live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
     lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     if (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length) {
       view.dispatch({ type: "layout", contentMaxOffset: lastScreen.contentMaxOffset, contentTargetCount: lastScreen.contentTargets.length });
@@ -132,11 +151,52 @@ async function run(): Promise<void> {
   // JSON is the truth even on a hint non-zero exit). Any failure → normal TUI (never a fabricated cockpit).
   const runCrashCartVerb = (): Promise<string> =>
     new Promise((resolve, reject) => {
-      execFile("rig", ["crash-cart", "--json"], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+      execFile(cliExecutable, cliArgs(["crash-cart", "--json"]), { timeout: 5000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (stdout && stdout.trim()) resolve(stdout);
-        else reject(err ?? new Error("crash-cart: no output"));
+        else reject(new Error(stderr.trim() || err?.message || "crash-cart: no output"));
       });
     });
+  if (client) startup = new StartupController({
+    client, home: process.env["OPENRIG_HOME"] ?? "default local instance", probe: runCrashCartVerb,
+    startDaemon: () => new Promise<void>((resolve, reject) => {
+      execFile(cliExecutable, cliArgs(daemonStartArgs(client.baseUrl)), { timeout: 30_000 }, (error, stdout, stderr) => {
+        if (error) reject(new Error(`Daemon start did not confirm completion: ${stderr.trim() || stdout.trim() || error.message}`));
+        else resolve();
+      });
+    }),
+    onChange: draw,
+    onNative: async (seat) => {
+      if (!cliEntry || !["localhost", "127.0.0.1", "[::1]"].includes(new URL(client.baseUrl).hostname)) {
+        throw new Error("Native terminal access requires this TUI on the selected daemon's machine.");
+      }
+      const { attachSharedTui } = await import(pathToFileURL(join(dirname(cliEntry), "shared-tui.js")).href);
+      nativeAttached = true;
+      process.stdin.pause();
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      process.stdout.write(PASTE_DISABLE + MOUSE_DISABLE + ALT_SCREEN_OFF);
+      try {
+        const code = await attachSharedTui(seat.observed.sessionName);
+        if (code !== 0) throw new Error(`Native terminal attachment exited ${code}. Refresh to inspect the existing occupant.`);
+      } finally {
+        if (process.stdin.isTTY) process.stdin.setRawMode(true);
+        process.stdin.resume();
+        process.stdout.write(ALT_SCREEN_ON + MOUSE_ENABLE + PASTE_ENABLE);
+        nativeAttached = false;
+      }
+    },
+    onWork: async (rig, seat) => {
+      crashCartOpts = {};
+      await live?.refresh();
+      const current = live?.snapshot() ?? snapshot;
+      const host = current.hosts.find((host) => host.rigs.some((entry) => entry.id === rig?.rigId));
+      if (rig && host) {
+        view.dispatch({ type: "drill", resource: "rig", name: rig.rigName, target: { host: host.name } });
+        await live?.refresh();
+      }
+      if (seat && host) view.dispatch({ type: "drill", resource: "agent", name: seat.observed.sessionName, target: { host: host.name, rig: rig!.rigName } });
+      draw();
+    },
+  });
   async function refreshCrashCart(): Promise<void> {
     crashCartOpts = await probeCrashCart(runCrashCartVerb);
     draw();
@@ -198,8 +258,34 @@ async function run(): Promise<void> {
   }
 
   function performCrashCart(action: CrashCartKeyAction): void {
+    if (startingDaemon) return;
+    if (action === "details") {
+      crashCartOpts = { ...crashCartOpts, unavailableExpanded: !crashCartOpts.unavailableExpanded };
+      restoreScrollOffset = 0;
+      draw();
+      return;
+    }
     if (action === "start-daemon") {
-      execFile("rig", ["daemon", "start"], { timeout: 30_000 }, () => void refreshCrashCart());
+      let startArgs: string[];
+      try { startArgs = daemonStartArgs(client!.baseUrl); }
+      catch (error) {
+        crashCartOpts = { unavailable: error instanceof Error ? error.message : String(error) };
+        draw();
+        return;
+      }
+      startingDaemon = true;
+      crashCartOpts = { ...crashCartOpts, starting: client!.baseUrl };
+      draw();
+      execFile(cliExecutable, cliArgs(startArgs), { timeout: 30_000 }, (error, stdout, stderr) => {
+        startingDaemon = false;
+        if (error) {
+          crashCartOpts = { unavailable: `Daemon start did not confirm completion. Retry reads actual state before another attempt. ${stderr.trim() || stdout.trim() || error.message}` };
+          draw();
+        } else {
+          void refreshCrashCart();
+          void live?.refresh();
+        }
+      });
       return;
     }
     if (action === "restore") {
@@ -299,7 +385,31 @@ async function run(): Promise<void> {
 
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   function handleInput(events: ReturnType<typeof inputDecoder.write>): void {
+    if (nativeAttached) return;
     for (const ev of events) {
+      if (startup?.state.open) {
+        if (ev.type === "char" && ev.ch === "q") { void shutdown(); return; }
+        if (ev.type === "char") void startup.key(ev.ch);
+        else if (ev.type === "key") void startup.key(ev.key);
+        else if (ev.type === "mouse" && lastScreen) {
+          const hit = lastScreen.hitMap.find((h) => h.y === ev.y && ev.x >= h.x1 && ev.x <= h.x2);
+          if (hit?.action.type === "startup") void startup.key(hit.action.key);
+        }
+        continue;
+      }
+      if (ev.type === "char" && ev.ch === "S" && inputLine === "") { void startup?.open(); continue; }
+      if (crashCartOpts.unavailable && !crashCartOpts.restore) {
+        if (ev.type === "char" && ev.ch === "q") { void shutdown(); return; }
+        if (ev.type === "char") {
+          const action = resolveCrashCartKey(ev.ch, crashCartOpts);
+          if (action) performCrashCart(action);
+        }
+        if (ev.type === "key" && (ev.key === "up" || ev.key === "down")) {
+          restoreScrollOffset = Math.max(0, Math.min(lastScreen?.contentMaxOffset ?? 0,
+            restoreScrollOffset + (ev.key === "down" ? 1 : -1)));
+        }
+        continue;
+      }
       if (!(ev.type === "key" && ev.key === "tab")) completion = null;
       // REGISTRY I3 — palette mode captures input while open. Execution is BYTE-EQUAL to
       // direct typing: an argless selection runs perform(parseCommand(line)) — the exact
@@ -416,7 +526,7 @@ async function run(): Promise<void> {
         }
         // 5.2 crash-cart: while a daemon-down screen is active, single keys are cockpit actions
         // (s/i/n/r), not command-bar input.
-        if (crashCartOpts.daemonState && inputLine === "") {
+        if ((crashCartOpts.daemonState || crashCartOpts.unavailable) && inputLine === "") {
           const cca = resolveCrashCartKey(ev.ch, crashCartOpts);
           if (cca) {
             performCrashCart(cca);
@@ -497,7 +607,8 @@ async function run(): Promise<void> {
   draw();
   // Probe the daemon-down verdict once on launch: bare `rig` with the daemon down renders the cockpit.
   // (Key-triggered re-probe after `s start daemon` / `r retry` is the follow-on increment.)
-  void refreshCrashCart();
+  if (startup) void startup.refresh();
+  else void refreshCrashCart();
   // A merely-open TUI must impose no steady-state fleet load. The initial
   // hydrate establishes honest state; navigation, commands, and socket-driven
   // mutations request later truth through the same single-flight owner.

@@ -52,6 +52,10 @@ function maybeReexecWithSiblingNode(argv = process.argv): void {
   if (!preferredNode) return;
 
   const scriptPath = argv[1] ? realpathSync(argv[1]) : fileURLToPath(import.meta.url);
+  // An alias is not runtime authority. Keep a working interpreter; only switch
+  // when the installed native dependency actually loads under the alternative.
+  if (canLoadInstalledNative(process.execPath, scriptPath)) return;
+  if (!canLoadInstalledNative(preferredNode, scriptPath)) return;
   const result = spawnSync(preferredNode, [scriptPath, ...argv.slice(2)], {
     stdio: "inherit",
     env: {
@@ -65,6 +69,14 @@ function maybeReexecWithSiblingNode(argv = process.argv): void {
   }
 
   process.exit(result.status ?? 0);
+}
+
+export function canLoadInstalledNative(node: string, wrapper: string): boolean {
+  const probe = spawnSync(node, ["--input-type=module", "-e",
+    "import {createRequire} from 'node:module'; const require=createRequire(process.argv[1]); const D=require('better-sqlite3'); new D(':memory:').close();",
+    wrapper,
+  ], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] });
+  return probe.status === 0;
 }
 
 export async function run(argv = process.argv): Promise<void> {

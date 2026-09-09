@@ -9,6 +9,7 @@ import type { NodeBinding, ResolvedStartupFile } from "../src/domain/runtime-ada
 import type { ProjectionPlan, ProjectionEntry } from "../src/domain/projection-planner.js";
 import type { TmuxAdapter } from "../src/adapters/tmux.js";
 import { seedCodexThreads } from "./helpers/codex-state.js";
+import { execFileSync } from "node:child_process";
 
 const CODEX_FLOOR_EFFECT = {
   runtime: "codex",
@@ -22,7 +23,7 @@ function mockTmux(overrides?: Partial<TmuxAdapter>): TmuxAdapter {
     sendText: vi.fn(async () => ({ ok: true as const })),
     hasSession: vi.fn(async () => true),
     getPaneCommand: vi.fn(async () => "codex"),
-    capturePaneContent: vi.fn(async () => "OpenAI Codex (v0.0.0)"),
+    capturePaneContent: vi.fn(async () => "OpenAI Codex (v0.0.0)\n› Ask Codex to do anything"),
     createSession: vi.fn(async () => ({ ok: true as const })),
     killSession: vi.fn(async () => ({ ok: true as const })),
     listSessions: vi.fn(async () => []),
@@ -149,6 +150,22 @@ function createCodexLogsDb(homeDir: string, pid: number, threadId: string, dbNam
 }
 
 describe("Codex runtime adapter", () => {
+  it("launches the probed executable despite a different login-shell PATH", async () => {
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "codex-launch-path-"));
+    try {
+      const selected = nodePath.join(root, "selected tools");
+      const stale = nodePath.join(root, "stale");
+      fs.mkdirSync(selected); fs.mkdirSync(stale);
+      fs.writeFileSync(nodePath.join(selected, "codex"), "#!/bin/sh\nprintf selected", { mode: 0o755 });
+      fs.writeFileSync(nodePath.join(stale, "codex"), "#!/bin/sh\nprintf stale", { mode: 0o755 });
+      const tmux = mockTmux();
+      const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs(), launchPath: selected + ":/usr/bin:/bin", sleep: async () => {} });
+      await adapter.launchHarness(makeBinding(), { name: "operator-agent@kernel" });
+      const command = vi.mocked(tmux.sendText).mock.calls[0]![1];
+      const output = execFileSync("/bin/sh", ["-c", command], { env: { ...process.env, PATH: stale + ":/usr/bin:/bin" }, encoding: "utf8" });
+      expect(output).toBe("selected");
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
   // T2: implements all four methods
   it("implements all four methods", () => {
     const adapter = new CodexRuntimeAdapter({ tmux: mockTmux(), fsOps: mockFs() });
@@ -555,7 +572,7 @@ describe("Codex runtime adapter", () => {
       capturePaneContent: vi.fn()
         .mockResolvedValueOnce(initialShell)
         .mockResolvedValueOnce(updatePrompt)
-        .mockResolvedValue("OpenAI Codex (v0.120.0)"),
+        .mockResolvedValue("OpenAI Codex (v0.120.0)\n› Ask Codex to do anything"),
       getPanePid: vi.fn(async () => 900),
     });
     const adapter = new CodexRuntimeAdapter({
@@ -634,7 +651,7 @@ describe("Codex runtime adapter", () => {
         .mockResolvedValueOnce(initialShell)
         .mockResolvedValueOnce(initialShell)
         .mockResolvedValueOnce(updatePrompt)
-        .mockResolvedValue("OpenAI Codex (v0.120.0)"),
+        .mockResolvedValue("OpenAI Codex (v0.120.0)\n› Ask Codex to do anything"),
       getPanePid: vi.fn()
         .mockResolvedValueOnce(null)
         .mockResolvedValue(900),
@@ -663,6 +680,24 @@ describe("Codex runtime adapter", () => {
       ["r01-qa", expectedFreshLaunchCommand()],
       ["r01-qa", "3"],
     ]);
+  });
+
+  it("uses the visible conversation rather than dismissed loading/review scrollback", async () => {
+    const tmux = mockTmux({ capturePaneContent: vi.fn(async () => "OpenAI Codex (v0.153.4)\nmodel: loading\nHooks need review\nTrust all and continue"),
+      capturePaneScreen: vi.fn(async () => "› Ask Codex to do anything\n  gpt-6-astra xhigh · /work") });
+    const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs() });
+    expect(await adapter.checkReady(makeBinding())).toEqual({ ready: true });
+    expect(tmux.capturePaneContent).not.toHaveBeenCalled();
+    vi.mocked(tmux.capturePaneScreen).mockResolvedValue(null);
+    expect((await adapter.checkReady(makeBinding())).ready).toBe(false);
+  });
+
+  it("does not type a blanket trust choice into fresh hook review", async () => {
+    const tmux = mockTmux({ capturePaneContent: vi.fn(async () => "Hooks need review\n1. Review hooks\n2. Trust all and continue\n3. Continue without trusting"), getPanePid: vi.fn(async () => 900) });
+    const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs(), sleep: async () => {}, listProcesses: () => [] });
+    await adapter.launchHarness(makeBinding(), { name: "impl" });
+    expect(tmux.sendText).toHaveBeenCalledTimes(1);
+    expect(tmux.sendKeys).toHaveBeenCalledTimes(1);
   });
 
   it("launchHarness captures a fresh Codex thread id from the live child process", async () => {
@@ -904,7 +939,7 @@ describe("Codex runtime adapter", () => {
     const tmux = mockTmux({
       capturePaneContent: vi.fn()
         .mockResolvedValueOnce(updatePrompt)
-        .mockResolvedValue("OpenAI Codex (v0.120.0)"),
+        .mockResolvedValue("OpenAI Codex (v0.120.0)\n› Ask Codex to do anything"),
     });
     const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs(), sleep: async () => {} });
 

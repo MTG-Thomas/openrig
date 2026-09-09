@@ -13,6 +13,7 @@ import type { PersistedEvent } from "./types.js";
 import type { CheckpointStore } from "./checkpoint-store.js";
 import type { Snapshot, SnapshotData } from "./types.js";
 import { RigNotFoundError } from "./errors.js";
+import { readFreshOccupantRelations } from "./fresh-occupant-relation.js";
 
 interface SnapshotCaptureDeps {
   db: Database.Database;
@@ -69,11 +70,12 @@ export class SnapshotCapture {
     // 2b. OPR.0.5.7.1 D1 — capture the ACTIVE-OCCUPANT relation explicitly,
     // through the ONE shared derivation (active-occupant.ts) that the live
     // no-snapshot preview also uses, so the sibling paths cannot drift.
+    const recorded = kind === "auto-rehydrate" ? readFreshOccupantRelations(this.db, rigId) : {};
     const activeSessionIdByNode = kind === "auto-rehydrate"
-      ? deriveRehydrateSessionIdByNode(sessions, rig.nodes.map((n) => n.id))
+      ? deriveRehydrateSessionIdByNode(sessions, rig.nodes.map((n) => n.id), recorded)
       : deriveActiveSessionIdByNode(sessions, rig.nodes.map((n) => n.id));
     const activeOccupantsByNode = kind === "auto-rehydrate"
-      ? deriveRehydrateOccupantsByNode(sessions, rig.nodes.map((n) => n.id))
+      ? deriveRehydrateOccupantsByNode(sessions, rig.nodes.map((n) => n.id), recorded)
       : deriveActiveOccupantsByNode(sessions, rig.nodes.map((n) => n.id));
 
     const requestedRoster = opts?.intendedNodeIds;

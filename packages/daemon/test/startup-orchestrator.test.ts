@@ -131,6 +131,61 @@ describe("StartupOrchestrator", () => {
     };
   }
 
+  it("deliberate fresh replacement appends the named durable obligation read without an extra message", async () => {
+    const seed = seedSession();
+    await createOrchestrator().startNode(makeInput(seed, { startupActions: [makeIdentityAction()], includeDurableObligations: true }));
+    expect(tmux.sendText).toHaveBeenCalledTimes(1);
+    expect(tmux.sendText).toHaveBeenCalledWith("r01-impl", expect.stringContaining("rig queue list --destination r01-impl --state pending,in-progress,blocked"));
+    expect(tmux.sendText).toHaveBeenCalledWith("r01-impl", expect.stringContaining(makeIdentityAction().value));
+  });
+
+  it("persists the authored context before a native gate and exposes only the matching continuation", async () => {
+    const seed = seedSession(); const orch = createOrchestrator();
+    const action = makeAction({ type: "send_text", value: "configured role and durable queue instructions" });
+    const adapter = mockAdapter({ launchHarness: vi.fn(async () => ({ ok: false, recovery: "attention_required", error: "Hook review" })) });
+    const result = await orch.startNode(makeInput(seed, { adapter, startupActions: [action] }));
+    expect(result.startupStatus).toBe("attention_required");
+    expect(JSON.parse((db.prepare("SELECT startup_actions_json FROM node_startup_context WHERE node_id=?").get(seed.nodeId) as {startup_actions_json:string}).startup_actions_json)).toEqual([action]);
+    expect(orch.canContinueFresh(seed.nodeId, seed.sessionId)).toBe(true);
+    expect(orch.canContinueFresh(seed.nodeId, "other-occupant")).toBe(false);
+    eventBus.emit({ type: "node.startup_pending", rigId: seed.rigId, nodeId: seed.nodeId });
+    expect(orch.canContinueFresh(seed.nodeId, seed.sessionId)).toBe(false);
+  });
+
+  it("exact resume retains configured fresh context while sending no replay", async () => {
+    const seed = seedSession(); const orch = createOrchestrator();
+    const action = makeAction({ type: "send_text", value: "configured context" });
+    await orch.startNode(makeInput(seed, { startupActions: [action] }));
+    const before = db.prepare("SELECT * FROM node_startup_context WHERE node_id=?").get(seed.nodeId);
+    const adapter = mockAdapter();
+    const result = await orch.startNode(makeInput(seed, { adapter, isRestore: true, resumeToken: "native-original", preserveStartupContext: true }));
+    expect(result.ok).toBe(true);
+    expect(db.prepare("SELECT * FROM node_startup_context WHERE node_id=?").get(seed.nodeId)).toEqual(before);
+    expect(adapter.deliverStartup).toHaveBeenCalledWith([], expect.anything());
+  });
+
+  it.each(["launch", "readiness"])("pod-aware exact resume cannot continue fresh context after a %s gate", async (gate) => {
+    const seed = seedSession(); const orch = createOrchestrator();
+    await orch.startNode(makeInput(seed, { startupActions: [makeIdentityAction()], includeDurableObligations: true }));
+    const before = db.prepare("SELECT * FROM node_startup_context WHERE node_id=?").get(seed.nodeId);
+    vi.mocked(tmux.sendText).mockClear();
+    const adapter = mockAdapter(gate === "launch"
+      ? { launchHarness: vi.fn(async () => ({ ok: false, recovery: "attention_required", error: "Hook review" })) }
+      : { checkReady: vi.fn(async () => ({ ready: false, code: "hook_trust_gate", reason: "Hook review" })) });
+    // RestoreOrchestrator's pod-aware exact-resume path contains replay via
+    // empty files/actions, but uses isRestore:false to launch the native harness.
+    const input = makeInput(seed, { adapter, isRestore: false, resumeToken: "native-original",
+      resumeType: "claude_id", preserveStartupContext: true, allowFreshFallback: false });
+    expect((await orch.startNode(input)).startupStatus).toBe("attention_required");
+    expect(orch.canContinueFresh(seed.nodeId, seed.sessionId)).toBe(false);
+    expect(createOrchestrator().canContinueFresh(seed.nodeId, seed.sessionId)).toBe(false);
+    expect(db.prepare("SELECT * FROM node_startup_context WHERE node_id=?").get(seed.nodeId)).toEqual(before);
+    expect(tmux.sendText).not.toHaveBeenCalled();
+    const retry = await createOrchestrator().startNode({ ...input, adapter: mockAdapter() });
+    expect(retry).toMatchObject({ ok: true, continuityOutcome: "resumed" });
+    expect(tmux.sendText).not.toHaveBeenCalled();
+  });
+
   // T1: fresh launch enters pending before startup delivery
   it("marks pending before delivery", async () => {
     const seed = seedSession();
@@ -158,6 +213,23 @@ describe("StartupOrchestrator", () => {
     const row = db.prepare("SELECT startup_status, startup_completed_at FROM sessions WHERE id = ?").get(seed.sessionId) as { startup_status: string; startup_completed_at: string | null };
     expect(row.startup_status).toBe("ready");
     expect(row.startup_completed_at).not.toBeNull();
+  });
+  it.each(["codex_client_incompatible", "hook_trust_gate"])("does not mark ready when context delivery exposes %s", async (code) => {
+    const seed = seedSession();
+    let delivered = false;
+    const adapter = mockAdapter({
+      runtime: "codex",
+      deliverStartup: vi.fn(async (files) => { if (files.some((file) => file.deliveryHint === "send_text")) delivered = true; return { delivered: files.length, failed: [] }; }),
+      checkReady: vi.fn(async () => delivered
+        ? { ready: false, code, reason: "The native runtime requires attention" }
+        : { ready: true }),
+    });
+    const result = await createOrchestrator().startNode(makeInput(seed, { adapter,
+      resolvedStartupFiles: [{ path: "role.md", absolutePath: "/tmp/role.md", ownerRoot: "/tmp",
+        deliveryHint: "send_text", required: true, appliesOn: ["fresh_start"] }] }));
+    expect(result).toMatchObject({ ok: false, startupStatus: "attention_required" });
+    expect(db.prepare("SELECT startup_status FROM sessions WHERE id = ?").get(seed.sessionId)).toEqual({ startup_status: "attention_required" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM node_startup_context WHERE node_id = ?").get(seed.nodeId)).toEqual({ n: 1 });
   });
 
   it("records the exact adapter-returned launch effect only after successful managed launch", async () => {

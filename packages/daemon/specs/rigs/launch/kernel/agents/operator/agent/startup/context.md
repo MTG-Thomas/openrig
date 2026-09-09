@@ -22,14 +22,12 @@ restart:
    survived (daemon-restart-only, host stayed up) → marked healthy.
    If tmux is gone (host reboot) → marked detached.
 
-If the host rebooted (not just the daemon), the kernel's member
-tmux sessions are gone. You own the agent-restart workflow:
-
-1. `rig ps --nodes --rig kernel --json` shows which kernel members
-   are detached.
-2. Re-launch each detached member via the normal launch path
-   (the canonical commands live in the `openrig-operator` skill).
-3. `rig ps --nodes --rig kernel --json` again to confirm healthy.
+After a host reboot, a person can type bare `rig` to open the same TUI,
+start the daemon only, and select the existing kernel operator or other seats.
+The TUI recommends kernel first without starting every member. Its default
+for a previously occupied seat is to resume the authoritative conversation.
+Missing or ambiguous history needs repair or a separate named fresh-start
+decision; authentication failure is not a reason to replace history.
 
 Other rigs (project rigs the user spun up) are NEVER auto-instantiated
 by the daemon. If the user asks you to bring those back:
@@ -41,13 +39,14 @@ by the daemon. If the user asks you to bring those back:
    <name>` for warm-restore when a snapshot exists.
 4. `rig ps --nodes --rig <name>` to verify healthy.
 
-This is the agent-driven workflow replacing silent auto-restore.
-See the `openrig-operator` skill for the canonical script.
+The TUI is the normal human entry. Explicit CLI automation remains available;
+use the applicable lifecycle help for an authorized agent-driven operation.
 
 ## What's already running
 
-- The kernel rig itself (you, advisor.lead, queue.worker, the shared
-  operator terminal).
+- Your own successful startup does not prove the other kernel seats are
+  running. Read actual state before routing work to a peer; the user may
+  have selected only this operator.
 - Whatever non-kernel rigs were running before the daemon restarted
   have their rig records persisted in SQLite (the daemon does NOT
   cull rigs on restart) but their member sessions are likely

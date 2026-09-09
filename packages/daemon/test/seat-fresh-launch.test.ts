@@ -14,6 +14,8 @@ import type { ProjectionPlan } from "../src/domain/projection-planner.js";
 import type { TmuxAdapter, TmuxResult } from "../src/adapters/tmux.js";
 import { normalizeStartupBlock } from "../src/domain/startup-validation.js";
 import { deriveOriented } from "../src/domain/startup-proof.js";
+import { deriveRehydrateSessionIdByNode } from "../src/domain/active-occupant.js";
+import { readFreshOccupantRelations } from "../src/domain/fresh-occupant-relation.js";
 
 function startupEntry(category: "skill" | "guidance", id: string) {
   return {
@@ -127,6 +129,59 @@ describe("SeatLifecycleService.launchFresh", () => {
   });
 
   afterEach(() => db.close());
+
+  it.each(["launch", "readiness"])("continues a fresh occupant gated at %s exactly once without another launch", async (gate) => {
+    const seat = seedSeat();
+    if (gate === "launch") harnessResult = { ok: false, recovery: "attention_required", error: "native gate" };
+    else adapter.checkReady = async () => ({ ready: false, code: "hook_trust_gate", reason: "native gate" });
+    const first = await service.launchFresh({ seatRef: seat.sessionName, fresh: true, stop: true, reason: "explicit fresh" });
+    expect(first.ok).toBe(false);
+    adapter.checkReady = async () => ({ ready: true });
+    const rows = sessionRegistry.getSessionsForRig(seat.rig.id).map((s) => s.id);
+    const launch = vi.spyOn(adapter, "launchHarness");
+    const delivery = vi.spyOn(adapter, "deliverStartup");
+    const continued = await service.continueFreshStartup(seat.sessionName);
+    expect(continued.ok).toBe(true);
+    expect(launch).not.toHaveBeenCalled();
+    expect(delivery).toHaveBeenCalled();
+    expect(sessionRegistry.getSessionsForRig(seat.rig.id).map((s) => s.id)).toEqual(rows);
+    delivery.mockClear();
+    expect((await service.continueFreshStartup(seat.sessionName)).ok).toBe(false);
+    expect(delivery).not.toHaveBeenCalled();
+  });
+
+  it("supersedes detached history so a later reboot identifies the deliberate successor", async () => {
+    const seat = seedSeat();
+    alive.delete(seat.sessionName);
+    livePanes.delete(seat.sessionName);
+    sessionRegistry.markDetached(seat.session!.id);
+    const result = await service.launchFresh({ seatRef: seat.sessionName, fresh: true, reason: "explicit fresh after process loss" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.supersededSessionIds).toContain(seat.session!.id);
+    sessionRegistry.markDetached(result.sessionId);
+    const history = sessionRegistry.getSessionsForRig(seat.rig.id);
+    expect(history.find((row) => row.id === seat.session!.id)?.status).toBe("superseded");
+    expect(deriveRehydrateSessionIdByNode(history, [seat.node.id])[seat.node.id]).toBe(result.sessionId);
+  });
+
+  it("recovers an older fresh effect from its current generation without rewriting history", async () => {
+    const seat = seedSeat();
+    const result = await service.launchFresh({ seatRef: seat.sessionName, fresh: true, stop: true, reason: "explicit successor" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Reproduce the old build's unsuperseded detached predecessor after reboot.
+    sessionRegistry.markDetached(seat.session!.id);
+    sessionRegistry.markDetached(result.sessionId);
+    const history = sessionRegistry.getSessionsForRig(seat.rig.id);
+    const recorded = readFreshOccupantRelations(db, seat.rig.id);
+    expect(deriveRehydrateSessionIdByNode(history, [seat.node.id], recorded)[seat.node.id]).toBe(result.sessionId);
+    expect(sessionRegistry.getSessionsForRig(seat.rig.id)).toEqual(history);
+    // A later occupant generation invalidates the old effect; no newest-row fallback.
+    sessionRegistry.mintOccupantTenure(seat.node.id, "handover");
+    expect(readFreshOccupantRelations(db, seat.rig.id)).toEqual({});
+    expect(deriveRehydrateSessionIdByNode(history, [seat.node.id], readFreshOccupantRelations(db, seat.rig.id))[seat.node.id]).toBeNull();
+  });
 
   function seedSeat(opts?: { clean?: boolean; adopted?: boolean; model?: string; withContext?: boolean; runtime?: "claude-code" | "codex" }) {
     const runtime = opts?.runtime ?? "claude-code";

@@ -52,6 +52,12 @@ export interface StartupInput {
   skipHarnessLaunch?: boolean;
   /** Allow runtime adapter retry_fresh fallback when native resume data is stale. */
   allowFreshFallback?: boolean;
+  /** Exact resume must not overwrite the authored fresh-start context with its empty replay plan. */
+  preserveStartupContext?: boolean;
+  /** Continue the same fresh occupant after a prerequisite, without another harness launch. */
+  continueFreshStartup?: boolean;
+  /** Deliberate fresh replacement retains the seat’s durable destination obligations. */
+  includeDurableObligations?: boolean;
   /** Readiness timeout in ms (default 30000). */
   readinessTimeoutMs?: number;
 }
@@ -195,6 +201,21 @@ export class StartupOrchestrator {
       return this.fail(input, "failed", errors);
     }
 
+    // 7. Persist startup context for restore replay
+    if (!input.preserveStartupContext) try {
+      this.db.prepare(
+        "INSERT OR REPLACE INTO node_startup_context (node_id, projection_entries_json, resolved_files_json, startup_actions_json, runtime) VALUES (?, ?, ?, ?, ?)"
+      ).run(
+        input.nodeId,
+        JSON.stringify(input.plan.entries.map((e) => ({ category: e.category, effectiveId: e.effectiveId, sourceSpec: e.sourceSpec, sourcePath: e.sourcePath, resourcePath: e.resourcePath, absolutePath: e.absolutePath, resourceType: e.resourceType, mergeStrategy: e.mergeStrategy, target: e.target }))),
+        JSON.stringify(input.resolvedStartupFiles),
+        JSON.stringify(input.startupActions),
+        input.adapter.runtime,
+      );
+    } catch (error) {
+      return this.fail(input, "failed", [`Startup context persistence failed: ${String(error)}`]);
+    }
+
     // 5. Launch harness (unless skipped for legacy nodes)
     if (!input.skipHarnessLaunch) {
       try {
@@ -254,7 +275,9 @@ export class StartupOrchestrator {
               } catch { /* best-effort */ }
             }
             errors.push(`Harness launch requires attention: ${launchResult.error}`);
-            return this.fail(input, "attention_required", errors, launchResult.evidence);
+            // isRestore selects context, not native continuity: pod-aware exact
+            // resume also uses false. Only an actual fresh launch may re-prime.
+            return this.fail(input, "attention_required", errors, launchResult.evidence, continuityOutcome === "fresh");
           }
 
           errors.push(`Harness launch failed: ${launchResult.error}`);
@@ -268,7 +291,7 @@ export class StartupOrchestrator {
 
     // A successful new lean launch replaces the occupant's proof boundary even
     // if readiness later fails. Failed launches and resume/adopt retain history.
-    const isFreshLaunch = continuityOutcome === "fresh" && !input.skipHarnessLaunch;
+    const isFreshLaunch = continuityOutcome === "fresh" && (!input.skipHarnessLaunch || input.continueFreshStartup === true);
     const shouldChallenge = isFreshLaunch
       && input.adapter.runtime !== "terminal" && startupProof.mode === "authenticated";
     if (isFreshLaunch && !shouldChallenge) {
@@ -284,7 +307,7 @@ export class StartupOrchestrator {
       if (!readiness.ready) {
         if (isAttentionRequiredReadinessCode(readiness.code)) {
           errors.push(`Startup requires attention: ${readiness.reason ?? "unknown"}`);
-          return this.fail(input, "attention_required", errors);
+          return this.fail(input, "attention_required", errors, undefined, isFreshLaunch);
         }
         errors.push(`Readiness timeout after 30s — harness did not become interactive: ${readiness.reason ?? "unknown"}`);
         return this.fail(input, "failed", errors);
@@ -317,7 +340,7 @@ export class StartupOrchestrator {
     const consumedActions = new Set<StartupAction>();
     let challengeOnlyPrompt: string | null = null;
     if (continuityOutcome === "fresh" && identityAction) {
-      const initialPrompt = await this.deliverInitialSessionPrompt(input.binding, identityAction, postLaunchFiles, challenge?.promptBlock ?? null);
+      const initialPrompt = await this.deliverInitialSessionPrompt(input.binding, identityAction, postLaunchFiles, challenge?.promptBlock ?? null, input.includeDurableObligations);
       if (!initialPrompt.ok) {
         errors.push(initialPrompt.error);
         return this.fail(input, "failed", errors);
@@ -395,24 +418,35 @@ export class StartupOrchestrator {
       return this.fail(input, "failed", afterReadyResult.errors);
     }
 
-    // 7. Persist startup context for restore replay
-    try {
-      this.db.prepare(
-        "INSERT OR REPLACE INTO node_startup_context (node_id, projection_entries_json, resolved_files_json, startup_actions_json, runtime) VALUES (?, ?, ?, ?, ?)"
-      ).run(
-        input.nodeId,
-        JSON.stringify(input.plan.entries.map((e) => ({ category: e.category, effectiveId: e.effectiveId, sourceSpec: e.sourceSpec, sourcePath: e.sourcePath, resourcePath: e.resourcePath, absolutePath: e.absolutePath, resourceType: e.resourceType, mergeStrategy: e.mergeStrategy, target: e.target }))),
-        JSON.stringify(input.resolvedStartupFiles),
-        JSON.stringify(input.startupActions),
-        input.adapter.runtime,
-      );
-    } catch { /* best-effort persistence */ }
+    // Delivering the first native prompt can reveal a provider refusal or
+    // interactive gate. A positive attention requirement is not ready.
+    if (postLaunchFiles.length > 0) {
+      try {
+        const readiness = await input.adapter.checkReady(input.binding);
+        if (!readiness.ready && isAttentionRequiredReadinessCode(readiness.code)) {
+          return this.fail(input, "attention_required", [readiness.reason ?? "The native provider prerequisite failed after context delivery."]);
+        }
+      } catch (error) {
+        return this.fail(input, "attention_required", [`Post-delivery runtime state is unavailable: ${(error as Error).message}`]);
+      }
+    }
 
     // 8. Mark ready
     this.sessionRegistry.updateStartupStatus(input.sessionId, "ready", new Date().toISOString());
     this.eventBus.emit({ type: "node.startup_ready", rigId: input.rigId, nodeId: input.nodeId });
 
     return { ok: true, startupStatus: "ready", continuityOutcome };
+  }
+
+  /** A failed attempt can continue only when it stopped before sending context.
+   * Any newer pending/ready/failure event consumes that permission, including a
+   * daemon loss during delivery: uncertain delivery is never blindly replayed.
+   */
+  canContinueFresh(nodeId: string, sessionId: string): boolean {
+    const row = this.db.prepare("SELECT payload FROM events WHERE node_id = ? AND type IN ('node.startup_pending', 'node.startup_ready', 'node.startup_failed') ORDER BY seq DESC LIMIT 1").get(nodeId) as { payload: string } | undefined;
+    if (!row) return false;
+    const event = JSON.parse(row.payload);
+    return event.type === "node.startup_failed" && event.sessionId === sessionId && event.freshContextPending === true;
   }
 
   /**
@@ -457,6 +491,7 @@ export class StartupOrchestrator {
     status: "attention_required" | "failed",
     errors: string[],
     evidence?: string,
+    freshContextPending = false,
   ): StartupResult {
     this.sessionRegistry.updateStartupStatus(input.sessionId, status);
     this.eventBus.emit({
@@ -464,6 +499,8 @@ export class StartupOrchestrator {
       rigId: input.rigId,
       nodeId: input.nodeId,
       error: errors.join("; "),
+      sessionId: input.sessionId,
+      ...(freshContextPending ? { freshContextPending: true } : {}),
     });
     return { ok: false, startupStatus: status, errors, evidence };
   }
@@ -521,6 +558,7 @@ export class StartupOrchestrator {
     identityAction: StartupAction,
     postLaunchFiles: ResolvedStartupFile[],
     challengeBlock: string | null,
+    includeDurableObligations = false,
   ): Promise<{ ok: true; remainingFiles: ResolvedStartupFile[] } | { ok: false; error: string }> {
     if (!binding.tmuxSession) {
       return { ok: false, error: "No tmux session for the initial session identity prompt" };
@@ -543,6 +581,8 @@ export class StartupOrchestrator {
         // the original startup file using its normal failure semantics.
       }
     }
+
+    if (includeDurableObligations) prompt += `\n\nThis is a fresh conversation. Before choosing work, derive your identity with rig whoami --json and read durable obligations with rig queue list --destination ${binding.tmuxSession} --state pending,in-progress,blocked --limit 10000 --full --json. Report truncation at the limit; a destination row is not permission to claim unrelated work.`;
 
     // OPR.0.4.3.06 — the per-launch orientation challenge rides along with the
     // identity prompt (after the contract) so no extra send is added.
