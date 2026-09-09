@@ -6,9 +6,9 @@
 //   PUT    /api/rig-mode/bindings/:scope/:qualifier?   — upsert (operator)
 //   DELETE /api/rig-mode/bindings/:scope/:qualifier?   — unset (operator)
 //   GET    /api/rig-mode/effective                     — resolve effective
-//                                                          (?rig=&workstream=&qitem=)
+//                                                          (?rig=&project=&mission=&workstream=&qitem=)
 //   GET    /api/rig-mode/defaults                      — recommended
-//                                                          per-mode 6×7
+//                                                          per-mode 8×7
 //                                                          + default scope
 //                                                          + DEFAULT_STALE_RULE
 //
@@ -26,8 +26,10 @@
 import { Hono } from "hono";
 import { authBearerTokenMiddleware } from "../middleware/auth-bearer-token.js";
 import type { RigModeStore } from "../domain/rig-mode/rig-mode-store.js";
+import type { OperatingPostureService } from "../domain/rig-mode/operating-posture.js";
 import {
   OPERATOR_CONTEXT_SCOPES,
+  SCOPE_SPECIFICITY,
   type OperatorContextScope,
 } from "../domain/rig-mode/rig-mode-types.js";
 import {
@@ -99,7 +101,7 @@ function parseScopeAndQualifier(scopeRaw: string, qualifierRaw: string | undefin
       status: 400,
       body: {
         error: "qualifier_required",
-        hint: `Scope ${scope} requires a qualifier (rigId / workstreamId / qitemId).`,
+        hint: `Scope ${scope} requires a qualifier (rig/project/qitem ID or project/mission[/slice-id]).`,
       },
     };
   }
@@ -136,19 +138,35 @@ export function rigModeRoutes(opts?: RigModeRoutesOpts): Hono {
   router.get("/effective", (c) => {
     const store = getStore(c);
     if (!store) return c.json({ error: "rig_policy_store_unavailable" }, 503);
-    const rigId = c.req.query("rig") || undefined;
-    const workstreamId = c.req.query("workstream") || undefined;
-    const qitemId = c.req.query("qitem") || undefined;
-    const resolved = store.resolveEffective({ rigId, workstreamId, qitemId });
+    const rigId = c.req.query("rig");
+    const projectId = c.req.query("project");
+    const missionId = c.req.query("mission");
+    const workstreamId = c.req.query("workstream");
+    const qitemId = c.req.query("qitem");
+    const input = { rigId, projectId, missionId, workstreamId, qitemId };
+    const service = c.get("operatingPosture" as never) as OperatingPostureService | undefined;
+    const operatingPosture = service?.resolve(input) ?? {
+      posture: "unknown", source: "unknown", context: null, binding: null,
+      reason: "Operating posture resolver unavailable.", grantsAuthority: false,
+    };
+    let resolved;
+    try {
+      // Keep pre-existing ergonomic bindings addressed by raw names readable.
+      const raw = store.resolveEffective(input);
+      const canonical = store.resolveEffective(operatingPosture.context ?? input);
+      resolved = !raw || (canonical && SCOPE_SPECIFICITY[canonical.resolvedScope] > SCOPE_SPECIFICITY[raw.resolvedScope]) ? canonical : raw;
+    }
+    catch { return c.json({ effective: null, posture: "unknown_posture", operatingPosture }); }
     // Q6 — null = unknown_posture; do NOT silently default. Surface to caller.
     if (!resolved) {
       return c.json({
         effective: null,
+        operatingPosture,
         posture: "unknown_posture",
         hint: "No binding matches this read context. Per convention §Q6 callers MUST treat this as unknown_posture (do not default to desk).",
       });
     }
-    return c.json({ effective: resolved, posture: "known" });
+    return c.json({ effective: resolved, posture: "known", operatingPosture });
   });
 
   // -- read: one binding (qualifier path-optional via /:scope or /:scope/:qualifier)
@@ -157,7 +175,14 @@ export function rigModeRoutes(opts?: RigModeRoutesOpts): Hono {
     if (!store) return c.json({ error: "rig_policy_store_unavailable" }, 503);
     const parsed = parseScopeAndQualifier(c.req.param("scope"), c.req.param("qualifier"));
     if (!parsed.ok) return c.json(parsed.body, parsed.status);
-    const binding = store.getBinding(parsed.scope, parsed.qualifier);
+    let binding = store.getBinding(parsed.scope, parsed.qualifier);
+    if (!binding) {
+      const service = c.get("operatingPosture" as never) as OperatingPostureService | undefined;
+      if (service) {
+        try { binding = store.getBinding(parsed.scope, service.target(parsed.scope, parsed.qualifier)); }
+        catch (error) { return c.json({ error: "scope_unresolved", hint: String(error) }, 400); }
+      }
+    }
     if (!binding) return c.json({ error: "not_found" }, 404);
     return c.json({ binding });
   });
@@ -172,17 +197,24 @@ export function rigModeRoutes(opts?: RigModeRoutesOpts): Hono {
     if (body === null || typeof body !== "object") {
       return c.json({
         error: "body_required",
-        hint: "PUT body must be { mode: <one of six>, record: <10-field OperatorContextModeRecord> }.",
+        hint: "PUT body must be { mode: <supported mode>, record: <10-field OperatorContextModeRecord> }.",
       }, 400);
     }
     const { mode, record } = body as { mode?: unknown; record?: unknown };
     if (mode === undefined || record === undefined) {
       return c.json({
         error: "body_shape_invalid",
-        hint: "PUT body must be { mode: <one of six>, record: <10-field OperatorContextModeRecord> }.",
+        hint: "PUT body must be { mode: <supported mode>, record: <10-field OperatorContextModeRecord> }.",
       }, 400);
     }
-    const result = store.setBinding(parsed.scope, parsed.qualifier, mode, record);
+    let qualifier = parsed.qualifier;
+    if (mode === "human-led" || mode === "delegated") {
+      const service = c.get("operatingPosture" as never) as OperatingPostureService | undefined;
+      if (!service) return c.json({ error: "operating_posture_unavailable" }, 503);
+      try { qualifier = service.target(parsed.scope, qualifier); }
+      catch (error) { return c.json({ error: "scope_unresolved", hint: String(error) }, 400); }
+    }
+    const result = store.setBinding(parsed.scope, qualifier, mode, record);
     if (!result.ok) {
       return c.json({ error: "validation_failed", errors: result.errors }, 400);
     }
@@ -195,7 +227,15 @@ export function rigModeRoutes(opts?: RigModeRoutesOpts): Hono {
     if (!store) return c.json({ error: "rig_policy_store_unavailable" }, 503);
     const parsed = parseScopeAndQualifier(c.req.param("scope"), c.req.param("qualifier"));
     if (!parsed.ok) return c.json(parsed.body, parsed.status);
-    const removed = store.deleteBinding(parsed.scope, parsed.qualifier);
+    let qualifier = parsed.qualifier;
+    if (!store.getBinding(parsed.scope, qualifier)) {
+      const service = c.get("operatingPosture" as never) as OperatingPostureService | undefined;
+      if (service) {
+        try { qualifier = service.target(parsed.scope, qualifier); }
+        catch (error) { return c.json({ error: "scope_unresolved", hint: String(error) }, 400); }
+      }
+    }
+    const removed = store.deleteBinding(parsed.scope, qualifier);
     return c.json({ removed });
   });
 

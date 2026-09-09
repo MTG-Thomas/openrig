@@ -44,6 +44,8 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 
   let state: ViewState = {
     instanceId,
+    file: null,
+    externalUrl: null,
     timeZone: resolveTimeZone(options.timeZone ?? DEFAULT_TIME_ZONE).timeZone,
     timeZoneWarning: options.timeZoneWarning ?? resolveTimeZone(options.timeZone ?? DEFAULT_TIME_ZONE).warning,
     timeZoneHelp: false,

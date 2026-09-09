@@ -29,3 +29,4 @@ export {
   type HealthSourceFreshness,
   type HealthStatus,
 } from "./domain/health-projection.js";
+export type { OperatingPosture, OperatingContext } from "./domain/rig-mode/operating-posture.js";

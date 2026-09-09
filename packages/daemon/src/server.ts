@@ -350,6 +350,7 @@ export interface AppDeps {
   /** Slice 09 (OPR.0.3.2.9) — operator-context-mode bindings store.
    *  Optional: when absent, the rig-policy routes return 503. */
   rigModeStore?: import("./domain/rig-mode/rig-mode-store.js").RigModeStore;
+  operatingPosture?: import("./domain/rig-mode/operating-posture.js").OperatingPostureService;
   /**
    * OPR.0.4.3.21 — daemon event-loop health monitor. Optional: when absent
    * (e.g. direct-construction test harnesses) `/healthz` keeps its exact
@@ -591,6 +592,7 @@ export function createApp(deps: AppDeps): Hono {
     c.set("composeAdapter" as never, deps.composeAdapter);
     c.set("kernelBootTracker" as never, deps.kernelBootTracker);
     c.set("rigModeStore" as never, deps.rigModeStore);
+    c.set("operatingPosture" as never, deps.operatingPosture);
     c.set("db" as never, deps.rigRepo.db);
     c.set("terminalBearerToken" as never, deps.terminalBearerToken ?? null);
     await next();

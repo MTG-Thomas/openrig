@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { QueueTransition } from "./queue-transition-log.js";
 import type { WatchdogHistoryEntry } from "./watchdog-history-log.js";
 import type { ContextUsage, NodeInventoryEntry } from "./types.js";
+import type { OperatingPosture } from "./rig-mode/operating-posture.js";
 
 export const HEALTH_RECORD_SCHEMA = "openrig.health/v0alpha1" as const;
 export const HEALTH_CATEGORIES = ["behavioral", "process", "governance", "epistemic", "context"] as const;
@@ -151,6 +152,7 @@ export interface HealthRecordDraft {
 }
 
 export interface HealthRecord {
+  operatingPosture?: OperatingPosture;
   ceremony?: PassiveCeremony;
   policyVersion?: string;
   schema: typeof HEALTH_RECORD_SCHEMA;

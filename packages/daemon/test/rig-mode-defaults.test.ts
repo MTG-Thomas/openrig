@@ -76,6 +76,8 @@ describe("rig-mode defaults — slice 09 §Component 3 + §Component 4", () => {
       mobile: "global_host",
       focus: "workstream",
       debug: "qitem",
+      "human-led": "rig",
+      delegated: "rig",
     });
   });
 

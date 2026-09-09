@@ -12,7 +12,7 @@ export interface HealthDisposition {
 export interface AuthorityReference { level?: "project" | "mission" | "slice"; path: string; state: "available" | "unavailable"; sha256?: string; content?: string; }
 interface Packet { schema: "openrig.health-diagnosis/v0alpha1"; finding: HealthRecord; policyVersion: string; authority: AuthorityReference[]; presentedAt: string; instructions: string; }
 interface Receipt { kind: "health-diagnosis"; at: string; action: "presented" | "observed" | "disposition" | "notification-readiness"; finding?: HealthRecord; disposition?: HealthDisposition; authority?: AuthorityReference[]; episodeCleared?: boolean; progressEvidence?: AuthorityReference[]; notificationReadiness?: { ready: boolean; reason: string }; }
-interface DiagnosisAction { qitemId: string; findingId: string; action: "create" | "represent" | "observe" | "retained" | "deferred" | "notify" | "notification-deferred"; reason?: string; }
+interface DiagnosisAction { qitemId: string; findingId: string; action: "create" | "represent" | "observe" | "retained" | "deferred" | "notify" | "notification-deferred"; reason?: string; operatingPosture?: HealthRecord["operatingPosture"]; }
 const instructions = "This packet is a shortcut, not the whole story. Start with the exact evidence and current project/mission/slice authority below; read those sources again before acting. You may extend the investigation. The deterministic signal is not a psychological or epistemic diagnosis. Self-scout is supported: trace the earliest causal point, examine your own contribution, distinguish another seat or stale control-plane source, and request a second agent only when useful. Record one bounded disposition with causal start (or unknown), smallest corrective steering, evidence and remaining uncertainty. Advice is not authorization to cancel work, change scope/rigor/ownership/lifecycle, restart agents, or relax safety. Human escalation requires explicit policy and verified delivery readiness.";
 
 export class HealthDiagnosisService {
@@ -31,7 +31,7 @@ export class HealthDiagnosisService {
   constructor(private readonly deps: {
     queue: QueueRepository; projection: HealthProjectionService; policy: HealthPolicyStore;
     now?: () => string; authority: (record: HealthRecord) => AuthorityReference[];
-    resolveEvidence?: (path: string) => AuthorityReference;
+    resolveEvidence?: (path: string, finding: HealthRecord) => AuthorityReference;
     humanReadiness?: (address: string) => Promise<{ ready: boolean; reason: string }>;
   }) {}
   private now(): string { return this.deps.now?.() ?? new Date().toISOString(); }
@@ -39,6 +39,11 @@ export class HealthDiagnosisService {
   private owns(row: QueueItem): boolean {
     // The tag is also used topically; only our existing ID namespace denotes occurrences.
     return row.qitemId.startsWith(this.id("")) && row.tags?.includes("health-diagnosis") === true;
+  }
+  private missingCurrent(finding: HealthRecord): HealthRecord {
+    if (finding.category !== "process") return finding;
+    return { ...finding, operatingPosture: { posture: "unknown", source: "unknown", context: null, binding: null,
+      reason: "Current finding unavailable; retained posture cannot admit a new interruption.", grantsAuthority: false } };
   }
   private receipt(qitemId: string, actor: string, value: Omit<Receipt, "kind" | "at">, identityProvenance: string | null = null): void {
     this.deps.queue.update({ qitemId, actorSession: actor, identityProvenance, transitionNote: JSON.stringify({ kind: "health-diagnosis", at: this.now(), ...value }) });
@@ -59,7 +64,9 @@ export class HealthDiagnosisService {
       try { const value = JSON.parse(t.transitionNote ?? "null") as Receipt | null; return value?.kind === "health-diagnosis" ? [value] : []; } catch { return []; }
     });
     return { row, packet, receipts, notificationReadiness: receipts.filter((r) => r.notificationReadiness).at(-1)?.notificationReadiness ?? null, humanDelivery: human ? { qitemId: human.qitemId, outcome: human.deliveryOutcome ?? "pending" } : null,
-      finding: (refresh && packet.finding.ceremony ? this.deps.projection.get(packet.finding.id) : null) ?? receipts.filter((r) => r.finding).at(-1)?.finding ?? packet.finding,
+      finding: refresh && (packet.finding.ceremony || packet.finding.category === "process")
+        ? this.deps.projection.get(packet.finding.id) ?? this.missingCurrent(receipts.filter((r) => r.finding).at(-1)?.finding ?? packet.finding)
+        : receipts.filter((r) => r.finding).at(-1)?.finding ?? packet.finding,
       authority: receipts.filter((r) => r.authority).at(-1)?.authority ?? packet.authority,
       disposition: receipts.filter((r) => r.disposition).at(-1)?.disposition ?? null };
   }
@@ -68,9 +75,9 @@ export class HealthDiagnosisService {
     const rows = this.deps.queue.list({ tag: "health-diagnosis", limit: 10000 });
     if (rows.length === 10000) throw new Error("health_diagnosis_census_truncated");
     const occurrences = rows.filter((r) => this.owns(r)).map((r) => this.show(r.qitemId, false));
-    if (!refresh || !occurrences.some((o) => o.packet.finding.ceremony)) return occurrences;
+    if (!refresh || !occurrences.some((o) => o.packet.finding.ceremony || o.packet.finding.category === "process")) return occurrences;
     const current = new Map(this.deps.projection.records().map((finding) => [finding.id, finding]));
-    return occurrences.map((o) => ({ ...o, finding: current.get(o.finding.id) ?? o.finding }));
+    return occurrences.map((o) => ({ ...o, finding: current.get(o.finding.id) ?? this.missingCurrent(o.finding) }));
   }
   evaluate(actor: string, apply: boolean): Promise<{ policyVersion: string; enabled: boolean; actions: DiagnosisAction[] }> {
     const work = this.pending.then(() => this.evaluateOnce(actor, apply));
@@ -99,6 +106,14 @@ export class HealthDiagnosisService {
         continue;
       }
       if ((finding.status !== "active" && !suspected) || !policy.detectors.includes(finding.detector)) continue;
+      // A process preference affects presentation, never operational health or workflow reminders.
+      if (finding.category === "process" && finding.operatingPosture?.posture !== "delegated") {
+        actions.push({ ...base, action: "deferred", operatingPosture: finding.operatingPosture,
+          reason: finding.operatingPosture?.posture === "human-led"
+            ? "Human-led scope: process-only interruptions are quiet; the finding remains inspectable."
+            : "Operating posture unknown: no delegated process interruption is inferred." });
+        continue;
+      }
       const age = now - Date.parse(finding.lastObservedAt ?? "");
       if (!Number.isFinite(age) || age < 0 || age > effective.policy.freshnessSeconds * 1000) {
         actions.push({ ...base, action: "deferred", reason: "source is stale or contradictory" }); continue;
@@ -176,7 +191,7 @@ export class HealthDiagnosisService {
         || at > Date.parse(finding.window.endedAt) || !refs(o.evidenceRefs) || !o.evidenceRefs.length) throw new Error("Outcome must be unique, evidenced, and inside the assessed transition window");
       ids.add(o.id); evidenceRefs.push(...o.evidenceRefs);
     }
-    const evidence = [...new Set(evidenceRefs)].map((path) => this.deps.resolveEvidence?.(path) ?? { path, state: "unavailable" as const });
+    const evidence = [...new Set(evidenceRefs)].map((path) => this.deps.resolveEvidence?.(path, finding) ?? { path, state: "unavailable" as const });
     if (evidence.some((e) => e.state !== "available")) throw new Error("health_progress_evidence_unavailable");
     return evidence;
   }
@@ -185,6 +200,7 @@ export class HealthDiagnosisService {
   }
   private async notifyOccurrence(qitemId: string, actor: string, identityProvenance: string | null, automatic: boolean) {
     const diagnosis = automatic ? this.show(qitemId) : this.requireOwner(qitemId, actor);
+    if (diagnosis.finding.category === "process" && diagnosis.finding.operatingPosture?.posture !== "delegated") throw new Error("health_process_posture_does_not_admit");
     if (automatic && diagnosis.row.destinationSession !== this.deps.policy.read().policy.diagnosis.owner) throw new Error("health_diagnosis_owner_required");
     if (diagnosis.finding.ceremony && (diagnosis.finding.status !== "active" || diagnosis.finding.ceremony.stage !== "confirmed")) throw new Error("health_human_requires_confirmed_active_episode");
     const { human } = this.deps.policy.read().policy;
@@ -200,6 +216,7 @@ export class HealthDiagnosisService {
     if (!ready?.ready) throw new Error(`health_human_readiness_unavailable: ${ready?.reason ?? "no verified delivery readiness"}`);
     // Recheck the live finding and custody after readiness I/O; no stale confirmation may post.
     const current = automatic ? this.show(qitemId) : this.requireOwner(qitemId, actor);
+    if (current.finding.category === "process" && current.finding.operatingPosture?.posture !== "delegated") throw new Error("health_process_posture_changed_or_unknown");
     if (automatic && current.row.destinationSession !== this.deps.policy.read().policy.diagnosis.owner) throw new Error("health_diagnosis_owner_required");
     if (current.finding.ceremony && (current.finding.status !== "active" || current.finding.ceremony.stage !== "confirmed")) throw new Error("health_human_requires_confirmed_active_episode");
     if (healthHash(this.deps.policy.read().policy.human) !== healthHash(human)) throw new Error("health_human_policy_changed");

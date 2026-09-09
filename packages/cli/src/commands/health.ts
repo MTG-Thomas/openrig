@@ -257,6 +257,7 @@ function renderList(projection: HealthListProjection): void {
     console.log(`${record.id}  ${record.severity}  ${record.status}  ${record.detector}`);
     console.log(`  ${scopeLabel(record.scope)}  ${record.confidence} confidence  freshness=${record.freshness.state}${record.indeterminateReason ? `  indeterminate=${record.indeterminateReason}` : ""}`);
     console.log(`  ${record.summary}`);
+    if (record.operatingPosture) console.log(`  Operating posture: ${record.operatingPosture.posture} (${record.operatingPosture.source}); phase=${record.operatingPosture.context?.phase.value ?? "unknown"}`);
   }
   if (projection.truncated) {
     console.log(`Truncated at ${projection.limit} of ${projection.total}; narrow the scope or raise --limit (maximum 200).`);
@@ -274,6 +275,7 @@ function renderExplanation(record: HealthRecord): void {
   if (record.indeterminateReason) console.log(`  Indeterminate: ${record.indeterminateReason}`);
   console.log(`  Rule:        ${record.threshold}`);
   console.log(`  Policy:      ${record.policyVersion ?? "not reported by source"}`);
+  if (record.operatingPosture) console.log(`  Posture:     ${JSON.stringify(record.operatingPosture)}`);
   console.log(`  Explanation: ${record.explanation}`);
   console.log(`  Evidence:    ${JSON.stringify(record.evidence)}`);
   if (record.ceremony) console.log(`  Diagnosis stage: ${record.ceremony.stage}\n  Normal context: ${JSON.stringify(record.ceremony)}`);
@@ -410,6 +412,7 @@ list/explain never mutate. Diagnosis mutations use explicit subcommands; automat
           if (entry.humanDelivery) console.log(`  Human delivery: ${entry.humanDelivery.outcome} (${entry.humanDelivery.qitemId})`);
           console.log(`  Finding: ${entry.finding.id}  Policy: ${entry.finding.policyVersion ?? "unreported"}`);
           console.log(`  ${entry.finding.explanation}`);
+          if (entry.finding.operatingPosture) console.log(`  Posture: ${entry.finding.operatingPosture.posture} (${entry.finding.operatingPosture.source}); phase=${entry.finding.operatingPosture.context?.phase.value ?? "unknown"}; ${entry.finding.operatingPosture.reason}`);
           console.log(`  Start: ${entry.disposition?.causalStart ?? "unknown"}`);
           console.log(`  Steering: ${entry.disposition?.steering ?? "not yet recorded"}`);
           console.log(`  Uncertainty: ${entry.disposition?.uncertainty ?? entry.finding.indeterminateReason ?? "diagnosis pending"}`);

@@ -1044,6 +1044,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       }
       return wrapDetailLines(lines, contentWidth);
     }
+    if (state.filter) lines.push({ text: `/ filter specs: ${state.filter} · / replace · esc clear` });
     const selected = computeExplorerRows(state, snap)[state.selection]?.action;
     const spec = selected?.type === "drill" && selected.resource === "spec" ? findSpec(snap, selected.name) : null;
     if (spec) {
@@ -1058,7 +1059,16 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       lines.push({ text: "SPEC LIBRARY" }, { text: "Choose a spec at left to preview its purpose, contents and source." },
         { text: "Enter reads details · / filters · source opens current disk content" }, { text: "" });
       for (const kind of ["rig", "agent", "workflow"] as const) lines.push({ text: `${kind}: ${snap.specs.filter((spec) => spec.kind === kind).length} available` });
-      if (!snap.specs.length) lines.push({ text: motion.loading ? "Library read pending" : snap.readErrors.find((e) => e.startsWith("specs-library")) ?? "Library empty — no specs served" });
+      if (!snap.specs.length) {
+        if (motion.loading) {
+          if (!motion.reduced) motion.used = true;
+          lines.push({ text: `  ${motion.frame} library read pending` });
+        } else {
+          const failure = snap.readErrors.find((error) => error.startsWith("specs-library"));
+          const notLoaded = snap.readErrors.find((error) => error.startsWith("Live data not loaded"));
+          lines.push({ text: failure ? `  ✕ library read failed: ${failure}` : notLoaded ?? (snap.specsLoaded === false ? "Specs catalog read unavailable" : "  (library empty — proven, no specs served)") });
+        }
+      }
     }
     return wrapDetailLines(lines, contentWidth);
   }

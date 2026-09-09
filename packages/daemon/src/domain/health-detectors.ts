@@ -120,11 +120,16 @@ export function canonicalDetectorJson(records: readonly HealthRecord[]): string 
 }
 
 export class HealthProjectionService {
-  constructor(private readonly source: HealthObservationSource, private readonly policy?: () => EffectiveHealthPolicy) {}
+  constructor(private readonly source: HealthObservationSource, private readonly policy?: () => EffectiveHealthPolicy,
+    private readonly operatingPosture?: (record: HealthRecord) => NonNullable<HealthRecord["operatingPosture"]>) {}
 
   records(): HealthRecord[] {
     const policy = this.policy?.();
-    return evaluateHealthDetectors(this.source.read(), policy?.policy).map((record) => policy ? { ...record, policyVersion: policy.version } : record);
+    return evaluateHealthDetectors(this.source.read(), policy?.policy).map((record) => ({
+      ...record,
+      ...(policy ? { policyVersion: policy.version } : {}),
+      ...(this.operatingPosture ? { operatingPosture: this.operatingPosture(record) } : {}),
+    }));
   }
 
   list(query: HealthListQuery = {}): HealthListProjection {

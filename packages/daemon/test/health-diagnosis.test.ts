@@ -1,3 +1,4 @@
+import { delegatedPostureFixture } from "./helpers/delegated-posture.js";
 import { mkdtempSync, rmSync, readFileSync, readdirSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ function setup() {
     reviewReturns: 0, candidateChanges: 0, newRiskClasses: 0,
     source: boundHealthEvidence(evidence, { source: "mixed", startedAt: now, endedAt: now, limit: 200, retentionSeconds: 86400 }, deriveHealthSourceFreshness({ evaluatedAt: now, newestSourceAt: now, maxAgeSeconds: 600, available: true })),
   };
-  const projection = new HealthProjectionService({ read: () => [observation] }, () => policy.read());
+  const projection = new HealthProjectionService({ read: () => [observation] }, () => policy.read(), delegatedPostureFixture);
   const service = new HealthDiagnosisService({ queue, projection, policy, now: () => now, authority: () => [{ path: "project/SPEC.md", state: "unavailable" as const }] });
   return { home, db, queue, policy, projection, service, observation, tick: (value: string) => { now = value; } };
 }
@@ -177,7 +178,7 @@ async function checkpointSetup() {
     productCensusRef: evidencePath, sdlc: { expectation: "Keep the graph moving; wait on named live boundaries", evidenceRef: evidencePath }, boundedAuthority: { applies: false, evidenceRef: evidencePath },
     authorityPaths: { project: [], mission: [], slice: [] } };
   const source = new HealthCheckpointSource(t.home, t.queue, t.policy, () => now);
-  const projection = new HealthProjectionService(source, () => t.policy.read());
+  const projection = new HealthProjectionService(source, () => t.policy.read(), delegatedPostureFixture);
   const service = new HealthDiagnosisService({ queue: t.queue, projection, policy: t.policy, now: () => now, authority: () => [] });
   return { ...t, source, projection, service, cp, time: (value: string) => { now = value; } };
 }
@@ -251,7 +252,7 @@ it("a hundred context episodes remain low-priority and opt-in admission is still
     return { kind: "context-pressure", sourceName: "native", continuity: "same-occupant", scope: { type: "seat", rigId: "rig", seatId: `seat-${i}` }, episodeStartedAt: at, lastObservedAt: at,
       source: boundHealthEvidence(cleared ? [sample, { ...sample, sourceOrder: 1, usedPercentage: 30 }] : [sample], { source: "context-usage", startedAt: at, endedAt: at, limit: 3, retentionSeconds: 86400 }, deriveHealthSourceFreshness({ evaluatedAt: at, newestSourceAt: at, maxAgeSeconds: 600, available: true })) };
   }) };
-  const projection = new HealthProjectionService(source, () => t.policy.read());
+  const projection = new HealthProjectionService(source, () => t.policy.read(), delegatedPostureFixture);
   const service = new HealthDiagnosisService({ queue: t.queue, projection, policy: t.policy, now: () => at, authority: () => [] });
   const p = t.policy.read().policy;
   t.policy.apply({ ...p, diagnosis: { ...p.diagnosis, enabled: true, owner: "owner@rig" } }, "actor@rig");

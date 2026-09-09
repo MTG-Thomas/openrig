@@ -283,6 +283,11 @@ export function healthDetailLines(snap: FleetSnapshot, findingId: string, width:
     ...wrap("why", record.explanation, width),
     ...wrap("threshold", record.threshold, width),
     ...wrap("policy", record.policyVersion ?? "not reported by source", width),
+    ...(record.operatingPosture ? [
+      ...wrap("posture", `${record.operatingPosture.posture} · ${record.operatingPosture.source}${record.operatingPosture.binding ? " · " + record.operatingPosture.binding.id : ""}`, width),
+      ...wrap("work phase", `${record.operatingPosture.context?.phase.value ?? "unknown"} · ${record.operatingPosture.context?.phase.source ?? "unavailable"}`, width),
+      ...wrap("oversight", record.operatingPosture.reason, width),
+    ] : []),
     ...wrap("inspect", record.suggestedInspection, width),
     ...(record.indeterminateReason ? wrap("unknown", record.indeterminateReason, width, "warn") : []),
     { text: "" },

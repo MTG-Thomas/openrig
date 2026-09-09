@@ -35,6 +35,7 @@ import {
   type OperatorContextReadContext,
   type OperatorContextScope,
   SCOPE_SPECIFICITY,
+  missionModeQualifier,
 } from "./rig-mode-types.js";
 import { validateModeName, validateRecord } from "./rig-mode-validator.js";
 
@@ -195,7 +196,7 @@ export class RigModeStore {
    * context. Among multiple matching bindings, the most-specific
    * scope wins.
    */
-  resolveEffective(ctx: OperatorContextReadContext): EffectiveOperatorContextMode | null {
+  resolveEffective(ctx: OperatorContextReadContext, modes?: readonly OperatorContextMode[]): EffectiveOperatorContextMode | null {
     const candidates: OperatorContextModeBinding[] = [];
     if (ctx.qitemId) {
       const b = this.getBinding("qitem", ctx.qitemId);
@@ -203,6 +204,14 @@ export class RigModeStore {
     }
     if (ctx.workstreamId) {
       const b = this.getBinding("workstream", ctx.workstreamId);
+      if (b) candidates.push(b);
+    }
+    if (ctx.projectId && ctx.missionId) {
+      const b = this.getBinding("mission", missionModeQualifier(ctx.projectId, ctx.missionId));
+      if (b) candidates.push(b);
+    }
+    if (ctx.projectId) {
+      const b = this.getBinding("project", ctx.projectId);
       if (b) candidates.push(b);
     }
     if (ctx.rigId) {
@@ -213,11 +222,16 @@ export class RigModeStore {
     if (host) candidates.push(host);
 
     if (candidates.length === 0) return null;
+    if (modes && candidates.some((b) => !validateModeName(b.mode).ok || !validateRecord(b.record).ok
+      || b.id !== bindingId(b.record.scope, b.qualifier))) {
+      throw new Error("stored mode binding is invalid");
+    }
 
     candidates.sort(
       (a, b) => SCOPE_SPECIFICITY[b.record.scope] - SCOPE_SPECIFICITY[a.record.scope],
     );
-    const winner = candidates[0]!;
+    const winner = candidates.find((b) => !modes || modes.includes(b.mode));
+    if (!winner) return null;
     return {
       binding: winner,
       resolvedScope: winner.record.scope,

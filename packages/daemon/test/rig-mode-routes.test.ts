@@ -78,7 +78,7 @@ describe("rig-mode HTTP routes — slice 09", () => {
       recommendedDefaultScope: Record<string, string>;
       defaultStaleRule: string;
     };
-    expect(Object.keys(body.recommendedModeDefaults).sort()).toEqual(["away", "debug", "desk", "focus", "mobile", "sleep"]);
+    expect(Object.keys(body.recommendedModeDefaults).sort()).toEqual(["away", "debug", "delegated", "desk", "focus", "human-led", "mobile", "sleep"]);
     expect(body.recommendedDefaultScope.debug).toBe("qitem");
     expect(body.defaultStaleRule).toBe("re_confirm_on_long_gap");
   });

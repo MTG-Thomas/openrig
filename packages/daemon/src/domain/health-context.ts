@@ -38,22 +38,27 @@ function readAuthorityFile(workspace: string, path: string): AuthorityReference 
 }
 
 export function healthAuthority(workspace: string, checkpoints: HealthCheckpointSource, record: HealthRecord): AuthorityReference[] {
+  // The shared reader has already resolved the declared project catalog and real paths.
+  const paths = record.operatingPosture?.context?.paths;
+  workspace = paths?.project ?? workspace;
   const checkpoint = record.detector === "process.ceremony-amplification" ? checkpoints.entries().find((c) => healthEpisodeId(record.detector, c.checkpoint.scope, c.episodeStartedAt) === record.id)?.checkpoint : undefined;
   const scope = record.scope;
   const mission = (scope.type === "mission" || scope.type === "slice") && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(scope.missionId) ? scope.missionId : null;
+  const missionDir = mission ? paths?.mission ?? join(workspace, "missions", mission) : null;
   const groups: Record<AuthorityLevel, string[]> = {
     project: [join(workspace, "SPEC.md"), join(workspace, "project.yaml"), ...checkpoint?.authorityPaths.project ?? []],
-    mission: [...(mission ? [join(workspace, "missions", mission, "SPEC.md"), join(workspace, "missions", mission, "mission.yaml")] : []), ...checkpoint?.authorityPaths.mission ?? []],
+    mission: [...(missionDir ? [join(missionDir, "SPEC.md"), join(missionDir, "mission.yaml")] : []), ...checkpoint?.authorityPaths.mission ?? []],
     slice: [...checkpoint?.authorityPaths.slice ?? [], ...record.ceremony?.context.filter((r) => r.role.startsWith("slice authority")).map((r) => r.path).filter((p) => /(?:SPEC\.md|slice\.yaml)$/.test(p)) ?? []],
   };
   const belongs = (level: AuthorityLevel, path: string): boolean => {
     const parts = relative(resolve(workspace), resolve(workspace, path)).split("/");
     if (level === "project") return parts.length === 1 && ["SPEC.md", "project.yaml"].includes(parts[0]!);
-    if (!mission || parts[0] !== "missions" || parts[1] !== mission) return false;
-    if (level === "mission") return parts.length === 3 && ["SPEC.md", "mission.yaml"].includes(parts[2]!);
-    if (scope.type !== "slice" || parts.length !== 5 || parts[2] !== "slices" || !["SPEC.md", "slice.yaml"].includes(parts[4]!)) return false;
+    if (!missionDir) return false;
+    const workParts = relative(missionDir, resolve(workspace, path)).split("/");
+    if (level === "mission") return workParts.length === 1 && ["SPEC.md", "mission.yaml"].includes(workParts[0]!);
+    if (scope.type !== "slice" || workParts.length !== 3 || workParts[0] !== "slices" || !["SPEC.md", "slice.yaml"].includes(workParts[2]!)) return false;
     // Directory names are not slice IDs. The canonical sibling SPEC owns identity.
-    const spec = readAuthorityFile(workspace, join(workspace, ...parts.slice(0, 4), "SPEC.md"));
+    const spec = readAuthorityFile(workspace, join(missionDir, ...workParts.slice(0, 2), "SPEC.md"));
     const frontmatter = spec.content?.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
     if (!frontmatter) return false;
     const identity = parseYaml(frontmatter) as { id?: unknown; mission?: unknown } | null;

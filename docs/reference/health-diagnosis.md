@@ -8,6 +8,12 @@ not declare a pathology or perform corrective actions.
 
 ## Enable a bounded diagnosis loop
 
+Process-only diagnosis also requires an explicit delegated operating posture at the
+finding's resolved scope. Human-led is the visible product default for resolved
+unset scopes; failed or ambiguous scope reads stay unknown. Findings remain
+inspectable in either case. See [scoped operating posture](scoped-operating-posture.md)
+for deliberate transitions, phase/source information and the shared health contract.
+
 ```sh
 rig health policy --json > effective-policy.json
 jq '.policy' effective-policy.json > health-policy.json

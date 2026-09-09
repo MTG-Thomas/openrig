@@ -10,7 +10,7 @@
 //   rig mode cite       → emit the citation line per convention §Component 5
 //   rig mode unset <scope> [qualifier]
 //                         → DELETE one binding (operator-only)
-//   rig mode defaults   → recommended 6×7 + per-mode scope + stale rule
+//   rig mode defaults   → recommended 8×7 + per-mode scope + stale rule
 //
 // HG-4 / HG-7 anchored here:
 //   - `set` never silently applies. Without `--confirm` it echoes the
@@ -27,6 +27,7 @@ import { DaemonClient } from "../client.js";
 import { getDaemonStatus, getDaemonUrl , daemonStatusGuard} from "../daemon-lifecycle.js";
 import { realDeps } from "./daemon.js";
 import type { StatusDeps } from "./status.js";
+import type { OperatingPosture } from "@openrig/daemon/health-projection";
 
 export interface RigModeDeps extends StatusDeps {}
 
@@ -34,10 +35,10 @@ export interface RigModeDeps extends StatusDeps {}
 // doesn't grow a build-time dep on the daemon package; the validator
 // at the daemon edge is the source of truth, and the CLI sends the
 // record through unchanged.
-const MODES = ["sleep", "desk", "mobile", "away", "focus", "debug"] as const;
+const MODES = ["sleep", "desk", "mobile", "away", "focus", "debug", "human-led", "delegated"] as const;
 type Mode = (typeof MODES)[number];
 
-const SCOPES = ["global_host", "rig", "workstream", "qitem"] as const;
+const SCOPES = ["global_host", "rig", "project", "mission", "workstream", "qitem"] as const;
 type Scope = (typeof SCOPES)[number];
 
 // Convention §Component 4 — bare-word disambiguation. A bare reserved
@@ -82,6 +83,7 @@ interface ListResponse {
 }
 
 interface EffectiveResponse {
+  operatingPosture?: OperatingPosture;
   effective: { binding: BindingResponse["binding"]; resolvedScope: Scope } | null;
   posture: "known" | "unknown_posture";
   hint?: string;
@@ -102,6 +104,20 @@ function emitRecord(label: string, record: Record<string, string>): void {
   for (const [k, v] of Object.entries(record)) {
     console.log(`  ${k}: ${v}`);
   }
+}
+
+function emitOperatingPosture(value: OperatingPosture | undefined): void {
+  if (!value) {
+    console.log("Operating posture: unknown (not reported by this daemon).");
+    return;
+  }
+  console.log(`Operating posture: ${value.posture} (source: ${value.source}${value.binding ? ", " + value.binding.id : ""})`);
+  if (value.context) {
+    const { phase, sources: _sources, ...scope } = value.context;
+    console.log(`  Scope: ${JSON.stringify(scope)}`);
+    console.log(`  Phase: ${phase.value ?? "unknown"} (source: ${phase.source ?? "unavailable"})`);
+  }
+  console.log(`  ${value.reason} Recorded preference grants no execution authority.`);
 }
 
 /**
@@ -144,7 +160,7 @@ function formatCitation(b: BindingResponse["binding"]): string {
 
 export function rigModeCommand(depsOverride?: RigModeDeps): Command {
   const cmd = new Command("mode").description(
-    "Slice 09 — operator-context-mode bindings (sleep/desk/mobile/away/focus/debug × global_host/rig/workstream/qitem).",
+    "Inspect and explicitly set scoped operating posture (human-led/delegated) and operator-context modes.",
   );
 
   const getDeps = (): RigModeDeps =>
@@ -160,7 +176,7 @@ export function rigModeCommand(depsOverride?: RigModeDeps): Command {
       "Propose a mode binding. Without --confirm, restates the proposed binding and exits 2 (no daemon write). With --confirm, sets it.",
     )
     .option("--scope <scope>", `Scope: ${SCOPES.join(" | ")} (default: per-mode recommendation)`)
-    .option("--qualifier <id>", "Required for rig / workstream / qitem scopes; omit for global_host")
+    .option("--qualifier <id>", "Rig/project/qitem ID; mission: project/mission; workstream: project/mission/slice-id; omit for global_host")
     .option("--autonomy-scope <v>")
     .option("--heartbeat-cadence <v>")
     .option("--inspection-depth <v>")
@@ -365,16 +381,20 @@ export function rigModeCommand(depsOverride?: RigModeDeps): Command {
   // -- effective ---------------------------------------------------------
   cmd
     .command("effective")
-    .description("Resolve the effective mode for a (rig, workstream, qitem) read context. Q6 unknown_posture surfaced when no binding matches.")
+    .description("Inspect effective operating posture, scope, phase and source. Resolved unset scopes default to human-led; unreadable or ambiguous identity stays unknown.")
     .option("--rig <id>")
+    .option("--project <id>")
+    .option("--mission <id>")
     .option("--workstream <id>")
     .option("--qitem <id>")
     .option("--json", "JSON output for agents")
-    .action(async (opts: { rig?: string; workstream?: string; qitem?: string; json?: boolean }) => {
+    .action(async (opts: { rig?: string; project?: string; mission?: string; workstream?: string; qitem?: string; json?: boolean }) => {
       const deps = getDeps();
       await withClient(deps, async (client) => {
         const qs = new URLSearchParams();
         if (opts.rig) qs.set("rig", opts.rig);
+        if (opts.project) qs.set("project", opts.project);
+        if (opts.mission) qs.set("mission", opts.mission);
         if (opts.workstream) qs.set("workstream", opts.workstream);
         if (opts.qitem) qs.set("qitem", opts.qitem);
         const path = qs.toString() ? `/api/rig-mode/effective?${qs.toString()}` : "/api/rig-mode/effective";
@@ -388,9 +408,9 @@ export function rigModeCommand(depsOverride?: RigModeDeps): Command {
           console.log(JSON.stringify(res.data, null, 2));
           return;
         }
+        emitOperatingPosture(res.data.operatingPosture);
         if (res.data.posture === "unknown_posture" || !res.data.effective) {
-          console.log("unknown_posture: no binding matches this read context.");
-          if (res.data.hint) console.log(res.data.hint);
+          console.log("Operator-context mode: unset (legacy unknown_posture).");
           return;
         }
         const b = res.data.effective.binding;
@@ -406,17 +426,22 @@ export function rigModeCommand(depsOverride?: RigModeDeps): Command {
     .command("cite")
     .description("Emit a citation line for the effective mode at a read context. Per convention §Citation Rules.")
     .option("--rig <id>")
+    .option("--project <id>")
+    .option("--mission <id>")
     .option("--workstream <id>")
     .option("--qitem <id>")
-    .action(async (opts: { rig?: string; workstream?: string; qitem?: string }) => {
+    .action(async (opts: { rig?: string; project?: string; mission?: string; workstream?: string; qitem?: string }) => {
       const deps = getDeps();
       await withClient(deps, async (client) => {
         const qs = new URLSearchParams();
         if (opts.rig) qs.set("rig", opts.rig);
+        if (opts.project) qs.set("project", opts.project);
+        if (opts.mission) qs.set("mission", opts.mission);
         if (opts.workstream) qs.set("workstream", opts.workstream);
         if (opts.qitem) qs.set("qitem", opts.qitem);
         const path = qs.toString() ? `/api/rig-mode/effective?${qs.toString()}` : "/api/rig-mode/effective";
         const res = await client.get<EffectiveResponse>(path);
+        emitOperatingPosture(res.data.operatingPosture);
         if (res.status >= 400 || !res.data.effective) {
           console.log("Operating without an explicit operator-context-mode binding (unknown_posture).");
           return;
@@ -428,7 +453,7 @@ export function rigModeCommand(depsOverride?: RigModeDeps): Command {
   // -- unset -------------------------------------------------------------
   cmd
     .command("unset <scope> [qualifier]")
-    .description("Delete one binding (operator-only). Scope: global_host | rig | workstream | qitem.")
+    .description("Delete one binding (operator-only). Scope: global_host | rig | project | mission | workstream | qitem.")
     .option("--bearer <token>")
     .option("--json", "JSON output for agents")
     .action(async (
@@ -483,7 +508,7 @@ export function rigModeCommand(depsOverride?: RigModeDeps): Command {
   // -- defaults ----------------------------------------------------------
   cmd
     .command("defaults")
-    .description("Print the recommended per-mode 6×7 + default-scope + stale rule.")
+    .description("Print the recommended per-mode 8×7 + default-scope + stale rule.")
     .option("--json", "JSON output for agents")
     .action(async (opts: { json?: boolean }) => {
       const deps = getDeps();
