@@ -1232,7 +1232,9 @@ function keybindHints(state: ViewState): string {
   // hint hid exactly where it was needed). When ↑↓ themselves scroll (a
   // scrollable spec detail), the nav label says so; otherwise ↑↓ move and the
   // page keys carry the scroll.
-  if (state.section === "config") return state.configKey ? "↑↓ scroll · esc back · v select/copy · refresh · q quit" : "↑↓ move · ←→ pane · ⏎ open · / search · esc back · refresh · q quit";
+  if (state.section === "config") return state.configKey
+    ? `${specDetailArrowsScroll(state) ? "↑↓ scroll" : "↑↓ move"} · esc back · v select/copy · refresh · q quit`
+    : "↑↓ move · ←→ pane · ⏎ open · / search · esc back · refresh · q quit";
   const arrowsScroll = specDetailArrowsScroll(state);
   const nav = arrowsScroll ? "↑↓ scroll" : "↑↓ move";
   const pageScroll = state.contentMaxOffset > 0 && !arrowsScroll ? "⇞⇟ scroll · " : "";

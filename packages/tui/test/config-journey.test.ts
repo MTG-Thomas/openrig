@@ -145,4 +145,16 @@ describe("CONFIG in the normal TUI journey", () => {
     expect(draw().lines.join("\n")).toContain("CONFIG unavailable");
     expect(draw().lines.join("\n")).not.toContain(secret);
   });
+  it("advertises arrow scrolling only when detail actually overflows", async () => {
+    view.dispatch(parseCommand("config")); await refresh();
+    view.dispatch(parseCommand("setting ui.timezone"));
+    expect(draw(120, 40).lines.join("\n")).toContain("↑↓ move");
+    view.dispatch(parseCommand("setting workspace.root"));
+    const screen = draw(80, 16);
+    expect(screen.lines.join("\n")).toContain("↑↓ scroll");
+    const selection = view.get().selection;
+    key("down", screen);
+    expect(view.get().contentOffset).toBe(1);
+    expect(view.get().selection).toBe(selection);
+  });
 });
