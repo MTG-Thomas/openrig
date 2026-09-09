@@ -13,6 +13,7 @@
 // agents stay on CLI-shell-out per the shipped openrig-user-settings skill.
 
 import { Hono } from "hono";
+import { settingsBrowser } from "../domain/user-settings/settings-browser.js";
 import {
   SETTINGS_VALID_KEYS,
   isSettingsValidKey,
@@ -31,12 +32,18 @@ interface InitWorkspaceBody {
   dryRun?: boolean;
 }
 
-export function configRoutes(): Hono {
+export function configRoutes(opts: { home?: string } = {}): Hono {
   const router = new Hono();
 
   router.get("/", (c) => {
     const store = c.get("settingsStore" as never) as SettingsStore | undefined;
     if (!store) return c.json({ error: "settings_unavailable" }, 503);
+    if (c.req.query("view") === "browser") {
+      const gateway = c.get("gatewaySubsystem" as never) as { status(): Record<string, unknown> } | undefined;
+      let observed: Record<string, unknown> | null = null;
+      try { observed = gateway?.status() ?? null; } catch { /* configuration still browsable */ }
+      return c.json(settingsBrowser(store, observed, opts.home));
+    }
     // OPR.0.4.4.15: dynamic-class enumeration rides ADDITIVELY beside the
     // static settings map (existing consumers of `settings` unaffected).
     try {

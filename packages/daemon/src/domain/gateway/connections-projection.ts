@@ -1,36 +1,45 @@
-import { closeSync, existsSync, fstatSync, openSync, readSync, readFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, configPathFor, type SlackConnectorConfig } from "./slack/config.js";
+import { createHash } from "node:crypto";
+import { loadConfig, configPathFor, DEFAULT_CONFIG, type SlackConnectorConfig } from "./slack/config.js";
 import { resolveSecret } from "./slack/secrets.js";
 import { loadHumanRegistry } from "./human-registry.js";
 import { channelStateDigest, type ChannelOperation } from "./channel-operations.js";
 import type { SettingsStore } from "../user-settings/settings-store.js";
 
-/** Passive evidence only. No provider client, queue writer, or service activation. */
-export function connectionsProjection(home: string, gateway: Record<string, unknown> | null, settings?: SettingsStore) {
+/** Shared passive read context. Raw values and the redactor stay inside the domain. */
+export function readConnectionConfiguration(home: string) {
   let cfg: SlackConnectorConfig | null = null;
   const configPath = configPathFor(home);
   let configState = "unavailable";
+  let sourceState: "available" | "missing" | "malformed" | "unavailable" = "unavailable";
+  let fields: string[] = [];
   try {
-    if (existsSync(configPath)) {
-      const raw = JSON.parse(readFileSync(configPath, "utf8"));
+    let bytes: string | null = null;
+    try { bytes = readFileSync(configPath, "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    sourceState = bytes === null ? "missing" : "malformed";
+    if (bytes !== null) {
+      const raw = JSON.parse(bytes);
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid config");
+      fields = Object.keys(DEFAULT_CONFIG).filter((key) => Object.hasOwn(raw, key));
     }
     cfg = loadConfig(home);
     if (typeof cfg.enabled !== "boolean" || (cfg.channel !== null && typeof cfg.channel !== "string")
       || typeof cfg.inboundDestination !== "string" || !Array.isArray(cfg.outboundDestinations)
       || !cfg.outboundDestinations.every((x) => typeof x === "string")
+      || typeof cfg.sourceLabel !== "string" || !Array.isArray(cfg.requiredScopes)
+      || !cfg.requiredScopes.every((x) => typeof x === "string")
       || (cfg.secretsEnvFile !== null && typeof cfg.secretsEnvFile !== "string")) throw new Error("invalid config");
-    configState = existsSync(configPath) ? "file" : "default";
+    configState = bytes === null ? "default" : "file";
+    sourceState = bytes === null ? "missing" : "available";
   } catch { cfg = null; }
   let bot: string | null = null;
   let app: string | null = null;
   let secretsAvailable = true;
   try {
-    if (cfg) {
-      bot = resolveSecret("SLACK_BOT_TOKEN", { envFile: cfg.secretsEnvFile ?? undefined });
-      app = resolveSecret("SLACK_APP_TOKEN", { envFile: cfg.secretsEnvFile ?? undefined });
-    }
+    bot = resolveSecret("SLACK_BOT_TOKEN", { envFile: cfg?.secretsEnvFile ?? undefined });
+    app = resolveSecret("SLACK_APP_TOKEN", { envFile: cfg?.secretsEnvFile ?? undefined });
   } catch { secretsAvailable = false; }
   const text = (v: unknown): string | null => {
     if (typeof v !== "string") return null;
@@ -38,6 +47,13 @@ export function connectionsProjection(home: string, gateway: Record<string, unkn
     for (const value of [bot, app]) if (value) result = result.split(value).join("[redacted]");
     return result.replace(/[\x00-\x1f\x7f]/g, " ");
   };
+  return { cfg, configPath, configState, sourceState, fields, bot, app, secretsAvailable, text };
+}
+
+/** Passive evidence only. No provider client, queue writer, or service activation. */
+export function connectionsProjection(home: string, gateway: Record<string, unknown> | null, settings?: SettingsStore,
+  read = readConnectionConfiguration(home)) {
+  const { cfg, configPath, configState, sourceState, bot, app, secretsAvailable, text } = read;
   const connector = gateway?.connector as Record<string, unknown> | undefined;
   const inbound = connector?.inbound as Record<string, unknown> | undefined;
   const configuration = cfg ? {
@@ -66,6 +82,7 @@ export function connectionsProjection(home: string, gateway: Record<string, unkn
   let registry: ReturnType<typeof loadHumanRegistry>;
   try { registry = loadHumanRegistry(home, { readOnly: true }); } catch { registry = { ok: false, error: "registry unavailable" }; }
   const instance = ["host.name", "workspace.root", "workspace.operator_seat_name"] as const;
+  const browserKey = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 16);
   return {
     observedAt: new Date().toISOString(), home: text(home), pid: process.pid,
     settingsSource: text(settings?.configPath),
@@ -75,7 +92,7 @@ export function connectionsProjection(home: string, gateway: Record<string, unkn
         return { key, value: text(r?.value), source: r?.source ?? "unavailable" };
       } catch { return { key, value: null, source: "unavailable" }; }
     }),
-    configSource: { state: configState, path: text(configPath) }, configuration,
+    configSource: { state: configState, path: text(configPath), sourceState }, configuration,
     running: { state: text(gateway?.state) ?? "unavailable", activatedAt: text(gateway?.activatedAt),
       outboundReady: typeof connector?.outboundReady === "boolean" ? connector.outboundReady : null,
       inboundReady: typeof connector?.inboundReady === "boolean" ? connector.inboundReady : null,
@@ -83,10 +100,12 @@ export function connectionsProjection(home: string, gateway: Record<string, unkn
     state, nextAction, verification,
     registry: { state: registry.ok ? "available" : "unavailable", path: text(join(home, "gateway", "humans")) },
     humans: registry.ok ? registry.entities.map((h) => ({
-      entityId: h.entityId, address: h.address, displayName: text(h.displayName),
+      browserKey: browserKey(h.entityId),
+      entityId: text(h.entityId) ?? "[withheld]", address: text(h.address) ?? "[withheld]", displayName: text(h.displayName), class: h.class, away: h.prefs.away ?? null,
       deliveryClass: h.prefs.deliveryClass, availability: h.prefs.availability ?? (h.prefs.away ? "away" : "available"),
       excluded: cfg ? cfg.outboundDestinations.length > 0 && !cfg.outboundDestinations.includes(h.address) : null,
-      bindings: h.connectorBindings.map((b) => ({ kind: b.kind, ref: text(b.connectorRef), role: b.role, handle: text(b.handle) })),
+      bindings: h.connectorBindings.map((b) => ({ browserKey: browserKey(JSON.stringify([b.kind, b.connectorRef, b.role, b.handle ?? null])),
+        kind: b.kind, ref: text(b.connectorRef), role: b.role, handle: text(b.handle), credentialReference: Boolean(b.secretsRef) })),
     })) : [],
   };
 }
