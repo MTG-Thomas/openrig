@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   loadHostRegistry,
@@ -21,10 +21,18 @@ function withTempFile(name: string, contents: string, fn: (path: string) => void
 }
 
 describe("host registry — defaultHostRegistryPath", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("returns ~/.openrig/hosts.yaml under the canonical OpenRig home", () => {
-    const path = defaultHostRegistryPath();
-    expect(path.endsWith("/hosts.yaml")).toBe(true);
-    expect(path.includes(".openrig")).toBe(true);
+    vi.stubEnv("OPENRIG_HOME", "");
+    vi.stubEnv("RIGGED_HOME", "");
+    expect(defaultHostRegistryPath()).toBe(join(homedir(), ".openrig", "hosts.yaml"));
+  });
+
+  it("uses a configured OpenRig home without requiring a .openrig directory name", () => {
+    const customHome = join(tmpdir(), "custom-rig-home");
+    vi.stubEnv("OPENRIG_HOME", customHome);
+    expect(defaultHostRegistryPath()).toBe(join(customHome, "hosts.yaml"));
   });
 });
 

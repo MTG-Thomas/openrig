@@ -19,6 +19,7 @@ import {
   splitFrontmatter,
   updateFrontmatter,
 } from "../src/lib/scope/scope-fs.js";
+import { ScopeCliError } from "../src/lib/scope/types.js";
 
 function mktemp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "rig-scope-test-"));
@@ -72,7 +73,13 @@ describe("resolveMissionsRoot", () => {
 
   it("throws ScopeCliError when no missions/ root is found", () => {
     const empty = mktemp();
-    expect(() => resolveMissionsRoot({ override: empty, cwd: empty, configPath: path.join(empty, "config.json") })).toThrow();
+    const missingMissions = path.join(empty, "missing-missions");
+    const configPath = path.join(empty, "config.json");
+    // An absent config inherits the default mission root, which may exist.
+    fs.writeFileSync(configPath, JSON.stringify({ workspace: { slicesRoot: missingMissions } }));
+    const resolve = () => resolveMissionsRoot({ override: empty, cwd: empty, configPath });
+    expect(resolve).toThrow(ScopeCliError);
+    expect(resolve).toThrow(`Configured workspace.slices_root is not a readable directory: ${missingMissions}.`);
   });
 
   it("uses the typed workspace.slices_root setting instead of walking cwd", () => {
@@ -81,7 +88,7 @@ describe("resolveMissionsRoot", () => {
     fs.mkdirSync(missions);
     const configPath = path.join(root, "config.json");
     fs.writeFileSync(configPath, JSON.stringify({ workspace: { slicesRoot: missions } }));
-    expect(resolveMissionsRoot({ cwd: root, configPath })).toBe(missions);
+    expect(resolveMissionsRoot({ override: root, cwd: root, configPath })).toBe(missions);
   });
 });
 
