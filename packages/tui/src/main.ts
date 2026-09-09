@@ -72,6 +72,7 @@ async function run(): Promise<void> {
   }
   const client = demo ? null : new DaemonClient({ baseUrl: argOf(args, "--url"), headers: startupHeaders });
   let startup: StartupController | null = null;
+  let nativeAttached = false;
 
   let inputLine = "";
   let completion: ReturnType<typeof completeCommand> | null = null;
@@ -126,6 +127,7 @@ async function run(): Promise<void> {
     : null;
 
   function draw(): void {
+    if (nativeAttached) return;
     const cols = process.stdout.columns ?? 120;
     const rows = process.stdout.rows ?? 32;
     const nowMs = Date.now();
@@ -163,6 +165,25 @@ async function run(): Promise<void> {
       });
     }),
     onChange: draw,
+    onNative: async (seat) => {
+      if (!cliEntry || !["localhost", "127.0.0.1", "[::1]"].includes(new URL(client.baseUrl).hostname)) {
+        throw new Error("Native terminal access requires this TUI on the selected daemon's machine.");
+      }
+      const { attachSharedTui } = await import(pathToFileURL(join(dirname(cliEntry), "shared-tui.js")).href);
+      nativeAttached = true;
+      process.stdin.pause();
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      process.stdout.write(PASTE_DISABLE + MOUSE_DISABLE + ALT_SCREEN_OFF);
+      try {
+        const code = await attachSharedTui(seat.observed.sessionName);
+        if (code !== 0) throw new Error(`Native terminal attachment exited ${code}. Refresh to inspect the existing occupant.`);
+      } finally {
+        if (process.stdin.isTTY) process.stdin.setRawMode(true);
+        process.stdin.resume();
+        process.stdout.write(ALT_SCREEN_ON + MOUSE_ENABLE + PASTE_ENABLE);
+        nativeAttached = false;
+      }
+    },
     onWork: async (rig, seat) => {
       crashCartOpts = {};
       await live?.refresh();
@@ -364,6 +385,7 @@ async function run(): Promise<void> {
 
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   function handleInput(events: ReturnType<typeof inputDecoder.write>): void {
+    if (nativeAttached) return;
     for (const ev of events) {
       if (startup?.state.open) {
         if (ev.type === "char" && ev.ch === "q") { void shutdown(); return; }

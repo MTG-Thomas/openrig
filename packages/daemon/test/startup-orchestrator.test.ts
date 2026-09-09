@@ -131,6 +131,31 @@ describe("StartupOrchestrator", () => {
     };
   }
 
+  it("persists the authored context before a native gate and exposes only the matching continuation", async () => {
+    const seed = seedSession(); const orch = createOrchestrator();
+    const action = makeAction({ type: "send_text", value: "configured role and durable queue instructions" });
+    const adapter = mockAdapter({ launchHarness: vi.fn(async () => ({ ok: false, recovery: "attention_required", error: "Hook review" })) });
+    const result = await orch.startNode(makeInput(seed, { adapter, startupActions: [action] }));
+    expect(result.startupStatus).toBe("attention_required");
+    expect(JSON.parse((db.prepare("SELECT startup_actions_json FROM node_startup_context WHERE node_id=?").get(seed.nodeId) as {startup_actions_json:string}).startup_actions_json)).toEqual([action]);
+    expect(orch.canContinueFresh(seed.nodeId, seed.sessionId)).toBe(true);
+    expect(orch.canContinueFresh(seed.nodeId, "other-occupant")).toBe(false);
+    eventBus.emit({ type: "node.startup_pending", rigId: seed.rigId, nodeId: seed.nodeId });
+    expect(orch.canContinueFresh(seed.nodeId, seed.sessionId)).toBe(false);
+  });
+
+  it("exact resume retains configured fresh context while sending no replay", async () => {
+    const seed = seedSession(); const orch = createOrchestrator();
+    const action = makeAction({ type: "send_text", value: "configured context" });
+    await orch.startNode(makeInput(seed, { startupActions: [action] }));
+    const before = db.prepare("SELECT * FROM node_startup_context WHERE node_id=?").get(seed.nodeId);
+    const adapter = mockAdapter();
+    const result = await orch.startNode(makeInput(seed, { adapter, isRestore: true, resumeToken: "native-original", preserveStartupContext: true }));
+    expect(result.ok).toBe(true);
+    expect(db.prepare("SELECT * FROM node_startup_context WHERE node_id=?").get(seed.nodeId)).toEqual(before);
+    expect(adapter.deliverStartup).toHaveBeenCalledWith([], expect.anything());
+  });
+
   // T1: fresh launch enters pending before startup delivery
   it("marks pending before delivery", async () => {
     const seed = seedSession();

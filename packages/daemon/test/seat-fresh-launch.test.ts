@@ -130,6 +130,24 @@ describe("SeatLifecycleService.launchFresh", () => {
 
   afterEach(() => db.close());
 
+  it("continues a gated fresh occupant exactly once without another launch", async () => {
+    const seat = seedSeat();
+    harnessResult = { ok: false, recovery: "attention_required", error: "native gate" };
+    const first = await service.launchFresh({ seatRef: seat.sessionName, fresh: true, stop: true, reason: "explicit fresh" });
+    expect(first.ok).toBe(false);
+    const rows = sessionRegistry.getSessionsForRig(seat.rig.id).map((s) => s.id);
+    const launch = vi.spyOn(adapter, "launchHarness");
+    const delivery = vi.spyOn(adapter, "deliverStartup");
+    const continued = await service.continueFreshStartup(seat.sessionName);
+    expect(continued.ok).toBe(true);
+    expect(launch).not.toHaveBeenCalled();
+    expect(delivery).toHaveBeenCalled();
+    expect(sessionRegistry.getSessionsForRig(seat.rig.id).map((s) => s.id)).toEqual(rows);
+    delivery.mockClear();
+    expect((await service.continueFreshStartup(seat.sessionName)).ok).toBe(false);
+    expect(delivery).not.toHaveBeenCalled();
+  });
+
   it("supersedes detached history so a later reboot identifies the deliberate successor", async () => {
     const seat = seedSeat();
     alive.delete(seat.sessionName);

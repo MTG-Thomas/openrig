@@ -25,7 +25,10 @@ If history is unavailable, read the reason. **f** opens a separate fresh-start
 decision for that named seat; **Esc** declines without launching it. A confirmed
 fresh conversation receives the configured context and retains the old history,
 but does not resume that history. Authentication or runtime failures require
-repair of that prerequisite. **r** reads actual state again; **d** expands details.
+repair of that prerequisite. **o** opens the existing native terminal here; detach
+to return (tmux defaults to Ctrl-b, then d). Decide native trust/auth prompts
+there. If a fresh start paused before context delivery, **c** finishes that
+delivery to the same occupant. **r** reads actual state again; **d** expands details.
 
 Install OpenRig and inspect `rig setup --dry-run` before applying machine
 changes. Check `tmux -V`, `codex --version` and `codex login status` in your

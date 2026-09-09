@@ -1344,6 +1344,7 @@ export class RestoreOrchestrator {
               resolvedStartupFiles: filteredFiles,
               startupActions: sourceActions,
               isRestore: replayAsRestore,
+              preserveStartupContext: replayContained,
               skipHarnessLaunch: !shouldLaunchHarness,
               resumeToken: (isPodAware && resumeRequested) ? resumeToken ?? undefined : undefined,
               resumeType: (isPodAware && resumeRequested) ? resumeType ?? undefined : undefined,

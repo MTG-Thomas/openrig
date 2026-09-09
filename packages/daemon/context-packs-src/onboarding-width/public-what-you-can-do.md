@@ -284,6 +284,8 @@ because someone lost work once.
   recommended first. Previously occupied seats default to their authoritative conversation.
   Missing history, ambiguous identity and unavailable authentication have distinct explanations;
   a fresh conversation requires a separate named confirmation. Declining launches nothing.
+  **o** opens the existing native terminal here to handle its prompts; detach to return.
+  If a fresh start paused before context delivery, **c** finishes that same occupant’s context.
   **r** refreshes actual state and **d** expands diagnostics. **S** returns to startup from work.
 - **`rig crash-cart`** — the read-only daemon verdict and saved-state discovery used by that UI.
   An unavailable runtime, unauthorized endpoint or unreadable state is not an empty instance.

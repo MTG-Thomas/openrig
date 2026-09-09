@@ -132,6 +132,7 @@ startupRoutes.get("/:rigId", async (c) => {
     const observed = await observeSeat(c, rig, node);
     seats.push({ ...forecast, hasHistory, nodeId: node.id, runtime: node.runtime, model: node.model,
       revision: startupRevision(repo(c).db, node), observed,
+      contextPending: history.some((session) => session.nodeId === node.id && dep<import("../domain/startup-orchestrator.js").StartupOrchestrator>(c, "startupOrchestrator")?.canContinueFresh(node.id, session.id)),
       freshAllowed: available && observed.state === "stopped",
       ...(!available ? { prerequisite: `${node.runtime} is unavailable or unauthenticated. Repair it and retry; fresh history cannot repair this prerequisite.` } : {}) });
   }
@@ -144,9 +145,14 @@ startupRoutes.post("/:rigId/:logicalId", async (c) => {
   if (!rig || !node) return c.json({ ok: false, message: "Selected seat is no longer available." }, 404);
   return exclusive(c, node.id, async () => {
     const body = await c.req.json().catch(() => ({}));
-    if (!["resume", "start", "fresh"].includes(body.action) || typeof body.revision !== "string") return c.json({ ok: false, message: "A named action and current seat revision are required." }, 400);
+    if (!["resume", "start", "fresh", "continue"].includes(body.action) || typeof body.revision !== "string") return c.json({ ok: false, message: "A named action and current seat revision are required." }, 400);
     if (body.revision !== startupRevision(repo(c).db, node)) return c.json({ ok: false, code: "selection_changed", message: "The seat changed since this choice was displayed. Refresh and make a new decision." }, 409);
     const observed = await observeSeat(c, rig, node);
+    if (body.action === "continue") {
+      const result = await seatLifecycleService(c).continueFreshStartup(observed.sessionName);
+      await refreshNativeMetadata(c, rig.rig.id);
+      return c.json(result, result.ok ? 200 : 409);
+    }
     // A present or unprobeable pane is never overwritten, even on explicit fresh.
     if (observed.state !== "stopped" && !(observed.state === "transport_unavailable" && body.action !== "fresh")) return c.json({ ok: observed.state === "running", code: observed.state,
       message: observed.detail, sessionName: observed.sessionName }, observed.state === "running" ? 200 : 409);

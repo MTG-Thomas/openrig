@@ -6,7 +6,7 @@ export interface StartupSeat {
   logicalId: string; nodeId: string; runtime: string; model: string | null;
   revision: string; hasHistory: boolean; intendedAction: string; reason?: string;
   freshRequired: boolean; tokenState: string;
-  freshAllowed?: boolean; prerequisite?: string;
+  freshAllowed?: boolean; prerequisite?: string; contextPending?: boolean;
   observed: { state: string; detail: string; sessionName: string };
 }
 interface StartupRig { rigId: string; rigName: string; seats: StartupSeat[] }
@@ -24,6 +24,7 @@ export interface StartupDeps {
   probe: () => Promise<string>;
   startDaemon: () => Promise<void>;
   onChange: () => void;
+  onNative?: (seat: StartupSeat) => Promise<void>;
   onWork: (rig?: StartupRig, seat?: StartupSeat) => void;
 }
 
@@ -139,8 +140,18 @@ export class StartupController {
         s.notice = "Terminal service available. Choose the seat and conversation deliberately.";
       }); return;
     }
-    if (s.page === "seats" && seat && key === "f" && seat.hasHistory && seat.freshAllowed !== false && !s.freshBlocked
-      && (seat.intendedAction === "resume-original" || seat.freshRequired)) {
+    if (s.page === "seats" && seat && key === "o" && ["running", "attention_required"].includes(seat.observed.state)) {
+      await this.run(async () => {
+        if (!this.deps.onNative) throw new Error("Native terminal access is unavailable in this TUI launcher.");
+        await this.deps.onNative(seat);
+        await this.readRig(s.rig!.rigId);
+        s.notice = "Returned from the existing native terminal. Inspect its state before continuing.";
+      }); return;
+    }
+    if (s.page === "seats" && seat && key === "c" && seat.contextPending) {
+      await this.launch(s.rig!.rigId, seat, "continue"); return;
+    }
+    if (s.page === "seats" && seat && key === "f" && seat.hasHistory && seat.freshAllowed !== false && !s.freshBlocked) {
       s.consent = { rigId: s.rig!.rigId, seat: { ...seat } }; s.page = "confirm";
       this.changed(); return;
     }
@@ -200,8 +211,10 @@ export function startupLines(s: StartupState): Array<{ text: string; action?: Ac
     if (seat) {
       lines.push({ text: "" }, { text: `${seat.logicalId} · ${seat.runtime} · model ${seat.model ?? "configured default"}` },
         { text: seat.prerequisite ?? (["attention_required", "unverified"].includes(seat.observed.state) ? seat.observed.detail : seat.reason ?? seat.observed.detail) },
-        button(seat.observed.state === "running" ? "Enter  Open live work" : seat.observed.state === "attention_required" ? "Enter  Open existing runtime to resolve this prerequisite" : `Enter  ${seat.hasHistory ? "Resume previous conversation" : "Start this new seat"}`, "enter"));
-      if (seat.hasHistory && seat.freshAllowed !== false && !s.freshBlocked && (seat.intendedAction === "resume-original" || seat.freshRequired)) lines.push(button("f  Consider a fresh conversation…", "f"));
+        button(seat.observed.state === "running" ? "Enter  Open live work" : seat.observed.state === "attention_required" ? "Enter  Inspect this existing runtime" : `Enter  ${seat.hasHistory ? "Resume previous conversation" : "Start this new seat"}`, "enter"));
+      if (["running", "attention_required"].includes(seat.observed.state)) lines.push(button("o  Open native terminal here · detach to return (default Ctrl-b, d)", "o"));
+      if (seat.contextPending) lines.push(button("c  Finish configured context after resolving the native prerequisite", "c"));
+      if (seat.hasHistory && seat.freshAllowed !== false && !s.freshBlocked) lines.push(button("f  Consider a fresh conversation…", "f"));
     }
   }
   if (s.page === "confirm" && s.consent) {

@@ -21,14 +21,30 @@ function fixture() {
   });
   const startDaemon = vi.fn(async () => { probeState = "up"; });
   const onWork = vi.fn();
-  const controller = new StartupController({ client, home: "/private/instance", startDaemon, onWork, onChange: () => {},
+  const onNative = vi.fn(async () => {});
+  const controller = new StartupController({ client, home: "/private/instance", startDaemon, onWork, onNative, onChange: () => {},
     probe: async () => JSON.stringify(probeState === "down" ? { state: "down", discovery: { header: { lastActivityAt: null }, foundOnHost: [], whereWorkStopped: [] } } : { state: probeState }),
   });
-  return { controller, seat, posts, startDaemon, onWork, response: (fn: typeof response) => { response = fn; }, down: () => { probeState = "down"; } };
+  return { controller, seat, posts, startDaemon, onWork, onNative, response: (fn: typeof response) => { response = fn; }, down: () => { probeState = "down"; } };
 }
 async function chooseOperator(f: ReturnType<typeof fixture>) { await f.controller.refresh(); await f.controller.key("enter"); }
 
 describe("TUI startup choices", () => {
+  it("opens the existing native terminal and refreshes without a launch, then explicitly continues context", async () => {
+    const f = fixture(); f.seat.observed.state = "attention_required"; f.seat.contextPending = true;
+    await chooseOperator(f); await f.controller.key("o");
+    expect(f.onNative).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "n1" }));
+    expect(f.posts).toEqual([]);
+    f.seat.observed.state = "running";
+    await f.controller.key("c");
+    expect(f.posts).toEqual([{ route: "/api/startup/r1/operator.agent", body: { action: "continue", revision: "rev1" } }]);
+  });
+  it("offers an explicit fresh choice for ambiguous history after positive absence", async () => {
+    const f = fixture(); f.seat.intendedAction = "blocked"; f.seat.freshRequired = false; f.seat.freshAllowed = true;
+    await chooseOperator(f); await f.controller.key("f");
+    expect(f.controller.state.page).toBe("confirm");
+    await f.controller.key("escape"); expect(f.posts).toEqual([]);
+  });
   it("shows the current native gate and opens that existing seat without another launch", async () => {
     const f = fixture();
     f.seat.observed.state = "attention_required";
