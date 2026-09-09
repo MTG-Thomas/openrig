@@ -86,7 +86,9 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
     state = reduce(state, action, getSnapshot());
     // Connections is a side trip from work, including explorer/palette entry.
     if (action.type === "jump" && !["connections", "config"].includes(action.section) && !["connections", "config"].includes(previous.section)) state.history = [];
-    else if (!["back", "execution-close"].includes(action.type) && !state.lastError && location(previous) !== location(state)) {
+    // A filter changes the current view; clearing it must not add the detail
+    // being left back onto history (Escape would then cycle forever).
+    else if (!["back", "execution-close", "filter"].includes(action.type) && !state.lastError && location(previous) !== location(state)) {
       state.history = [...(previous.history ?? []), navigationFrame(previous)].slice(-50);
     }
     for (const fn of listeners) fn(state);

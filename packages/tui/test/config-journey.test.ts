@@ -157,4 +157,12 @@ describe("CONFIG in the normal TUI journey", () => {
     expect(view.get().contentOffset).toBe(1);
     expect(view.get().selection).toBe(selection);
   });
+  it("Escape returns from a searched detail to work without a history cycle", async () => {
+    view.dispatch(parseCommand(":scopes"));
+    view.dispatch(parseCommand("config waiting")); await refresh();
+    view.dispatch(parseCommand("/timezone")); key("enter");
+    expect(view.get().configKey).toBe("ui.timezone");
+    for (let n = 0; n < 10 && view.get().section === "config"; n++) escape();
+    expect(view.get().section).toBe("scopes");
+  });
 });
