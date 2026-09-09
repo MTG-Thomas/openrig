@@ -517,3 +517,63 @@ describe("execution drill — one page from source, esc back", () => {
     expect(view.get().executionOpen).toBeNull();
   });
 });
+
+
+describe("attributed proof provenance in the ordinary execution path", () => {
+  function judged(kind = "artifact", state = "accepted") {
+    const execution = executionFixture(1);
+    execution.q1_lanes = [];
+    execution.q4_ladder[0]!["built"] = { candidate_sha: "INDETERMINATE", basis: "no candidate:* tag on any row bound to this slice" };
+    execution.readiness = {
+      revision: "mission-revision", state: state === "accepted" ? "ready" : "unknown",
+      slices: [{ scope: "01-slice", readiness: {
+        configured: true, revision: "proof-revision", state: state === "accepted" ? "ready" : "unknown",
+        issues: [], history: [{ ref: "proof/judgments/00000001.md", id: "receipt-1", verdict: "accept", previous: null }],
+        items: [{ id: "item-1", index: 1, text: "An attributed outcome", state,
+          reason: state === "unknown" ? "Evidence missing or changed; inspect the retained judgment" : "Observed outcome",
+          judgment: { id: "receipt-1", actor: "judge@rig", at: "2026-09-09T05:00:00Z", verdict: "accept", previous: null,
+            subject: { kind, ref: "outcome.md", ...(kind === "patch-equivalent" ? { comparison: "comparison.md" } : {}) },
+            evidence: [{ ref: "outcome.md", sha256: "a".repeat(64) }] },
+        }],
+      } }],
+    } as NonNullable<typeof execution.readiness>;
+    return execution;
+  }
+
+  it.each(["artifact", "patch-equivalent", "commit"])("shows %s judgment from the execution revision without inventing code lineage", kind => {
+    const execution = judged(kind);
+    const overview = executionContentLines(execution, undefined, [], null, 100);
+    expect(overview.find(line => line.text.includes("provenance"))?.action).toEqual({ type: "execution-open", key: "evidence" });
+    expect(text(overview)).not.toContain("evidence gap 1/1 unknown");
+    const page = text(executionContentLines(execution, undefined, [], "evidence", 100));
+    for (const value of ["proof-revision", "ACCEPTED", kind, "outcome.md", "judge@rig", "receipt-1", "a".repeat(64)]) expect(page).toContain(value);
+    if (kind === "patch-equivalent") expect(page).toContain("comparison.md");
+    const slice = text(executionContentLines(execution, undefined, [], "slice:OPR.0.5.8.1", 100));
+    expect(slice).toContain("ACCEPTED");
+    expect(slice).toContain("judge@rig");
+    expect(slice).toContain("CODE LINEAGE");
+    expect(slice).toContain("undetermined");
+    expect(text(executionSliceStripLines(execution, "OPR.0.5.8.1", "01-slice", 100))).toContain("proof ready");
+  });
+
+  it.each(["withdrawn", "rejected", "unknown"])("keeps %s disposition and retained receipt distinct from current acceptance", state => {
+    const execution = judged("artifact", state);
+    const body = text(executionContentLines(execution, undefined, [], "evidence", 100));
+    expect(body).toContain(state.toUpperCase());
+    expect(body).toContain("receipt-1");
+    expect(body).not.toContain("ACCEPTED");
+    if (state === "unknown") expect(body).toContain("Evidence missing or changed");
+  });
+
+  it("keeps configured missing judgments, invalid journals and legacy code gaps visible", () => {
+    const execution = judged();
+    const proof = execution.readiness!.slices[0]!.readiness;
+    proof.items = []; proof.state = "unknown";
+    (proof as typeof proof & { issues: string[] }).issues = ["journal_invalid: malformed or changed judgment"];
+    const page = text(executionContentLines(execution, undefined, [], "evidence", 100));
+    expect(page).toContain("journal_invalid");
+    expect(page).toContain("UNKNOWN");
+    delete execution.readiness;
+    expect(text(executionContentLines(execution, undefined, [], "evidence", 100))).toContain("built unconfirmed");
+  });
+});

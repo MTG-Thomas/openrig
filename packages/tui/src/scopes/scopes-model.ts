@@ -11,7 +11,13 @@ export interface ScopeContractItem { id?: string; source?: { file: string; line:
 export interface ScopeLocksSnap { spec: { by: string; at: string } | null; delivery: { by: string; at: string } | null }
 export interface ReadinessSnap {
   configured: boolean; state: string; revision: string;
-  items: Array<{ id: string; index: number; text: string; state: string; reason: string; judgment: { id: string } | null }>;
+  issues?: string[];
+  history?: Array<{ ref: string; id: string; verdict: string; previous: string | null }>;
+  items: Array<{ id: string; index: number; text: string; state: string; reason: string; judgment: {
+    id: string; actor?: string; at?: string; verdict?: string; previous?: string | null;
+    subject?: { kind: string; ref: string; comparison?: string };
+    evidence?: Array<{ ref: string; sha256: string }>;
+  } | null }>;
 }
 export interface SliceScopeSnap {
   readiness?: ReadinessSnap;
@@ -131,6 +137,41 @@ function wrapped(text: string, width: number, indent: string, token: Token = "br
     { text: indent },
     { text: part, token },
   ], width));
+}
+
+/** Render the authoritative read model, including invalidated and corrected receipts.
+ * Optional fields keep an older daemon's incomplete projection explicitly unknown. */
+export function proofProvenanceLines(proof: ReadinessSnap | null | undefined, width: number): ContentLine[] {
+  if (!proof?.configured) return [];
+  const lines: ContentLine[] = [rule("PROOF JUDGMENTS · " + proof.state.toUpperCase(), width)];
+  const add = (text: string, token: Token = "dim") => lines.push(...wrapped(text, width, "  ", token));
+  add("Revision: " + proof.revision);
+  add("Item acceptance does not establish code build, merge, runtime adoption or publication.");
+  for (const issue of proof.issues ?? []) add(issue, "warn");
+  if (!proof.items.length) add("No item judgments available; inspect the contract and issues above.", "warn");
+  for (const item of proof.items) {
+    lines.push({ text: "" });
+    add("Item " + item.index + " · " + item.state.toUpperCase() + " · " + item.text, item.state === "accepted" ? "ok" : "warn");
+    add(item.reason, item.state === "unknown" ? "warn" : "dim");
+    const judgment = item.judgment;
+    if (!judgment) { add("No current attributed judgment.", "warn"); continue; }
+    add("Subject: " + (judgment.subject ? judgment.subject.kind + " · " + judgment.subject.ref : "unknown — subject not served"));
+    if (judgment.subject?.comparison) add("Comparison: " + judgment.subject.comparison);
+    add("Actor: " + (judgment.actor ?? "unknown — actor not served") + " · recorded " + (judgment.at ?? "unknown"));
+    add("Receipt: " + judgment.id + " · recorded verdict " + (judgment.verdict ?? "unknown"));
+    if (judgment.previous) add("Corrects: " + judgment.previous);
+    for (const evidence of judgment.evidence ?? []) {
+      add("Evidence: " + evidence.ref);
+      add("SHA256: " + evidence.sha256);
+    }
+    if (!judgment.evidence?.length) add("Evidence references not served.", "warn");
+  }
+  if (proof.history?.length) {
+    lines.push({ text: "" });
+    add("Retained history (historical verdicts; current disposition is above):");
+    for (const receipt of proof.history) add(receipt.verdict + " · " + receipt.id + " · " + receipt.ref);
+  }
+  return lines;
 }
 
 function itemState(detail: SliceScopeSnap, item: ScopeContractItem): string {
@@ -319,6 +360,7 @@ export function scopesContentLines(
   lines.push(...scopeIdentityLines(detail, mission, w));
 
   if (opts.executionStrip?.length) lines.push(...opts.executionStrip);
+  lines.push(...proofProvenanceLines(detail.readiness, w));
   lines.push(...scopeContractLines(detail, opts));
   lines.push({ text: "" }, semantic([{
     text: opts.narrative ? "  esc back · n narrative · m reqs · : command bar" : "  esc back · m collapse reqs · n narrative · : command bar",

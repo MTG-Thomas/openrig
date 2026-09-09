@@ -17,7 +17,7 @@ import { workflowOverview, workflowDetail } from "./workflow-model.js";
 import type { Action, SliceDetailSnap } from "../types.js";
 import type { Token } from "../theme.js";
 import { wrapDetailLines, detailPage, listItem, sectionRule, type ContentLine, type Section } from "../detail.js";
-import { scopeContractLines, scopeIdentityLines, type MissionScopesSnap, type SliceScopeSnap } from "../scopes/scopes-model.js";
+import { scopeContractLines, scopeIdentityLines, proofProvenanceLines, type ReadinessSnap, type MissionScopesSnap, type SliceScopeSnap } from "../scopes/scopes-model.js";
 
 export interface ExecutionViewSnap {
   readiness?: { revision: string; state: string; slices: Array<{ scope: string; readiness: import("../scopes/scopes-model.js").ReadinessSnap }> };
@@ -144,6 +144,7 @@ interface SliceFacts {
   name: string;
   order: number;
   ladder: Record<string, unknown>;
+  readiness: ReadinessSnap | null;
   cells: Record<Rung, RungCell>;
   rank: number;
   sequencing: Record<string, unknown> | null;
@@ -178,6 +179,7 @@ function sliceFacts(execution: ExecutionViewSnap, scopes: readonly MissionScopes
       name: sliceName(scope, dir),
       order: seqIndex >= 0 ? seqIndex : seq.length + index,
       ladder,
+      readiness: execution.readiness?.slices.find(s => s.scope === dir)?.readiness ?? null,
       cells,
       rank: reachedRank(cells),
       sequencing: seqIndex >= 0 ? seq[seqIndex]! : null,
@@ -418,6 +420,7 @@ function collectIndeterminate(execution: ExecutionViewSnap, slices: SliceFacts[]
   // Only the FIRST undetermined rung is a blind spot; every rung above it is undetermined
   // as a consequence and would repeat the same fact.
   for (const slice of slices) {
+    if (slice.readiness?.configured && slice.cells.built.state !== "yes") continue;
     const first = RUNGS.find((rung) => slice.cells[rung].state === "undetermined");
     if (first) add(RUNG_WORD[first], slice.id, slice.cells[first].basis);
   }
@@ -429,17 +432,24 @@ function collectIndeterminate(execution: ExecutionViewSnap, slices: SliceFacts[]
 }
 
 function evidenceDetail(execution: ExecutionViewSnap, slices: SliceFacts[], width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
+  const attributed = slices.filter(slice => slice.readiness?.configured);
   const gitBasis = str(record(execution.sources?.["git"])["basis"], "(no git source cell)");
   const lines: ContentLine[] = [
-    { text: `${execution.mission} · evidence gap · derived ${displayTime(execution.derived_at, timeZone) || "?"}` },
+    { text: `${execution.mission} · ${attributed.length ? "proof provenance" : "evidence gap"} · derived ${displayTime(execution.derived_at, timeZone) || "?"}` },
     { text: "" },
-    { text: "  Declared state comes from each slice file. Evidence rungs come from the daemon's" },
-    { text: "  execution projection, which needs a reachable repository to confirm reviewed, merged" },
-    { text: "  and live. Unconfirmed is not waiting work and not done; it is unknown." },
-    { text: "" },
-    sectionRule("repository source", width),
-    { text: `  git:         ${gitBasis}` },
   ];
+  if (attributed.length) {
+    lines.push(...wrapDetailLines([{ text: "  Mission proof revision: " + execution.readiness!.revision }], width));
+    for (const slice of attributed) lines.push(
+      { text: "" }, listItem(slice.id + " · " + slice.name, open(`slice:${slice.id}`)),
+      ...proofProvenanceLines(slice.readiness, width),
+    );
+  } else {
+    lines.push(...wrapDetailLines([{ text: "  Declared state comes from each slice file. Legacy code evidence uses candidate tags, review records and Git. Unconfirmed is unknown; it does not establish waiting work or completion." }], width));
+  }
+  lines.push({ text: "" }, sectionRule("code lineage · separate from item judgments", width),
+    { text: `  git:         ${gitBasis}` },
+    ...wrapDetailLines([{ text: "  Build, review, merge and live-runtime facts remain on each slice's code evidence. Artifact acceptance supplies none of these code facts." }], width));
   for (const item of collectIndeterminate(execution, slices)) {
     lines.push({ text: "" }, sectionRule(`${item.where} unconfirmed for ${item.members.length} slice${item.members.length === 1 ? "" : "s"}`, width));
     lines.push({ text: `  basis:       ${item.basis}` });
@@ -461,7 +471,7 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
   const attributed = execution.readiness?.slices.some(s => s.readiness.configured) === true;
   const done = attributed ? execution.readiness!.slices.filter(s => s.readiness.state === "ready").length : slices.filter((slice) => declaredText(slice) === "done").length;
   const next = slices.find((slice) => nextText(slice) === "ready to start");
-  const unknown = slices.filter((slice) => RUNGS.some((rung) => slice.cells[rung].state === "undetermined")).length;
+  const unknown = slices.filter((slice) => !slice.readiness?.configured && RUNGS.some((rung) => slice.cells[rung].state === "undetermined")).length;
   const missionState = attributed ? `PROOF ${execution.readiness!.state.toUpperCase()}` : problems > 0 ? "NEEDS ATTENTION" : live > 0 ? "ACTIVE" : done === slices.length && slices.length > 0 ? "COMPLETE" : "QUIET";
   const missionToken: Token = problems > 0 ? "warn" : live > 0 || missionState === "COMPLETE" ? "ok" : "dim";
   const nowText = now.length ? now.join(", ") : "no live slice";
@@ -499,10 +509,10 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
       { text: `${needsHuman.map((slice) => slice.id).join(", ")} · ${problemText(first)}`, token: "bright" },
     ], sliceAction(execution, first), width));
   }
-  const provenanceAction = unknown > 0 ? open("evidence") : open("sources");
+  const provenanceAction = attributed || unknown > 0 ? open("evidence") : open("sources");
   const provenance: SemanticSeg[] = [
     { text: "  provenance · ", token: "dim" },
-    { text: unknown > 0 ? `evidence gap ${unknown}/${slices.length} unknown` : `build ${build}`, token: unknown > 0 ? "warn" : "dim" },
+    { text: attributed ? `proof judgments · ${done}/${slices.length} ready${unknown ? ` · ${unknown} legacy unknown` : ""}` : unknown > 0 ? `evidence gap ${unknown}/${slices.length} unknown` : `build ${build}`, token: unknown > 0 || (attributed && execution.readiness!.state === "unknown") ? "warn" : "dim" },
   ];
   const localTime = displayTime(execution.derived_at, timeZone);
   if (provenance.reduce((n, s) => n + s.text.length, 0) + localTime.length + 3 <= width) {
@@ -693,7 +703,8 @@ function sliceDetail(
     ...identity,
     { text: "" }, ...card("OWNERSHIP", ownership, width),
     { text: "" }, ...card("TOUCHED", touchedRows(detail, width, timeZone), width),
-    { text: "" }, ...card(`EVIDENCE · declared ${declaredText(slice)} · ${evidenceText(slice.cells, slice.rank)}`, evidence, width),
+    { text: "" }, ...proofProvenanceLines(slice.readiness, width),
+    { text: "" }, ...card(`${slice.readiness?.configured ? "CODE LINEAGE" : "EVIDENCE"} · declared ${declaredText(slice)} · ${evidenceText(slice.cells, slice.rank)}`, evidence, width),
     { text: "" }, ...card("RULING", rulingRows(detail, width, timeZone), width),
     { text: "" }, ...card("NEEDS YOU", [cardField("state", needs ?? "none on current projection")], width),
     { text: "" }, ...card("TYPED ROWS", typedRows, width),
@@ -835,7 +846,7 @@ export function executionSliceStripLines(
     sectionRule(`EXECUTION · ${problem ? stateWord(slice) : liveWord} · wave ${waveOf(slice)}`, width),
     ...workflowOverview(execution, width),
     { text: `  declared    ${declaredWord} (slice file)` },
-    actionRow(`evidence    ${evidence}`, open("evidence"), width),
+    actionRow(slice.readiness?.configured ? `proof ${slice.readiness.state} · inspect judgments and evidence` : `evidence    ${evidence}`, open("evidence"), width),
     { text: `  assignment  ${slice.lane ? `${str(slice.lane["seat"])} · ${str(activity["activity"], INDETERMINATE)} (${str(activity["decided_by"], "?")})` : "none — no claimed lane"}`, ...(slice.lane ? { action: open(laneKey(slice.lane)) } : {}) },
     { text: `  next        ${next}` },
     { text: `  problem     ${problem ?? "none on the projection's current surfaces"}` },
