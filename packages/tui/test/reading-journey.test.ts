@@ -114,6 +114,29 @@ describe("current-file reading through real routes and TUI state", () => {
     expect(lines).toContain("TRUNCATED at 1048576 bytes");
     expect(lines).toContain("Heading not found: #beyond-prefix in the returned prefix");
   });
+  it.each([[140, 42], [80, 24]])("reads a capped long line and line-broken control, then returns at %ix%i", async (cols, rows) => {
+    view.dispatch({ type: "jump", section: "specs" }); await refresh();
+    view.dispatch({ type: "filter", text: "story" });
+    const index = computeExplorerRows(view.get(), snap).findIndex((r) => r.key === "spec:story");
+    view.dispatch({ type: "select", index }); draw(cols, rows);
+    const caller = view.get();
+    for (const content of ["x".repeat(1048600), ("x".repeat(79) + "\n").repeat(13110)]) {
+      writeFileSync(join(root, "large.md"), content + "\n# After limit\n");
+      open({ root: "project", path: "large.md", anchor: "after-limit" }); await refresh();
+      const result = snap.fileRead!.result;
+      expect(result).toMatchObject({ truncated: true, truncatedAtBytes: 1048576, totalBytes: content.length + 15, binary: false });
+      const lines = fileLines(result, view.get().file!, cols - 2);
+      expect(lines.every((line) => line.text.length <= cols - 2)).toBe(true);
+      expect(lines.filter((line) => /^\s*x+$/.test(line.text)).map((line) => line.text.trimStart()).join("")).toBe(content.slice(0, 1048576).replace(/\n/g, ""));
+      const screen = draw(cols, rows).lines.join("\n");
+      expect(screen).toContain("Read from disk");
+      expect(screen).toContain("TRUNCATED at 1048576 bytes");
+      expect(screen).toContain("Heading not found: #after-limit in the returned prefix");
+      view.dispatch({ type: "content-scroll", delta: 10 }); draw(cols, rows);
+      back(); await refresh(); draw(cols, rows);
+      expect(view.get()).toMatchObject({ file: null, filter: caller.filter, selection: caller.selection, contentOffset: caller.contentOffset });
+    }
+  });
   it("keeps missing anchors and HTTP destinations visible with no browser or fetch effect", async () => {
     open({ root: "project", path: "outline.md", anchor: "missing" }); await refresh();
     expect(draw().lines.join("\n")).toContain("Heading not found: #missing");

@@ -33,14 +33,20 @@ export function wrapDetailLines(lines: ContentLine[], width: number): ContentLin
     if (line.text.startsWith("  ──") && line.text.replace(/─+$/, "").length <= room) return [{ ...line, text: line.text.slice(0, room) }];
     if (line.text.length <= room) return [line];
     const result: ContentLine[] = [];
-    let text = line.text;
-    while (text.length > room) {
-      const space = text.lastIndexOf(" ", room);
+    // Keep the source flat: prepending indent to the remaining suffix on every
+    // row repeatedly flattens/copies a large unbroken file line.
+    let offset = 0;
+    let indent = "";
+    while (line.text.length - offset + indent.length > room) {
+      const chunk = indent + line.text.slice(offset, offset + room - indent.length + 1);
+      const space = chunk.lastIndexOf(" ", room);
       const cut = space >= room / 2 ? space : room;
-      result.push({ text: text.slice(0, cut), ...(result.length === 0 && line.action ? { action: line.action } : {}) });
-      text = "    " + text.slice(cut).trimStart();
+      result.push({ text: chunk.slice(0, cut), ...(result.length === 0 && line.action ? { action: line.action } : {}) });
+      offset += cut - indent.length;
+      while (offset < line.text.length && /\s/.test(line.text[offset]!)) offset++;
+      indent = "    ";
     }
-    result.push({ text });
+    result.push({ text: indent + line.text.slice(offset) });
     return result;
   });
 }
