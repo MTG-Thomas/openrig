@@ -32,7 +32,6 @@ import {
 import {
   WriteConflictError,
   FileWriteError,
-  sha256Hex,
   type FileWriteService,
 } from "../domain/files/file-write-service.js";
 
@@ -47,7 +46,8 @@ export interface FilesRoutesDeps {
  *  cap. PRD § Item 5 picks 1 MB. The dashboard
  *  precedent was 200 KB; the v0 ceiling is 1 MB so the operator can
  *  read most workspace canon files in full. */
-export const FILE_READ_TRUNCATION_BYTES = 1_048_576;
+export { FILE_READ_TRUNCATION_BYTES } from "../domain/files/file-read.js";
+import { readAllowedFile } from "../domain/files/file-read.js";
 
 export function filesRoutes(): Hono {
   const app = new Hono();
@@ -131,28 +131,7 @@ export function filesRoutes(): Hono {
     const relativePath = c.req.query("path") ?? "";
     if (!rootName || !relativePath) return c.json({ error: "root_and_path_required" }, 400);
     try {
-      const resolved = resolveAllowedFile(deps.allowlist, rootName, relativePath);
-      const stat = fs.statSync(resolved);
-      const fullContent = fs.readFileSync(resolved);
-      // Operator Surface Reconciliation v0 item 5: cap returned content
-      // at FILE_READ_TRUNCATION_BYTES (1 MB). Hash is over the FULL
-      // file so edit-mode conflict detection stays honest.
-      const truncated = stat.size > FILE_READ_TRUNCATION_BYTES;
-      const returnedContent = truncated
-        ? fullContent.subarray(0, FILE_READ_TRUNCATION_BYTES)
-        : fullContent;
-      return c.json({
-        root: rootName,
-        path: relativePath,
-        absolutePath: resolved,
-        content: returnedContent.toString("utf-8"),
-        mtime: stat.mtime.toISOString(),
-        contentHash: sha256Hex(fullContent),
-        size: stat.size,
-        truncated,
-        truncatedAtBytes: truncated ? FILE_READ_TRUNCATION_BYTES : null,
-        totalBytes: stat.size,
-      });
+      return c.json(readAllowedFile(deps.allowlist, rootName, relativePath));
     } catch (err) {
       if (err instanceof FilePathSafetyError) return pathSafetyErrorResponse(c, err);
       return c.json({ error: "read_failed", message: err instanceof Error ? err.message : String(err) }, 500);

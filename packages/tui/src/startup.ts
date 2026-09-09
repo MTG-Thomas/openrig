@@ -1,5 +1,6 @@
 import { DaemonClient, StartupRequestError } from "./daemon-client.js";
 import { probeCrashCart, type CrashCartRenderOpts } from "./crash-cart/from-emit.js";
+import { LocalReadingController, localLines, type LocalReadingState, type LocalRequest, type LocalResult } from "./local-reading.js";
 import type { Action } from "./types.js";
 
 export interface StartupSeat {
@@ -11,6 +12,8 @@ export interface StartupSeat {
 }
 interface StartupRig { rigId: string; rigName: string; seats: StartupSeat[] }
 export interface StartupState {
+  connection: "probing" | "up" | "down" | "unverified";
+  local?: LocalReadingState;
   open: boolean; busy: boolean; page: "probe" | "down" | "unavailable" | "rigs" | "seats" | "kernel" | "confirm";
   target: string; home: string; notice: string; detail: string; expanded: boolean;
   selected: number; scroll: number; rigs: Array<{ id: string; name: string }>;
@@ -24,14 +27,17 @@ export interface StartupDeps {
   probe: () => Promise<string>;
   startDaemon: () => Promise<void>;
   onChange: () => void;
+  onHelp?: () => void;
+  readLocal?: (request: LocalRequest) => Promise<LocalResult>;
   onNative?: (seat: StartupSeat) => Promise<void>;
   onWork: (rig?: StartupRig, seat?: StartupSeat) => void;
 }
 
 export class StartupController {
   readonly state: StartupState;
+  private local?: LocalReadingController;
   constructor(private readonly deps: StartupDeps) {
-    this.state = { open: true, busy: false, page: "probe", target: deps.client.baseUrl,
+    this.state = { connection: "probing", open: true, busy: false, page: "probe", target: deps.client.baseUrl,
       home: deps.home, notice: "Reading startup state…", detail: "", expanded: false,
       selected: 0, scroll: 0, rigs: [] };
   }
@@ -53,9 +59,11 @@ export class StartupController {
   async refresh() {
     await this.run(async () => {
       this.state.consent = undefined;
+      this.state.connection = "probing";
       this.state.notice = "Reading actual state…";
       const probe = await probeCrashCart(this.deps.probe);
       this.state.probe = probe;
+      this.state.connection = probe.unavailable || probe.daemonState === "unverified" ? "unverified" : probe.daemonState === "down" ? "down" : "up";
       if (probe.unavailable || probe.daemonState === "unverified") {
         this.state.page = "unavailable";
         this.state.notice = "Startup state is unavailable. No recovery effect has been authorized.";
@@ -87,6 +95,25 @@ export class StartupController {
   }
   async key(key: string) {
     const s = this.state;
+    // Read navigation is independent of the serialized effect/probe lane.
+    if (key === "?") { this.deps.onHelp?.(); return; }
+    if (key === "w") {
+      s.consent = undefined; s.open = false; this.local?.close(); s.local = undefined;
+      this.deps.onWork(s.rig); this.changed(); return;
+    }
+    if (s.local && this.local) {
+      if (!await this.local.key(key)) { s.local = undefined; this.local = undefined; }
+      this.changed(); return;
+    }
+    if ((key === "L" || key === "l" && s.page !== "kernel")) {
+      this.local = new LocalReadingController(this.deps.readLocal ?? (async () => ({ error: "Local reader unavailable in this launcher" })), () => this.changed());
+      s.local = this.local.state; s.consent = undefined;
+      if (s.page === "confirm") s.page = "seats";
+      await this.local.load(); return;
+    }
+    if (key === "escape" && (s.busy || !["confirm", "seats", "kernel"].includes(s.page))) {
+      s.consent = undefined; s.open = false; this.deps.onWork(); this.changed(); return;
+    }
     if (s.busy) return;
     if (key === "d") { s.expanded = !s.expanded; this.changed(); return; }
     if (key === "r") { await this.refresh(); return; }
@@ -95,9 +122,6 @@ export class StartupController {
       if (s.page === "confirm") { s.page = "seats"; s.notice = "Fresh start declined. No new conversation was launched."; }
       else if (["seats", "kernel"].includes(s.page)) { s.page = "rigs"; s.rig = undefined; s.selected = 0; }
       this.changed(); return;
-    }
-    if (key === "w" && ["rigs", "seats"].includes(s.page)) {
-      s.open = false; this.deps.onWork(s.rig); this.changed(); return;
     }
     const count = s.page === "rigs" ? s.rigs.length : s.rig?.seats.length ?? 0;
     if (s.expanded && (key === "up" || key === "down")) {
@@ -191,7 +215,10 @@ export function startupLines(s: StartupState): Array<{ text: string; action?: Ac
   const lines: Array<{ text: string; action?: Action }> = [
     { text: "OpenRig · Start and return" }, { text: `Instance: ${s.home}` }, { text: `Daemon: ${s.target}` }, { text: "" }, { text: s.notice }, { text: "" },
   ];
-  if (s.busy) return [...lines, { text: "Working… repeated input will not start another operation." }, { text: "q leaves this view; an accepted operation continues." }];
+  lines.push(button("?  Help", "?"), button("w  Skip startup · ordinary views", "w"));
+  lines.push(button("L  Local Specs / project / mission / slice reading", "L"));
+  if (s.local) return [...lines.slice(0, 4), ...localLines(s.local)];
+  if (s.busy) return [...lines, { text: "Working… repeated input will not start another operation." }, { text: "Esc Back / skip · q Quit; an accepted operation continues." }];
   if (s.page === "down") lines.push(button("Enter / s  Start daemon; choose seats next", "s"));
   if (s.page === "rigs") {
     s.rigs.forEach((r, i) => lines.push(button(`${i === s.selected ? "▶" : " "} ${r.name}${r.name === "kernel" ? " · recommended first" : ""}`, `select:${i}`)));
@@ -225,7 +252,6 @@ export function startupLines(s: StartupState): Array<{ text: string; action?: Ac
       { text: "This decision applies only to this seat and the state just inspected." },
       button("y  Confirm this fresh start", "y"), button("Esc  Decline; leave stopped", "escape"));
   }
-  if (["rigs", "seats"].includes(s.page)) lines.push(button("w  Continue to ordinary work", "w"));
   lines.push(button("r  Refresh actual state", "r"), button("d  Diagnostic details", "d"), button("Esc  Back / decline", "escape"), { text: "↑↓ choose · q quit · S opens startup from ordinary work" });
   if (s.expanded) lines.push({ text: "" }, { text: s.detail || JSON.stringify(s.rig?.seats[s.selected] ?? s.probe ?? {}) });
   return lines;

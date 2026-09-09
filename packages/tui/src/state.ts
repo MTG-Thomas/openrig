@@ -109,6 +109,8 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewState {
   const next: ViewState = { ...state, lastError: null, notice: action.type === "notice" || action.type === "act" ? state.notice : null };
   switch (action.type) {
+    case "time-setting":
+      return { ...state, timeZone: action.timeZone, timeZoneWarning: action.timeZoneWarning };
     case "timezone":
       return resetContent({ ...next, timeZoneHelp: true, viewTab: "table", healthOpen: null });
     case "recent-open": {

@@ -1558,10 +1558,10 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
       text: line.text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/[\x00-\x1f\x7f]/g, " ")
         .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@").replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]"),
     })), Math.max(1, cols - explW - 2));
-    const selected = content.findIndex((line) => line.action?.type === "startup" && line.action.key === `select:${startup.selected}`);
-    const scroll = startup.expanded ? startup.scroll : Math.max(0, selected - Math.max(1, rows - 12));
+    const selected = content.findIndex((line) => line.action?.type === "startup" && line.action.key === `select:${startup.local?.selected ?? startup.selected}`);
+    const scroll = startup.local && !startup.local.result.entries ? startup.local.scroll : startup.expanded ? startup.scroll : Math.max(0, selected - Math.max(1, rows - 12));
     const screen = crashCartShell(content, { note: "startup", rows: [] }, "START AND RETURN", cols, rows, "", { scroll });
-    screen.lines[rows - 1] = pad("↑↓ choose · Enter select · r refresh · d details · Esc back · q quit", cols);
+    screen.lines[rows - 1] = pad("? Help · w Skip · L Local · ↑↓ scroll · Enter read · Esc Back · q Quit", cols);
     return screen;
   }
   // 5.2 crash-cart (shell-placement rework, ruling 3c6c2be0): daemon-DOWN renders as a CONTENT-PANE

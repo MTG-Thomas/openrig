@@ -17,6 +17,17 @@ the selected instance and daemon address. If the daemon is stopped, press Enter
 to start that daemon, then choose the rigs and seats you want. Kernel is
 recommended first; selecting its operator does not start every kernel seat.
 The same view is available with **S** from ordinary TUI work.
+**?** opens Help even while connection checks are pending. **w** skips startup;
+**Esc** goes back, or leaves startup from its first page. These choices do not
+start a daemon or a seat. **L** opens local reading before or after connecting:
+choose configured Specs, project intent, projects, or missions and slices, then
+select a directory or file. **r** reads the selected source again; **Esc** returns.
+Local reading uses this machine's configured workspace paths and file allowlist,
+including when the selected daemon address is remote. It shows disk provenance,
+missing or denied sources, binary files and the 1 MiB text truncation boundary.
+These disk snapshots may change after reading and do not supply live queue,
+execution or topology state. Live views load after a confirmed connection and
+deliberate entry; a stalled live read does not prevent Help or local reading.
 When terminal transport is unavailable, **t** starts the empty terminal service
 so recovery choices can be inspected. It launches no seats.
 

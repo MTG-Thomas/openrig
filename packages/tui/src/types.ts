@@ -404,6 +404,7 @@ export type ViewTab = "table" | "recent" | "overview" | "graph" | "health" | "to
 
 export type Action =
   | { type: "startup"; key: string }
+  | { type: "time-setting"; timeZone: string; timeZoneWarning: string | null }
   | { type: "timezone" }
   | { type: "recent-open"; transitionId: number }
   | { type: "back" }
