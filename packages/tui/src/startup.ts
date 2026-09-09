@@ -55,7 +55,11 @@ export class StartupController {
       }
     } finally { this.state.busy = false; this.changed(); }
   }
-  async open() { this.state.open = true; await this.refresh(); }
+  async open() {
+    this.local?.close(); this.local = undefined; this.state.local = undefined;
+    this.state.open = true; this.state.consent = undefined;
+    this.changed(); await this.refresh();
+  }
   async refresh() {
     await this.run(async () => {
       this.state.consent = undefined;

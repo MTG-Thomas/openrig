@@ -40,6 +40,18 @@ it("Back abandons a slow local read without accepting its late result", async ()
   finish({ error: "late" }); await pending; expect(local.state.result).toEqual({});
 });
 
+it("explicit startup return leaves local reading and never claims skipped live data is empty", async () => {
+  const controller = new StartupController({ client: new DaemonClient(), home: "/fixture", probe: async () => "{}",
+    startDaemon: vi.fn(), onWork: vi.fn(), onChange: () => {}, readLocal: async () => ({ entries: [] }) });
+  await controller.key("L"); expect(controller.state.local).toBeDefined();
+  await controller.open(); expect(controller.state.local).toBeUndefined();
+  expect(controller.state.open).toBe(true);
+  const snap = emptySnapshot(); snap.readErrors.push("Live data not loaded · connection unverified · L Local reading · S Startup");
+  const screen = renderScreen(createViewState({ instanceId: "test" }).get(), snap, { cols: 80, rows: 24 });
+  expect(screen.lines.join("\n")).toContain("Live data not loaded");
+  expect(screen.lines.join("\n")).not.toContain("proven empty");
+});
+
 it("80-column startup exposes utility keys and local text scrolls as logical rows", () => {
   const controller = new StartupController({ client: new DaemonClient(), home: "/fixture", probe: async () => "{}", startDaemon: vi.fn(), onWork: vi.fn(), onChange: () => {} });
   const view = createViewState({ instanceId: "test" });

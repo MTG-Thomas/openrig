@@ -707,6 +707,8 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     const rigName = state.drill.find((d) => d.kind === "rig")?.name ?? snap.hosts[0]?.rigs[0]?.name;
     const rig = host?.rigs.find((candidate) => candidate.name === rigName);
     if (!rig || !host) {
+      const notLoaded = snap.readErrors.find((error) => error.startsWith("Live data not loaded"));
+      if (notLoaded) return [{ text: notLoaded }];
       // round-6 (guard): the ROOT topology branch consumes the OWNER's load
       // truth like every other read surface — a real in-flight cold start
       // renders the spinner; after settlement only a NAMED rigs-summary
