@@ -145,7 +145,8 @@ async function run(): Promise<void> {
     const opts = { cols, rows, nowMs, completion, colorMode: style.mode, commandContext: commandContext(), ...crashCartOpts, ...(startup?.state.open && !view.get().palette ? { startup: startup.state } : {}), restoreScroll: restoreScrollOffset, ...(liveEnabled && live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
     lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     if (startup?.state.local) startup.state.local.scroll = Math.min(startup.state.local.scroll, lastScreen.contentMaxOffset);
-    if (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length) {
+    // Startup has its own selection/scroll; keep the underlying reader bookmark intact.
+    if (!startup?.state.open && (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length)) {
       view.dispatch({ type: "layout", contentMaxOffset: lastScreen.contentMaxOffset, contentTargetCount: lastScreen.contentTargets.length });
       lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     }
