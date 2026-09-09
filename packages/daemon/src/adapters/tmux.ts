@@ -120,6 +120,7 @@ function isSessionAbsenceError(err: unknown): boolean {
   const msg = err.message.toLowerCase();
   return msg.includes("session not found") ||
     msg.includes("can't find session") ||
+    msg.includes("no current target") ||
     msg.includes("no session");
 }
 

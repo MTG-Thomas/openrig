@@ -23,7 +23,7 @@ describe("TmuxAdapter", () => {
     let live = false;
     const exec = vi.fn(async (command: string) => {
       if (command.startsWith("tmux -D")) { live = true; return ""; }
-      throw live ? new Error("no sessions") : NO_SERVER_ERROR;
+      throw live ? new Error("no current target") : NO_SERVER_ERROR;
     });
     const adapter = new TmuxAdapter(exec);
     expect(await adapter.startServer()).toEqual({ ok: true });
