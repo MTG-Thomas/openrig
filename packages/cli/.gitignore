@@ -1,3 +1,6 @@
 # Build artifacts assembled by scripts/build-package.sh
 daemon/
 ui/
+
+# Root license copied by the CLI build
+/LICENSE

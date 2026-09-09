@@ -98,6 +98,7 @@ function mockTmuxForRestore(overrides?: Partial<{
     createSession: vi.fn(async () => ({ ok: true as const })),
     killSession: vi.fn(async () => ({ ok: true as const })),
     sendText: vi.fn(async () => ({ ok: true as const })),
+    sendShellCommand: vi.fn(async () => ({ ok: true as const })),
     sendKeys: vi.fn(async () => ({ ok: true as const })),
     getPaneCommand: vi.fn(async () => overrides?.paneCommand ?? "claude"),
     capturePaneContent: vi.fn(async () => overrides?.paneContent ?? ""),
@@ -372,12 +373,14 @@ describe("Lifecycle reboot/recovery scenario matrix (Tier 1)", () => {
       // verify the patch wires probe + tmux honestly. No new probe patterns.
       const fastOptions = { pollMs: 1, maxWaitMs: 5, sleep: async () => {} };
 
-      it("probe sees codex foreground process → {ok: true}", async () => {
-        const tmux = mockTmuxForRestore({ paneCommand: "codex", paneContent: "" });
+      it("probe sees an interactive Codex prompt → {ok: true}", async () => {
+        const tmux = mockTmuxForRestore({ paneCommand: "codex", paneContent: "OpenAI Codex (v0.0.0)\n› Ask Codex to do anything" });
         const adapter = new CodexResumeAdapter(tmux, fastOptions);
 
         const r = await adapter.resume("r99-worker", "codex_id", "tok-abc", "/tmp");
 
+        expect(tmux.sendShellCommand).toHaveBeenCalledWith("r99-worker", "codex -s workspace-write resume 'tok-abc'");
+        expect(tmux.sendText).not.toHaveBeenCalled();
         expect(r).toEqual({
           ok: true,
           appliedLaunch: {
@@ -387,6 +390,13 @@ describe("Lifecycle reboot/recovery scenario matrix (Tier 1)", () => {
             value: "workspace-write",
           },
         });
+      });
+
+      it("a Codex process with no interactive prompt is not a successful resume", async () => {
+        const tmux = mockTmuxForRestore({ paneCommand: "codex", paneContent: "" });
+        const adapter = new CodexResumeAdapter(tmux, fastOptions);
+        const result = await adapter.resume("r99-worker", "codex_id", "tok-abc", "/tmp");
+        expect(result).toMatchObject({ ok: false, code: "resume_failed" });
       });
 
       it("probe sees `No saved session found` → {ok:false, code:'retry_fresh'} (NOT silent ok:true)", async () => {

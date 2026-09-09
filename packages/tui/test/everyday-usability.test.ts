@@ -31,7 +31,9 @@ describe("registry-backed command completion", () => {
     const ctx = { state: view.get(), snapshot };
     for (const entry of COMMAND_REGISTRY.filter((e) => !e.prefix)) for (const word of [entry.name, ...entry.aliases])
       expect(completeCommand(word, ctx).candidates).toContain(word);
-    expect(completeCommand("con", ctx).line).toBe("connections");
+    expect(completeCommand("con", ctx)).toMatchObject({ line: "con", candidates: ["config", "connections"] });
+    expect(completeCommand("conn", ctx).line).toBe("connections");
+    expect(completeCommand("conf", ctx).line).toBe("config ");
     expect(completeCommand("ag", ctx).line).toBe("agent ");
     expect(view.get().section).toBe("topology");
     expect(completeCommand("", ctx).message).toContain("matches");

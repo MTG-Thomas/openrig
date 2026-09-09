@@ -28,13 +28,14 @@ function mockTmux(): TmuxAdapter {
     createSession: vi.fn(async () => ({ ok: true as const })),
     killSession: vi.fn(async () => ({ ok: true as const })),
     sendText: vi.fn(async () => ({ ok: true as const })),
+    sendShellCommand: vi.fn(async () => ({ ok: true as const })),
     hasSession: vi.fn(async () => true),
     listSessions: vi.fn(async () => []),
     listWindows: vi.fn(async () => []),
     listPanes: vi.fn(async () => []),
     sendKeys: vi.fn(async () => ({ ok: true as const })),
     getPaneCommand: vi.fn(async () => "codex"),
-    capturePaneContent: vi.fn(async () => ""),
+    capturePaneContent: vi.fn(async () => "OpenAI Codex (v0.0.0)\n› Ask Codex to do anything"),
   } as unknown as TmuxAdapter;
 }
 
@@ -160,7 +161,8 @@ describe("Agent Starter v1 vertical — real Codex adapter delivery (M2 R2)", ()
       };
       const yaml = RigSpecCodec.serialize(spec);
       const result = await inst.instantiate(yaml, RIG_ROOT);
-      expect(result.ok).toBe(true);
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      expect(tmux.sendShellCommand).toHaveBeenCalledTimes(1);
 
       const expectedAgentsMdPath = path.join(RIG_ROOT, "AGENTS.md");
       const agentsMd = codexFs._store[expectedAgentsMdPath];

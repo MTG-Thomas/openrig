@@ -23,11 +23,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { createDb } from "../src/db/connection.js";
 import { migrate } from "../src/db/migrate.js";
-import { coreSchema } from "../src/db/migrations/001_core_schema.js";
-import { eventsSchema } from "../src/db/migrations/003_events.js";
-import { queueItemsSchema } from "../src/db/migrations/024_queue_items.js";
-import { queueTransitionsSchema } from "../src/db/migrations/025_queue_transitions.js";
-import { queueTargetRepoSchema } from "../src/db/migrations/039_queue_target_repo.js";
+import { ALL_MIGRATIONS } from "../src/db/all-migrations.js";
 import { outboxEntriesSchema } from "../src/db/migrations/027_outbox_entries.js";
 import { EventBus } from "../src/domain/event-bus.js";
 import { QueueRepository } from "../src/domain/queue-repository.js";
@@ -79,14 +75,7 @@ function makeMockTransport(): {
 
 function makeHarness(opts?: { deferTransport?: boolean; resolveOccupantGeneration?: () => string | null }) {
   const db = createDb();
-  migrate(db, [
-    coreSchema,
-    eventsSchema,
-    queueItemsSchema,
-    queueTransitionsSchema,
-    queueTargetRepoSchema,
-    outboxEntriesSchema,
-  ]);
+  migrate(db, ALL_MIGRATIONS);
   const bus = new EventBus(db);
   const outbox = new OutboxHandler(db);
   const { transport, calls, outcome } = makeMockTransport();
@@ -113,10 +102,7 @@ function makeHarness(opts?: { deferTransport?: boolean; resolveOccupantGeneratio
 describe("W1 MF2 — the atomic seam is mandatory and single-DB", () => {
   it("attachOutbox REJECTS an outbox backed by a different DB connection (split-DB)", () => {
     const db1 = createDb();
-    migrate(db1, [
-      coreSchema, eventsSchema, queueItemsSchema, queueTransitionsSchema,
-      queueTargetRepoSchema, outboxEntriesSchema,
-    ]);
+    migrate(db1, ALL_MIGRATIONS);
     const db2 = createDb();
     migrate(db2, [outboxEntriesSchema]);
     const repo = new QueueRepository(db1, new EventBus(db1), { validateRig: () => true });
@@ -128,10 +114,7 @@ describe("W1 MF2 — the atomic seam is mandatory and single-DB", () => {
 
   it("a nudge-intended terminal handoff with NO outbox attached FAILS CLOSED (no silent close-without-intent)", async () => {
     const db = createDb();
-    migrate(db, [
-      coreSchema, eventsSchema, queueItemsSchema, queueTransitionsSchema,
-      queueTargetRepoSchema, outboxEntriesSchema,
-    ]);
+    migrate(db, ALL_MIGRATIONS);
     const { transport } = makeMockTransport();
     const repo = new QueueRepository(db, new EventBus(db), { validateRig: () => true });
     repo.attachTransport(transport);
@@ -149,10 +132,7 @@ describe("W1 MF2 — the atomic seam is mandatory and single-DB", () => {
 
   it("a nudge:false terminal handoff with NO outbox is allowed (no wake intended ⇒ no store needed)", async () => {
     const db = createDb();
-    migrate(db, [
-      coreSchema, eventsSchema, queueItemsSchema, queueTransitionsSchema,
-      queueTargetRepoSchema, outboxEntriesSchema,
-    ]);
+    migrate(db, ALL_MIGRATIONS);
     const repo = new QueueRepository(db, new EventBus(db), { validateRig: () => true });
     const source = await repo.create({
       sourceSession: "planner@rig", destinationSession: "driver@rig", body: "x",
@@ -505,14 +485,9 @@ describe("W1 MF3 — overlapping drains send the external wake exactly once", ()
 // an old intent. The intent freezes the emitting envelope (generation resolved at
 // stage time) and delivery replays it verbatim.
 describe("W1 MF4 — the intent freezes its emitting generation/envelope", () => {
-  const ALL = [
-    coreSchema, eventsSchema, queueItemsSchema, queueTransitionsSchema,
-    queueTargetRepoSchema, outboxEntriesSchema,
-  ];
-
   it("freeze: the staged intent carries the SOURCE generation resolved at STAGE time", async () => {
     const db = createDb();
-    migrate(db, ALL);
+    migrate(db, ALL_MIGRATIONS);
     const { transport } = makeMockTransport();
     const repo = new QueueRepository(db, new EventBus(db), {
       validateRig: () => true,
@@ -532,7 +507,7 @@ describe("W1 MF4 — the intent freezes its emitting generation/envelope", () =>
 
   it("no relabel: recovery delivers the FROZEN envelope verbatim after a tenure swap", async () => {
     const db = createDb();
-    migrate(db, ALL);
+    migrate(db, ALL_MIGRATIONS);
     const { transport, calls, outcome } = makeMockTransport();
     // A resolver that would relabel to the CURRENT occupant if delivery re-resolved.
     const repo = new QueueRepository(db, new EventBus(db), {
@@ -640,17 +615,12 @@ describe("W1 — the executable drain selector is exact-case", () => {
 // The before-send and after-send/before-finalize windows share the same persisted
 // `sending` state, so one equivalence pin suffices.
 describe("W1 re-seal #3 — real file-backed close/reopen crash boundary", () => {
-  const ALL = [
-    coreSchema, eventsSchema, queueItemsSchema, queueTransitionsSchema,
-    queueTargetRepoSchema, outboxEntriesSchema,
-  ];
-
   it("a claimed `sending` intent survives a db CLOSE/REOPEN and reconciles to indeterminate, never re-sent", async () => {
     const dbPath = join(tmpdir(), `w1-reopen-${Date.now()}-${process.pid}.sqlite`);
     try {
       // --- process 1: real handoff, claim the intent, then CRASH (close the db) ---
       const db1 = createDb(dbPath);
-      migrate(db1, ALL);
+      migrate(db1, ALL_MIGRATIONS);
       const outbox1 = new OutboxHandler(db1);
       const repo1 = new QueueRepository(db1, new EventBus(db1), { validateRig: () => true });
       repo1.attachOutbox(outbox1); // no transport ⇒ immediate deliver skipped ⇒ intent pending

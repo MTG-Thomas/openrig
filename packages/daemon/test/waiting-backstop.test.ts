@@ -6,6 +6,7 @@ import { EventBus } from "../src/domain/event-bus.js";
 import { QueueRepository } from "../src/domain/queue-repository.js";
 import { OutboxHandler } from "../src/domain/outbox-handler.js";
 import { runWakeLadderTick, WAKE_SUSPEND_OVERRIDE_ENV } from "../src/domain/queue-wake-ladder.js";
+import { lastMeaningfulTransition } from "../src/domain/queue-waiting.js";
 import { recoveryTag } from "../src/domain/queue-recovery.js";
 
 describe("waiting face names the next action the existing ladder can actually take", () => {
@@ -95,5 +96,25 @@ describe("waiting face names the next action the existing ladder can actually ta
     expect(actions).toContainEqual({ qitemId: id, action: "escalate-operator" });
     expect(view(id).nextBackstop).toMatchObject({ mechanism: "queue-recovery:delegated", dueAt: null });
     expect(view(id).nextBackstop.recovery?.state).toBe("pending");
+  });
+
+  it.each(["daemon@kernel", "daemon@system"])("%s delivery bookkeeping preserves the episode; author notes and state changes still advance it", async (actorSession) => {
+    const id = await handoff();
+    const before = lastMeaningfulTransition(db, id);
+    for (const transitionNote of [
+      "delivery-deferral-armed notification_key=episode minutes=30",
+      "slack-owner-notification-posted notification_key=episode message_ts=1",
+      "delivery-termination: notification_key=episode no-fallback",
+    ]) {
+      advance(1);
+      queue.update({ qitemId: id, actorSession, transitionNote });
+      expect(lastMeaningfulTransition(db, id)).toEqual(before);
+    }
+    // Identical prose from an author remains testimony; no keyword classifier.
+    queue.update({ qitemId: id, actorSession: "owner@rig", transitionNote: "delivery-termination: author investigated the actual outcome" });
+    const authored = lastMeaningfulTransition(db, id);
+    expect(authored!.id).toBeGreaterThan(before!.id);
+    queue.update({ qitemId: id, actorSession, state: "blocked", blockedOn: "operator decision" });
+    expect(lastMeaningfulTransition(db, id)!.id).toBeGreaterThan(authored!.id);
   });
 });

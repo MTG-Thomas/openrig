@@ -245,7 +245,12 @@ describe("POST /api/missions/:missionId/complete", () => {
 // covers the daemon's OWN write path only (no watchers, no write-through).
 // ---------------------------------------------------------------------------
 
-type SidecarBody = { missions: Record<string, { authoredStatus: string | null }> };
+type SidecarBody = { missions: Record<string, { authoredStatus: string | null; readiness: unknown }> };
+
+const legacyReadiness = {
+  name: "relx", state: "legacy", historicalStatus: null, slices: [], issues: [],
+  revision: expect.stringMatching(/^[a-f0-9]{64}$/),
+};
 
 function buildAppWithSlices(ix: SliceIndexer): Hono {
   const app = new Hono();
@@ -270,7 +275,7 @@ describe("VM-005 B1 — read-after-write coherence at the daemon's own API", () 
     // full-invalidate and mask the seam; the defect lives on the hot path).
     const primed = await app.request("/api/slices?filter=all");
     expect(primed.status).toBe(200);
-    expect(((await primed.json()) as SidecarBody).missions["relx"]).toEqual({ authoredStatus: "active" });
+    expect(((await primed.json()) as SidecarBody).missions["relx"]).toEqual({ authoredStatus: "active", readiness: legacyReadiness });
 
     const post = await app.request("/api/missions/relx/complete", { method: "POST" });
     expect(post.status).toBe(200);
@@ -280,13 +285,13 @@ describe("VM-005 B1 — read-after-write coherence at the daemon's own API", () 
     expect(detail.status).toBe(200);
     expect(((await detail.json()) as { status?: string | null }).status).toBe("complete");
     const hot = await app.request("/api/slices?filter=all");
-    expect(((await hot.json()) as SidecarBody).missions["relx"]).toEqual({ authoredStatus: "complete" });
+    expect(((await hot.json()) as SidecarBody).missions["relx"]).toEqual({ authoredStatus: "complete", readiness: legacyReadiness });
 
     // Idempotent second POST: still 200, sidecar still coherent.
     const again = await app.request("/api/missions/relx/complete", { method: "POST" });
     expect(again.status).toBe(200);
     const hot2 = await app.request("/api/slices?filter=all");
-    expect(((await hot2.json()) as SidecarBody).missions["relx"]).toEqual({ authoredStatus: "complete" });
+    expect(((await hot2.json()) as SidecarBody).missions["relx"]).toEqual({ authoredStatus: "complete", readiness: legacyReadiness });
   });
 
   it("NEGATIVE: listing + detail caches SURVIVE the complete-write invalidation (drop-the-blob, never full-flush)", async () => {

@@ -18,6 +18,7 @@ const PARALLEL_SPEC = `workflow:
   id: route-parallel
   version: 1
   entry: { role: root }
+  exception_routing: { default: orchestrator, orchestrator_role: root }
   roles:
     root: { preferred_targets: [root@rig] }
     left: { preferred_targets: [left@rig] }
@@ -150,12 +151,15 @@ describe("S06 lifecycle HTTP surface", () => {
       body: JSON.stringify({ specPath, rootObjective: "parallel", createdBySession: "orch@rig" }),
     });
     const created = await create.json() as { instance: { instanceId: string }; entryQitemId: string };
-    await app.request("/api/workflow/project", {
+    expect(create.status, JSON.stringify(created)).toBe(201);
+    const initialProjection = await app.request("/api/workflow/project", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ instanceId: created.instance.instanceId, currentPacketId: created.entryQitemId, exit: "done", actorSession: "root@rig" }),
     });
+    expect(initialProjection.status, JSON.stringify(await initialProjection.json())).toBe(200);
     const show = await app.request(`/api/workflow/${created.instance.instanceId}`);
+    expect(show.status).toBe(200);
     const shown = await show.json() as { frontierPackets: Array<{ packetId: string; stepId: string; ownerSession: string }> };
     expect(shown.frontierPackets).toHaveLength(2);
     const beforeAmbiguousRoute = counts();
@@ -178,14 +182,20 @@ describe("S06 lifecycle HTTP surface", () => {
     expect(routed.status).toBe(200);
     const routedBody = await routed.json() as { newPacketId: string };
     for (const packetId of [routedBody.newPacketId, right.packetId]) {
-      const packet = (await (await app.request(`/api/workflow/${created.instance.instanceId}`)).json() as { frontierPackets: Array<{ packetId: string; ownerSession: string }> }).frontierPackets.find((item) => item.packetId === packetId)!;
-      await app.request("/api/workflow/project", {
+      const current = await app.request(`/api/workflow/${created.instance.instanceId}`);
+      expect(current.status).toBe(200);
+      const packet = (await current.json() as { frontierPackets: Array<{ packetId: string; ownerSession: string }> }).frontierPackets.find((item) => item.packetId === packetId)!;
+      const projected = await app.request("/api/workflow/project", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ instanceId: created.instance.instanceId, currentPacketId: packetId, exit: "failed", actorSession: packet.ownerSession }),
       });
+      const projection = await projected.json();
+      expect(projected.status, JSON.stringify(projection)).toBe(200);
     }
-    const failed = await (await app.request(`/api/workflow/${created.instance.instanceId}`)).json() as { failureOccurrences: Array<{ occurrenceId: string }> };
+    const failedResponse = await app.request(`/api/workflow/${created.instance.instanceId}`);
+    expect(failedResponse.status).toBe(200);
+    const failed = await failedResponse.json() as { failureOccurrences: Array<{ occurrenceId: string }> };
     expect(failed.failureOccurrences).toHaveLength(2);
     const ambiguousResume = await app.request(`/api/workflow/${created.instance.instanceId}/resume`, {
       method: "POST",

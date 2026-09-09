@@ -272,15 +272,18 @@ describe("openrig-core plugin — skills (HG-2.1 skill content per agentskills.i
     expect(guide).toContain("read-only");
   });
 
-  it("the operating model teaches its core home and authored checklist marks without reversing the scaffold", () => {
+  it("the operating model distinguishes current attributed acceptance from legacy checklist scaffolding", () => {
     const skillRoot = nodePath.join(PLUGIN_ROOT, "skills", "openrig-operating-model");
     const skill = fs.readFileSync(nodePath.join(skillRoot, "SKILL.md"), "utf-8");
     const specTemplate = fs.readFileSync(nodePath.join(skillRoot, "templates", "SPEC.md"), "utf-8");
 
     expect(skill).toContain("ships in the mode-neutral `openrig-core` plugin");
-    expect(skill).toContain("Progress checklists:");
+    expect(skill).toContain("current proof readiness is derived from attributed judgments");
+    expect(skill).toContain("`proofPolicy.judges`");
+    expect(skill).toContain("`rig proof show`");
+    expect(skill).toContain("Queue ownership and generic `done` are custody facts, not proof acceptance.");
+    expect(skill).toContain("legacy checklist renderer");
     expect(skill).toContain("derived at render time");
-    expect(skill).toContain("authored acceptance marks");
     expect(skill).not.toContain("mode plugin's operating-model skill");
     expect(specTemplate).toContain("PROGRESS.md is the authored acceptance checklist");
     expect(specTemplate).not.toContain("PROGRESS is DERIVED");

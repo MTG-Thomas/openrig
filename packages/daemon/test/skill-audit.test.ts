@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { auditSkills, type SkillAuditEntry } from "../src/domain/skill-audit.js";
 import type { SkillProvenanceEntry, SkillFrontmatter } from "../src/domain/skill-discovery.js";
 
@@ -22,6 +22,9 @@ function makeEntry(overrides: Partial<SkillProvenanceEntry> & { fmOverrides?: Re
 }
 
 describe("skill-audit", () => {
+  // Freshness fixtures use a fixed observation date, not the day CI runs.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-06-20T00:00:00Z")); });
+  afterEach(() => vi.useRealTimers());
   // 4-FIXTURE VERIFIED MATRIX (PRD + guard discriminator)
 
   it("(a) CLEAN: date + real evidence source passes", () => {

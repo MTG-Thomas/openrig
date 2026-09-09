@@ -30,6 +30,7 @@
     "openrig-tui": "tui/dist/main.js"
   },
   "files": [
+    "LICENSE",
     "dist",
     "daemon",
     "ui",
@@ -37,7 +38,7 @@
     "scripts"
   ],
   "scripts": {
-    "build": "tsc && chmod +x dist/bin-wrapper.js && mkdir -p dist/schemas && cp src/schemas/*.json dist/schemas/ && mkdir -p dist/lib/scope-templates && cp src/lib/scope-templates/*.md dist/lib/scope-templates/",
+    "build": "tsc && chmod +x dist/bin-wrapper.js && mkdir -p dist/schemas && cp src/schemas/*.json dist/schemas/ && mkdir -p dist/lib/scope-templates && cp src/lib/scope-templates/*.md dist/lib/scope-templates/ && cp ../../LICENSE LICENSE",
     "postinstall": "node scripts/check-abi.mjs",
     "prepublishOnly": "bash ../../scripts/build-package.sh",
     "test": "vitest run",

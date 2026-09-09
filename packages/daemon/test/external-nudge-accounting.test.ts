@@ -1,12 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createDb } from "../src/db/connection.js";
 import { migrate } from "../src/db/migrate.js";
-import { coreSchema } from "../src/db/migrations/001_core_schema.js";
-import { eventsSchema } from "../src/db/migrations/003_events.js";
-import { queueItemsSchema } from "../src/db/migrations/024_queue_items.js";
-import { queueTransitionsSchema } from "../src/db/migrations/025_queue_transitions.js";
-import { outboxEntriesSchema } from "../src/db/migrations/027_outbox_entries.js";
+import { ALL_MIGRATIONS } from "../src/db/all-migrations.js";
 import { EventBus } from "../src/domain/event-bus.js";
 import { OutboxHandler } from "../src/domain/outbox-handler.js";
 import { QueueRepository } from "../src/domain/queue-repository.js";
@@ -31,7 +27,7 @@ describe("external-nudge accounting (gateway-owned, never tmux)", () => {
 
   beforeEach(() => {
     db = createDb();
-    migrate(db, [coreSchema, eventsSchema, queueItemsSchema, queueTransitionsSchema, outboxEntriesSchema]);
+    migrate(db, ALL_MIGRATIONS);
     bus = new EventBus(db);
     sends = [];
     repo = new QueueRepository(db, bus, {
@@ -47,6 +43,8 @@ describe("external-nudge accounting (gateway-owned, never tmux)", () => {
     });
     repo.attachOutbox(new OutboxHandler(db));
   });
+
+  afterEach(() => db.close());
 
   it("SPECIMEN SHAPE: a create nudging @external never touches tmux transport and records a gateway-owned result", async () => {
     const item = await repo.create({

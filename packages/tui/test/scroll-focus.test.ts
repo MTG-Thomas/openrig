@@ -83,7 +83,8 @@ describe("TUI scroll-focus fix — founder scenario + affordances", () => {
     expect(s.get().focusedPane).toBe("explorer");
     expect(s.get().viewTab).not.toBe("yaml");
 
-    const hint = screen.lines.find((l) => l.includes("q quit"));
+    // The footer is width-clipped; quit is a later hint beyond this viewport.
+    const hint = screen.lines.find((l) => l.includes("↑↓ move"));
     expect(hint).toBeDefined();
     expect(hint).toContain("⇞⇟ scroll");
   });

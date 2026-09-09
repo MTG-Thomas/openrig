@@ -60,7 +60,13 @@ describe("production TUI refresh cadence", () => {
     const bin = path.join(root, "bin");
     await mkdir(bin);
     const rigStub = path.join(bin, "rig");
-    await writeFile(rigStub, "#!/bin/sh\nexit 1\n");
+    await writeFile(rigStub, `#!/bin/sh
+case "$1" in
+  crash-cart) printf '%s\\n' '{"state":"up"}' ;;
+  config) printf '%s\\n' '{"value":"UTC"}' ;;
+  *) exit 1 ;;
+esac
+`);
     await chmod(rigStub, 0o755);
 
     const viteNode = fileURLToPath(new URL("../../../node_modules/vite-node/vite-node.mjs", import.meta.url));
@@ -78,13 +84,24 @@ describe("production TUI refresh cadence", () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
     children.push(child);
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => { stderr += chunk; });
 
     try {
-      await until(() => requests.length >= 11 || child.exitCode != null);
+      await until(() => stdout.includes("Daemon connected.") || child.exitCode != null);
       expect(child.exitCode, stderr).toBeNull();
+      expect(stdout).toContain("Daemon connected.");
+      // S05 opens startup first. Enter ordinary work before measuring its cadence.
+      const startupReads = requests.length;
+      child.stdin.write("w");
+      await until(() => requests.length > startupReads || child.exitCode != null);
+      expect(child.exitCode, stderr).toBeNull();
+      // Wait for the initial hydration to finish before taking the idle sample.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       const initialReads = requests.length;
 
       await new Promise((resolve) => setTimeout(resolve, 5_300));
