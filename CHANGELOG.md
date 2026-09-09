@@ -31,7 +31,7 @@ Migration head remains `079_workflow_lifecycle_parallel`. Accepted development
 and native evidence retains its original attribution; release preparation does
 not imply a new human usability study, full-platform run or public adoption.
 See [the full release notes](docs/releases/v0.5.12.md) for operational guidance
-and known limits, including deferred historical judgment registration.
+and known limits.
 
 ## [0.5.11] - 2026-09-07
 
