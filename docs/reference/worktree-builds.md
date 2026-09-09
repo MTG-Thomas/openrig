@@ -21,11 +21,11 @@ A worktree can therefore report green against code it does not contain.
 
 ## Rules
 
-1. **Run `npm install` in each worktree** (~4s, one time). It is not the slow path; it is the
-   only path that resolves workspace packages to the worktree's own source.
+1. **Run `npm install` in each worktree** so workspace packages resolve to the
+   worktree's own source.
 2. **Never symlink `node_modules` from the primary checkout.** It appears to work — builds pass,
    typechecks pass — which is exactly the danger.
-3. **`npx tsc` with no `node_modules` installs an unrelated 12-year-old `tsc` package** and prints
+3. **`npx tsc` with no `node_modules` installs an unrelated `tsc` package** and prints
    "This is not the tsc command you are looking for". That message means *no install*, not a
    TypeScript error.
 4. **Build `@openrig/daemon` before typechecking `@openrig/cli`** in a fresh worktree: cli imports

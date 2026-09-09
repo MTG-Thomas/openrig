@@ -2,29 +2,27 @@
 
 A CHECKLIST OF JUDGMENT GUIDES, not gates: every item says WHY, most items are one
 act, and anything situational expires at the next boundary. Runs once per release
-fence, after the prior release's ceremony completes. Graduated 2026-08-28 from the
-working SOP; the graduating team's seat-specific ceremony details stay in its
-playbook.
+fence, after the prior release's ceremony completes. The project and seat owners
+select the applicable actions and preserve their reasons in the boundary record.
 
 ## 1. Seats — reset or re-prime, per each seat's continuity needs
 
-- **Builder, QA, and reviewer seats: FRESH GENERATIONS.** Graceful exit with a
-  deposit (recap where provisioned), then relaunch. Why, twice proven: accumulated
-  release context becomes noise that reads as knowledge, and long-running seats
-  carry stale injected catalogs — only a fresh launch carries current skills and
-  canon.
-- **Planning seats: MANAGED COMPACTION + RE-PRIME,** not fresh — planning continuity
-  is the seat's point; the post-compaction restore is exactly the width-restore case
-  the context machinery exists for.
-- **The continuity-bearing orchestration seat: STAYS.** Its memory is the release's
-  memory and the ceremony's custody. Known cost, accepted: its injected catalog
-  stays stale until its own next generation — the capability delta covers the gap by
-  content.
+- **Choose continuity per seat, with its owner.** Fresh launch, managed compaction
+  with re-prime, or retaining the current session serve different needs. Role names
+  alone do not select one. Record the choice, the reason and custody of open work;
+  selecting a procedure does not itself authorize a lifecycle action.
+- **Fresh launch** can clear accumulated context and load current startup guidance.
+  Before an authorized exit, preserve the seat's earned knowledge and continuation
+  (recap where provisioned); verify the new occupant's actual identity and install.
+- **Managed compaction with re-prime** can retain planning continuity while
+  restoring the context needed for the next phase. **Retaining the current session**
+  can preserve ongoing custody. In either case, inspect which guidance is stale and
+  deliver the selected current context; an edit on disk is not delivery to a session.
 - **Re-prime = the world walk + the current capability delta + the mission install**
   per the mission-install convention (`docs/reference/mission-install.md`): the world
   half restores where-you-are; the project half (five layers, two depth profiles,
-  paced pointer-walk) restores what-you-are-doing. Composing the packet by
-  improvisation is the trap this convention closed.
+  paced pointer-walk) restores what-you-are-doing. Composing from named artifacts
+  keeps source precedence visible.
 - **THE CEREMONY IS THE EXPERIMENT.** Every act above runs on the product's own
   primitives, so the ceremony doubles as their live test. Observe passively: what did
   each re-primed seat's first natural turns reach for, and what broke? Findings land
@@ -45,8 +43,8 @@ playbook.
 - Every seat sweeps its DESTINATION for open rows (wakes are unreliable; the sweep
   is the read). Each open row from the finished release gets exactly one of:
   done-with-receipt · carried-to-the-new-mission (re-filed against the new plan,
-  never dragged) · closed-superseded. Ghost obligations accumulate silently without
-  this — the measured specimen was a dozen cold rows against one seat.
+  never dragged) · closed-superseded. The sweep exposes obligations that a missed
+  wake or a stale remembered work list can hide.
 - Verify every closing-paper inheritance has a live intake row with an owner. Zero
   orphans.
 
@@ -79,17 +77,22 @@ playbook.
 ## 6. The capability-delta lifecycle (standing law)
 
 Each release's capability delta is authored at the fence and bound to the exact
-published cut. Its baseline is the canon's actual last-absorbed marker, not an
-assumption that the immediately prior semver was absorbed. When canon is behind, the
-new delta is a cumulative synthesis of every intervening delta, preserving
-supersessions and pivots rather than concatenating old prose.
+candidate, then reconciled to the published cut. Its baseline is the canon's actual
+last-absorbed marker, not an assumption that the immediately prior semver was
+absorbed. When canon is behind, the new delta is a cumulative synthesis of every
+intervening delta, preserving supersessions and pivots rather than concatenating
+old prose.
 
-Canon absorbs the kept public-product truths; the canon header then names the delta,
-which EXPIRES it — verify the expiry fired, and never cite an expired delta. Private
-project topology, host practice, and release ownership go to the versioned project
-world instead of leaking into the public package. The new release's delta obligations
-start at ITS cut. A delta that outlives its absorption is a stale teaching site
-wearing a version number.
+Canon absorbs the kept public-product truths. Expiry requires BOTH the canon header
+naming that exact delta AND a distinct successor delta file existing. A header alone
+does not expire it; missing or unreadable inputs remain unknown/live. At the actual
+boundary, verify the event before recording expiry, then stop citing the expired
+delta. Do not create a successor merely to make the condition true. Candidate
+absorption is not proof of publication or served production adoption.
+
+Private project topology, host practice, and release ownership go to the versioned
+project world instead of leaking into the public package. The new release's delta
+obligations start at ITS cut.
 
 ## 7. World absorption and discoverability
 

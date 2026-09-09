@@ -35,6 +35,6 @@ permission_policy: policies/my-cautious-dev.policy.md
 ```
 
 Copy it, rename it, and edit the lists to taste — it's yours to change. The built-in
-policies (locked / standard / open / operator) stay read-only and are referenced as
+policies (locked / standard / open / yolo) stay read-only and are referenced as
 `builtin:<name>`; a custom policy like this one lives in your project and is referenced
 by path.

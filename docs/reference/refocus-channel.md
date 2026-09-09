@@ -61,10 +61,7 @@ unset, the existing FILE and generic paths are unchanged.
 Mission-, project-, or box-specific refocus text belongs in a context-library
 entry or one of those FILES on the instance that needs it. **It must never be committed into product
 source** — the shipped default carries no path, seat name, mission, or
-practice that is not generally applicable. (The pre-promotion lab hook had
-exactly this defect: a hardcoded per-box distillation-tool path. The
-promotion removed it; the grep for project residue is part of the slice's
-proof contract.)
+practice that is not generally applicable.
 
 Every delivered refocus pairs its content with the public `refocusing` skill's
 path-only trace. Configure `OPENRIG_REFOCUS_TREES=topology|work|both` and

@@ -3,18 +3,12 @@ doc: reference
 title: The mission install — the project half of agent onboarding
 stage: established
 warrant: >-
-  Minted 2026-08-28 from three lived installs run before this convention was written
-  (receipts preserved in the minting slice's proof directory): a full five-layer seat
-  rebuild with a verified correction round, a release-boundary re-prime of a whole team
-  at two depths, and a successor install composed entirely from a mission's own
-  artifacts. Confirmed by a three-leg research round: the anatomy maps 1:1 onto the
-  shipped three-source composition contract, push-composition is convergent practice in
-  independent agent systems, and the only measured causal evidence available supports
-  composing authored artifacts over generating summaries.
+  Compose project context from authored, addressable artifacts so a joining agent
+  can recover purpose, source precedence, current responsibility and facts to derive.
+  Paced delivery and a checked delta make consumption and unresolved facts visible.
 sources:
-  - the minting slice's SPEC design-contract block (recorded direction, decisions, prototypes)
-  - the minting slice's research synthesis (machinery table, tensions, evidence weights)
-  - docs/reference/sdlc-conventions.md (the build conventions this composes with)
+  - docs/reference/sdlc-conventions.md
+  - docs/reference/product-journey-sdlc.md
 ---
 
 # The mission install

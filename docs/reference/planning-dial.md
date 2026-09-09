@@ -1,10 +1,9 @@
 # The planning dial — how much rigor a plan gets, chosen per piece
 
-Planning is a spectrum, not a binary. The build phase prices its care by wave
-composition; planning needs the same flexibility, or every piece gets one protocol —
-over-working the trivial and under-working the hard. Graduated 2026-08-28 from the
-working SOP that ran a full release; the lived examples behind each rung stay in the
-originating team's playbook.
+Planning is a spectrum, not a binary. When the wave model is selected, build care
+varies by wave composition; planning needs the same flexibility, or every piece gets
+one protocol — over-working the trivial and under-working the hard. Choose the rung
+from the work's uncertainty and consequences.
 
 ## The rungs — dial up by what the piece is
 
@@ -42,14 +41,13 @@ substrate where a plausible, self-consistent plan would ship the exact disease i
 exists to kill. The discriminator is "would a wrong plan be expensive, hard to undo,
 and invisible from inside" — never "is this piece central." Importance without an
 unclosable unknown or an author-blind failure mode stays at P1. Planning is text-only
-work, so the dial's cost stays proportional: a targeted P2 can take minutes; a full
-P3 an hour or two — cheap against a wrong plan built.
+work; keep its scope proportional to the unresolved question and the cost of a wrong
+plan, rather than assuming a fixed duration for a rung.
 
-## Cost calibration (dated observations from the graduating team, 2026-08)
+## Cost calibration
 
-A P2+P3 pass on the most load-bearing piece of a release took about two hours end to
-end and produced the most-attacked spec in the release before a line of its code
-existed. A P3 alone ran ~70 minutes and returned six findings, two behavior-changing.
-A targeted P2 resolved a feasibility door in ~5 minutes against primary sources and
-caught two defects in an already-in-flight candidate. The recurring lesson the rungs
-carry: run the research BEFORE the build dispatches, not during.
+Scope research to the unknown that could change the plan; scope an adversarial
+pass to the failure modes the author may miss. Record the questions resolved and
+the resulting design changes so the owner can judge the value of the selected
+rung. Run planned research before build dispatch, while its answers can still
+shape the spec.

@@ -1,9 +1,9 @@
 # The wave SDLC — parallel build, wave-level review, composition as the care dial
 
-Graduated 2026-08-28 from the working playbook of the team that proved it live; the
-team-specific custody mechanics stay in that team's playbook. Lock stamps in this
-model are ADDITIVE: approval appends metadata and never rewrites authored bytes, so
-a candidate's identity survives its own approval.
+This is a selectable build and review model from `sdlc-conventions.md`'s component
+menu. The mission owner decides whether it fits the work. Lock stamps in this model
+are ADDITIVE: approval appends metadata and never rewrites authored bytes, so a
+candidate's identity survives its own approval.
 
 ## The model in one paragraph
 
@@ -87,7 +87,7 @@ design session first). Anything irreversible within the hour (publish, cutover,
 destructive operations) — that is the heavy path. And when no independent non-writing
 reviewers exist: nothing ever self-reviews; without them the wave gate is theater.
 
-## Failure modes, with the mitigations that worked (dated observations, 2026-08)
+## Failure modes and mitigations
 
 - **Freeze-merge races:** a candidate freezes seconds before a merge moves the tip.
   Mitigation: zero-overlap restack with content-identity proof (stable patch-id) in
@@ -100,14 +100,3 @@ reviewers exist: nothing ever self-reviews; without them the wave gate is theate
   line still prints. Rule: pin the ABSENCE of the false claim in every encoding.
 - **Phantom checkout status:** merge-by-reference leaves a shared checkout's index
   stale. Never build or commit from a shared checkout; sync its index at fences.
-
-## Measured outcome from the proving run (dated, one team, 2026-08)
-
-Eight slices plus five fix candidates plus two addenda built and merged in ~2.5 hours
-across five writing seats; two wave passes plus three fix-round passes replaced ~20
-per-slice review rounds. Defect yield went UP: the reviewers' findings never
-overlapped once across three consecutive verdicts, and the builders' green suites had
-missed every one of them — wave-level review sees cross-slice seams per-slice review
-structurally cannot. Correction latency: one live defect went found→root-caused→
-specced→locked→built→merged in 24 minutes, because no review round stood between a
-locked spec and a building seat.

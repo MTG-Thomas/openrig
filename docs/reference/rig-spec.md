@@ -174,7 +174,7 @@ edges:
 | `name` | string | yes | — | Rig name. Used in session naming (`{pod}-{member}@{name}`), snapshot identification, and spec library lookup. |
 | `summary` | string | no | — | Human-readable description. Shown in spec library, review surfaces, and `rig specs show`. |
 | `culture_file` | string | no | — | Relative path to a rig-wide culture/constitution file. Must be a safe relative path (no `..`, no absolute). |
-| `permission_policy` | string | no | — | Permission policy attached to the rig. Either a built-in (`builtin:locked`, `builtin:standard`, `builtin:open`, `builtin:operator`) or a safe relative path to a custom policy file (resolved from this spec's directory; no `..`, no absolute). Absent leaves the default floor. A member may set its own `permission_policy`, which takes precedence over the rig-level one. See "Attaching a permission policy" below. |
+| `permission_policy` | string | no | — | Permission policy attached to the rig. Either a built-in (`builtin:locked`, `builtin:standard`, `builtin:open`, `builtin:yolo`) or a safe relative path to a custom policy file (resolved from this spec's directory; no `..`, no absolute). Absent leaves the default floor. A member may set its own `permission_policy`, which takes precedence over the rig-level one. See "Attaching a permission policy" below. |
 | `docs` | Doc[] | no | — | Documentation files that should travel with the rig. Included in rig bundles. Each entry has a `path` field (safe relative path). The engine does not consume these — they are for humans and agents setting up the environment before launch. |
 | `startup` | StartupBlock | no | — | Rig-level startup files and actions. Applied to all members via the startup layering model. |
 | `services` | ServicesBlock | no | — | Optional managed services (Docker Compose). When present, services boot before any agent launches. |
@@ -193,7 +193,7 @@ permission_policy: builtin:standard
 permission_policy: policies/my-cautious-dev.policy.md
 ```
 
-Built-in policies (`locked` / `standard` / `open` / `operator`) are read-only and are
+Built-in policies (`locked` / `standard` / `open` / `yolo`) are read-only and are
 referenced as `builtin:<name>`. A custom policy lives in your own project and is
 referenced by a safe relative path (no `..`, no absolute). A shipped example of the
 custom shape is `packages/daemon/policies/examples/my-cautious-dev.policy.md` — copy it
@@ -530,8 +530,8 @@ These are the built-in specs shipped with OpenRig. Read them as worked examples.
 
 | Spec | Location | Pods | Members | Services |
 |------|----------|------|---------|----------|
-| `product-team` | `packages/daemon/specs/rigs/product-team.yaml` | orch, dev, rev | 7 (lead, peer, impl, qa, design, r1, r2) | no |
-| `implementation-pair` | `packages/daemon/specs/rigs/implementation-pair.yaml` | dev | 2 (impl, qa) | no |
-| `adversarial-review` | `packages/daemon/specs/rigs/adversarial-review.yaml` | orch, rev | 3 (lead, r1, r2) | no |
-| `research-team` | `packages/daemon/specs/rigs/research-team.yaml` | orch, research | 3 (lead, analyst, synthesizer) | no |
+| `product-team` | `packages/daemon/specs/rigs/preview/product-team/rig.yaml` | orch1, dev1, rev1 | 7 (lead, peer, impl, qa, design, r1, r2) | no |
+| `implementation-pair` | `packages/daemon/specs/rigs/launch/implementation-pair/rig.yaml` | dev | 2 (impl, qa) | no |
+| `adversarial-review` | `packages/daemon/specs/rigs/focused/adversarial-review/rig.yaml` | orch, review | 3 (lead, r1, r2) | no |
+| `research-team` | `packages/daemon/specs/rigs/focused/research-team/rig.yaml` | orch, research | 3 (lead, analyst, synthesizer) | no |
 | `secrets-manager` | `packages/daemon/specs/rigs/launch/secrets-manager/rig.yaml` | vault | 1 (specialist) | yes (Vault) |

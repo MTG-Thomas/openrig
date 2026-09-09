@@ -2,8 +2,7 @@
 
 For rigs whose hand-authored context predates the chain-file convention and
 lives at the legacy location (`~/.openrig/shared-docs/rigs/<rig>/`, or
-`$OPENRIG_SHARED_DOCS_ROOT/rigs/<rig>/`). The parent-host reconciliation
-campaign is the first consumer of this path. Nothing here is destructive: the
+`$OPENRIG_SHARED_DOCS_ROOT/rigs/<rig>/`). Nothing here is destructive: the
 legacy tree is left in place, reads keep working throughout (the walker's
 advisory-emitting fallback), and every copy is no-clobber.
 

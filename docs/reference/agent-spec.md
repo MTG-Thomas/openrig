@@ -452,6 +452,6 @@ The only required file is `agent.yaml`. Everything else is referenced by paths i
 | `implementer` | `specs/agents/development/implementer/` | `shared` | openrig-user, development-team, test-driven-development, systematic-debugging, etc. | TDD implementation agent |
 | `qa` | `specs/agents/development/qa/` | `shared` | openrig-user, development-team, etc. | Quality assurance agent |
 | `orchestrator` | `specs/agents/orchestration/orchestrator/` | `shared` | openrig-user, orchestration-team, etc. | Rig orchestration lead |
-| `reviewer` | `specs/agents/review/reviewer/` | `shared` | openrig-user, review-team, etc. | Independent code reviewer |
+| `independent-reviewer` | `specs/agents/review/independent-reviewer/` | `shared` | review-team, systematic-debugging, verification-before-completion | Independent code reviewer |
 | `vault-specialist` | `specs/agents/apps/vault-specialist/` | `shared` | openrig-user, systematic-debugging, vault-user | Vault domain specialist |
 | `design` | `specs/agents/design/` | none | — | Product designer |
