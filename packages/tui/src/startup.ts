@@ -217,7 +217,7 @@ export function startupLines(s: StartupState): Array<{ text: string; action?: Ac
   ];
   lines.push(button("?  Help", "?"), button("w  Skip startup · ordinary views", "w"));
   lines.push(button("L  Local Specs / project / mission / slice reading", "L"));
-  if (s.local) return [...lines.slice(0, 4), ...localLines(s.local)];
+  if (s.local) return localLines(s.local);
   if (s.busy) return [...lines, { text: "Working… repeated input will not start another operation." }, { text: "Esc Back / skip · q Quit; an accepted operation continues." }];
   if (s.page === "down") lines.push(button("Enter / s  Start daemon; choose seats next", "s"));
   if (s.page === "rigs") {
