@@ -16,6 +16,7 @@ import { lifecycleObligations, requiredLifecycleSteps, type LifecycleObligation 
 import type Database from "better-sqlite3";
 import type { WorkflowSpec } from "./workflow-types.js";
 import type { EventBus } from "./event-bus.js";
+import type { PersistedEvent } from "./types.js";
 import type { QueueRepository } from "./queue-repository.js";
 import {
   type CreateWorkflowInstanceInput,
@@ -1203,29 +1204,9 @@ export class WorkflowRuntime {
       // THIS episode close honestly with resume provenance. A later
       // re-failure mints a NEW packet id = a NEW occurrence (never
       // hidden behind this resolved past).
-      let exceptionItemsClosed = 0;
-      if (failedPacketId) {
-        const openItems = this.db
-          .prepare(
-            `SELECT qitem_id FROM queue_items
-             WHERE state IN ('pending','in-progress','blocked')
-               AND tags LIKE ? AND tags LIKE ?`,
-          )
-          .all(`%"occurrence:${failedPacketId}"%`, `%"workflow-exception"%`) as Array<{
-          qitem_id: string;
-        }>;
-        for (const row of openItems) {
-          const closedItem = this.queueRepo.updateWithinTransaction({
-            qitemId: row.qitem_id,
-            actorSession: input.actorSession,
-            state: "done",
-            closureReason: "no-follow-on",
-            transitionNote: `workflow resume: occurrence resolved by ${input.actorSession} redriving step ${step.id}${input.decision ? ` — ${input.decision}` : ""}`,
-          });
-          register(closedItem.persistedEvent);
-          exceptionItemsClosed += 1;
-        }
-      }
+      const exceptionItemsClosed = failedPacketId
+        ? this.closeFailureExceptions(instance.instanceId, failedPacketId, step.id, input, register)
+        : 0;
 
       // Frontier rebind + status + THE LIVELOCK RAIL: hops_baseline =
       // hopCount at resume (one fresh bounded window under the same
@@ -1305,6 +1286,34 @@ export class WorkflowRuntime {
       );
     }
     return result;
+  }
+
+  /** Called inside the redrive transaction; only this instance's failed packet is resolved. */
+  private closeFailureExceptions(
+    instanceId: string,
+    failedPacketId: string,
+    stepId: string,
+    input: { actorSession: string; decision?: string },
+    register: (event: PersistedEvent) => void,
+  ): number {
+    const openItems = this.db.prepare(
+      `SELECT qitem_id FROM queue_items
+       WHERE state IN ('pending','in-progress','blocked')
+         AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'workflow-exception')
+         AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)
+         AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)`,
+    ).all(`instance:${instanceId}`, `occurrence:${failedPacketId}`) as Array<{ qitem_id: string }>;
+    for (const row of openItems) {
+      const closed = this.queueRepo.updateWithinTransaction({
+        qitemId: row.qitem_id,
+        actorSession: input.actorSession,
+        state: "done",
+        closureReason: "no-follow-on",
+        transitionNote: `workflow resume: occurrence resolved by ${input.actorSession} redriving step ${stepId}${input.decision ? ` — ${input.decision}` : ""}`,
+      });
+      register(closed.persistedEvent);
+    }
+    return openItems.length;
   }
 
   private async resumeFailureOccurrence(input: {
@@ -1405,6 +1414,7 @@ export class WorkflowRuntime {
         hopsBaseline: occurrence.hopCount,
       });
       this.instanceStore.resolveFailureOccurrence(instance.instanceId, occurrence.occurrenceId, created.qitemId, input.decision);
+      const exceptionItemsClosed = this.closeFailureExceptions(instance.instanceId, occurrence.failedPacketId, step.id, input, register);
       const nextFrontier = [...instance.currentFrontier, created.qitemId];
       const bindings = this.instanceStore.listFrontierBindings(instance.instanceId);
       this.instanceStore.updateFrontier(instance.instanceId, nextFrontier, "active", {
@@ -1421,7 +1431,7 @@ export class WorkflowRuntime {
       });
       register(this.eventBus.persistWithinTransaction({ type: "workflow.resumed", instanceId: instance.instanceId, workflowName: instance.workflowName, stepId: step.id, occurrenceId: occurrence.occurrenceId, resumedBy: input.actorSession, decision: input.decision ?? null, resumeCount: instance.resumeCount + 1 }));
       wake = { qitemId: created.qitemId, session: created.destinationSession, nudge: created.nudge };
-      output = { instanceId: instance.instanceId, stepId: step.id, newPacketId: created.qitemId, ownerSession: owner, resumeCount: instance.resumeCount + 1, exceptionItemsClosed: 0 };
+      output = { instanceId: instance.instanceId, stepId: step.id, newPacketId: created.qitemId, ownerSession: owner, resumeCount: instance.resumeCount + 1, exceptionItemsClosed };
     });
     const nudge = wake as { qitemId: string; session: string; nudge: boolean | undefined } | null;
     if (nudge) await this.queueRepo.deliverWakeForSuccessor(nudge.qitemId, nudge.session, nudge.nudge, input.actorSession);

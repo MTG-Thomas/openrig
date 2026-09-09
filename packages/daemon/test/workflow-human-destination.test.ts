@@ -17,10 +17,19 @@ import { addHumanFragment, writeProjection, projectionPath, type HumanFragment }
 import { makeEnsureStuckExceptionItem } from "../src/domain/workflow-exception-escalation.js";
 import { workflowRoutes } from "../src/routes/workflow.js";
 
+// SettingsStore captures its default path at import time. Keep real setting
+// resolution, but bind each caller to this test's registry/config directory.
+vi.mock("../src/domain/user-settings/settings-store.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../src/domain/user-settings/settings-store.js")>();
+  return { ...actual, SettingsStore: class extends actual.SettingsStore {
+    constructor(configPath?: string) { super(configPath ?? join(process.env["OPENRIG_HOME"]!, "config.json")); }
+  } };
+});
+
 const human = (name: string): HumanFragment => ({ entityId: name, class: "human", displayName: name,
   address: `${name}@external`, connectorBindings: [{ kind: "slack", connectorRef: "fixture", secretsRef: "fixture", role: "primary" }],
   prefs: { deliveryClass: "A" } });
-const spec = `workflow:
+const SERIAL_SPEC = `workflow:
   id: registered-human-test
   version: 1
   roles:
@@ -31,7 +40,8 @@ const spec = `workflow:
       allowed_exits: [done, failed]
 `;
 
-describe("workflow registered-human selection at the actual runtime callers", () => {
+describe.each(["serial", "dependency"])("workflow registered-human selection at the actual runtime callers (%s)", (graph) => {
+  const spec = graph === "dependency" ? SERIAL_SPEC.replace("      actor_role: worker", "      actor_role: worker\n      depends_on: []") : SERIAL_SPEC;
   let dir: string;
   let db: ReturnType<typeof createDb>;
   let runtime: WorkflowRuntime;
@@ -131,6 +141,32 @@ describe("workflow registered-human selection at the actual runtime callers", ()
     expect(spy).toHaveBeenCalledTimes(1);
     expect(exceptions()).toHaveLength(0);
   });
+  it("only an unavailable agent rig falls back to the registered human during admission", async () => {
+    add("owner-one");
+    writeFileSync(specPath, spec + "  exception_routing: { orchestrator_role: worker }\n");
+    const i = await start();
+    const create = queue.createWithinTransaction.bind(queue);
+    const attempted: string[] = [];
+    vi.spyOn(queue, "createWithinTransaction").mockImplementation(input => {
+      attempted.push(input.destinationSession);
+      if (input.destinationSession === "worker@rig") throw new QueueRepositoryError("unknown_destination_rig", "controlled unavailable rig");
+      return create(input);
+    });
+    await fail(i);
+    expect(attempted).toEqual(["worker@rig", "owner-one@external"]);
+    expect(exceptions()).toHaveLength(1);
+    expect(exceptions()[0]).toMatchObject({ destination_session: "owner-one@external", tier: "human-gate" });
+  });
+
+  it("honors an authored human-only policy without trying the selected agent", async () => {
+    add("owner-one");
+    writeFileSync(specPath, spec + "  exception_routing: { default: human_only, orchestrator_role: worker }\n");
+    const i = await start(); terminal.mockClear();
+    await fail(i);
+    expect(exceptions()).toHaveLength(1);
+    expect(exceptions()[0]).toMatchObject({ destination_session: "owner-one@external", tier: "human-gate" });
+    expect(terminal).not.toHaveBeenCalled();
+  });
   it.each(["project", "overdue"] as const)("%s preserves capability, preferred and no-match routing while exposing read faults", async (channel) => {
     add("owner-one");
     const rigs = new RigRepository(db);
@@ -156,6 +192,9 @@ describe("workflow registered-human selection at the actual runtime callers", ()
         packet: queue.getById(i.entryQitemId),
         transitions: db.prepare("SELECT * FROM queue_transitions").all(),
         trails: db.prepare("SELECT * FROM workflow_step_trails").all(),
+        occurrences: db.prepare("SELECT * FROM workflow_failure_occurrences").all(),
+        frontier: db.prepare("SELECT * FROM workflow_frontier_bindings").all(),
+        outbox: db.prepare("SELECT * FROM outbox_entries").all(),
         events: db.prepare("SELECT * FROM events").all() });
       const before = snapshot();
       const previousExceptions = exceptions().length;

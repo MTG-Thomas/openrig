@@ -25,6 +25,7 @@ const PARALLEL_SPEC = `workflow:
     left: { preferred_targets: [left@rig] }
     right: { preferred_targets: [right@rig] }
     join: { preferred_targets: [join@rig] }
+  exception_routing: { orchestrator_role: root }
   steps:
     - id: root
       actor_role: root
@@ -74,6 +75,7 @@ const MAPPED_FAILURE_SPEC = `workflow:
     left: { preferred_targets: [left@rig] }
     right: { preferred_targets: [right@rig] }
     repair: { preferred_targets: [repair@rig] }
+  exception_routing: { orchestrator_role: root }
   steps:
     - id: root
       actor_role: root
@@ -109,6 +111,7 @@ const GUARDED_CYCLE_SPEC = `workflow:
     root: { preferred_targets: [root@rig] }
     left: { preferred_targets: [left@rig] }
     right: { preferred_targets: [right@rig] }
+  exception_routing: { orchestrator_role: root }
   steps:
     - id: root
       actor_role: root

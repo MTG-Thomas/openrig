@@ -347,9 +347,11 @@ and the flow resumes from where it stopped.
   the ordinary tier so the shipped attention union (which matches on
   tier regardless of destination) never leaks it into NEEDS-YOU. The
   shipped attention predicate is untouched.
-- **Class (a) born-in-txn**: the projector's failed-terminal branch
-  creates the item INSIDE the failing transaction — no window where
-  the instance is failed and no item exists. An agent destination rejected
+- **Class (a) born-in-txn**: serial failure and unhandled dependency-branch
+  failure share exception admission. The failed packet, dependency occurrence,
+  owning item and staged wake commit together, even while an unrelated frontier
+  keeps the instance active. Mapped remediation remains ordinary workflow work;
+  an unmapped or max-hop failure requires an owner. An agent destination rejected
   as an unknown rig tries registered-human selection. Selection, admission,
   or storage failure rolls back the close; it never commits a phantom
   human alert. Other errors retain their original diagnosis. **Class (b) at detection**: the boot sweep and the keepalive
@@ -385,7 +387,12 @@ and the flow resumes from where it stopped.
   stale destination — resume is the one sanctioned re-resolution
   point); `--decision` lands durably in the redrive packet; the
   occurrence's open items close with provenance; the trail is
-  preserved, never rewritten. THE LIVELOCK RAIL (migration 051):
+  preserved, never rewritten. For a dependency graph, `--occurrence <failed-qitem-id>`
+  selects the episode (required with several unresolved failures). Its resolution,
+  redrive packet/wake and exact instance/occurrence exception closure share one
+  transaction; siblings remain intact. An identical occurrence/decision retry
+  returns the existing redrive; changed decision bytes conflict without mutation.
+  THE LIVELOCK RAIL (migration 051):
   `hops_baseline` re-anchors the max_hops guard at resume so each
   redrive gets exactly one bounded window; `resume_count` is the
   recorded redrive fact; re-exceeding raises an honest NEW occurrence.

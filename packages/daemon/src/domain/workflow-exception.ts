@@ -5,12 +5,13 @@
 // agent judgment lives in RESOLVING, not detecting). Extending this taxonomy
 // is a convention change, not driver discretion.
 //
-//   (a) unmapped_failed — an instance entered status=failed. A MAPPED
+//   (a) unmapped_failed — an unhandled failed occurrence (a serial failed
+//       instance or one failed dependency branch). A MAPPED
 //       `failed` exit routes to its WF-2 remediation branch inside the same
 //       transaction (instance stays active) and is NOT an exception; only an
 //       unrouted failed close — including the engine-authored max_hops
-//       conversion — lands the instance in `failed`, so the recorded status
-//       IS the predicate.
+//       conversion — is an exception. Independent live branches need not
+//       stop for that occurrence to require an owner.
 //   (b) stuck_overdue — a frontier packet past its deadline AS CLASSIFIED BY
 //       WF-1 FR-2's evaluator (workflow-deadline.ts, the single threshold
 //       home). This module consumes the verdict verbatim and never
@@ -95,6 +96,15 @@ export interface FailedInstanceView {
  */
 export function classifyFailedInstance(view: FailedInstanceView): WorkflowException | null {
   if (view.instance.status !== "failed") return null;
+  return classifyFailureOccurrence(view);
+}
+
+/** Class (a) from a recorded unhandled failed close. Dependency callers have
+ * already classified the exit/route; another branch may keep the instance active.
+ * Mapped remediation exits must never call this occurrence constructor. */
+export function classifyFailureOccurrence(view: Omit<FailedInstanceView, "instance"> & {
+  instance: Pick<WorkflowInstance, "instanceId" | "workflowName">;
+}): WorkflowException {
   return {
     identity: {
       workflowName: view.instance.workflowName,

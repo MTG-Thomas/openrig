@@ -43,7 +43,7 @@ import {
   tryResolveRoleByCapability,
   type RoleResolutionContext,
 } from "./workflow-role-context.js";
-import { classifyFailedInstance, classifyGateTrip, workflowExceptionTags } from "./workflow-exception.js";
+import { classifyFailureOccurrence, classifyGateTrip, workflowExceptionTags } from "./workflow-exception.js";
 import { newQitemId, QueueRepositoryError } from "./queue-repository.js";
 import { resolveExceptionRoute } from "./workflow-exception-router.js";
 import { workflowHumanDestination, type WorkflowHumanDestination } from "./workflow-human-destination.js";
@@ -836,86 +836,9 @@ export class WorkflowProjector {
             reason: effectiveResultNote ?? "workflow_step_failed",
           }),
         );
-        // OPR.0.4.6.WF5 FR-2 class (a): the exception attention item is
-        // BORN IN THIS TRANSACTION — if this commit lands, the item
-        // exists; if anything throws, instance failure AND item roll
-        // back together. There is NO window where the instance is
-        // failed and no item exists (the load-bearing never-lost AC,
-        // target-independent at every dial position — hold-onto 1).
-        const exception = classifyFailedInstance({
-          instance: { ...instance, status: "failed" },
-          failedStepId: currentStep.id,
-          failedPacketId: input.currentPacketId,
-          failureReason: effectiveResultNote ?? null,
-        });
-        if (exception) {
-          const route = resolveExceptionRoute({
-            exceptionClass: exception.identity.exceptionClass,
-            spec,
-            hostDialDefault: this.exceptionDial?.hostDefault() ?? null,
-            // FAC-1 (arch Q3 — routing uniformity, bounded): declared
-            // preferred_targets stay the override; a bound instance's
-            // orchestrator-role dial position falls through to a
-            // capability pick on the bound rig (evidenced no-match →
-            // registered-human selection, with an explicit error if no
-            // human can be selected). Evidence-read failures propagate
-            // and roll back the close. Fresh decision per episode.
-            resolveRoleTarget: (role) =>
-              spec.roles?.[role]?.preferred_targets?.[0] ??
-              tryResolveRoleByCapability(roleCtx, role),
-            humanFallbackSeat: this.exceptionDial?.humanFallbackSeat,
-          });
-          const evidenceRef = `rig workflow trace ${instance.instanceId}`;
-          const itemBody =
-            `WORKFLOW EXCEPTION (${exception.identity.exceptionClass})\n` +
-            `workflow: ${instance.workflowName} v${instance.workflowVersion}\n` +
-            `instance: ${instance.instanceId}\n` +
-            `step: ${currentStep.id} (role ${currentStep.actor_role})\n` +
-            `reason: ${exception.reason}\n` +
-            `evidence: ${evidenceRef}\n` +
-            `resolve: diagnose via the trace above, then \`rig workflow resume ${instance.instanceId} [--decision <text>]\` re-drives from this step (completed steps never re-run).`;
-          const createExceptionItem = (destination: string, tier: string) =>
-            this.queueRepo.createWithinTransaction({
-              sourceSession: input.actorSession,
-              destinationSession: destination,
-              body: itemBody,
-              priority: "urgent",
-              tier,
-              tags: workflowExceptionTags(exception.identity),
-              summary: exception.reason,
-              evidenceRef,
-              chainOfRecord: [input.currentPacketId],
-            });
-          let createdException;
-          try {
-            createdException = createExceptionItem(route.destinationSession, route.tier);
-          } catch (error) {
-            if (!(error instanceof QueueRepositoryError) || error.code !== "unknown_destination_rig" || route.humanRouted) throw error;
-            // Only an unavailable agent rig invokes human selection. Other
-            // admission/storage failures propagate unchanged and roll back the
-            // close, retaining the failure+attention-item atomic contract.
-            createdException = createExceptionItem(
-              workflowHumanDestination(this.exceptionDial?.humanFallbackSeat),
-              "human-gate",
-            );
-          }
-          registerEvent(createdException.persistedEvent);
-          exceptionItemPostCommit = {
-            qitemId: createdException.qitemId,
-            destinationSession: createdException.destinationSession,
-            nudge: createdException.nudge,
-          };
-          // P34 (site :729, the FAILED branch): stage the exception item's wake
-          // intent inside this transaction. The never-lost AC already binds the
-          // ITEM to this commit; this binds its WAKE to the same commit.
-          this.queueRepo.stageWakeIntent(
-            createdException.qitemId,
-            input.actorSession,
-            createdException.destinationSession,
-            null,
-            createdException.nudge,
-          );
-        }
+        exceptionItemPostCommit = this.admitFailureException(
+          input, instance, spec, currentStep, effectiveResultNote ?? null, registerEvent,
+        );
       }
 
       // P34: the W1 seam, LAST statement of this transaction. The two successor
@@ -979,6 +902,77 @@ export class WorkflowProjector {
       nextStepId,
       emittedEventTypes: persistedEvents.map((e) => e.type),
     };
+  }
+
+  /** Failure, owning task and wake commit together on both executor paths.
+   * Caller invokes only for an unhandled failure, never mapped remediation. */
+  private admitFailureException(
+    input: ProjectStepInput,
+    instance: WorkflowInstance,
+    spec: WorkflowSpec,
+    currentStep: WorkflowStepSpec,
+    failureReason: string | null,
+    registerEvent: (event: PersistedEvent) => void,
+    occurrenceId?: string,
+  ): { qitemId: string; destinationSession: string; nudge: boolean | undefined } {
+    const exception = classifyFailureOccurrence({
+      instance, failedStepId: currentStep.id, failedPacketId: input.currentPacketId, failureReason,
+    });
+    const route = resolveExceptionRoute({
+      exceptionClass: exception.identity.exceptionClass,
+      spec,
+      hostDialDefault: this.exceptionDial?.hostDefault() ?? null,
+      // FAC-1 (arch Q3 — routing uniformity, bounded): declared
+      // preferred_targets stay the override; a bound instance's
+      // orchestrator-role dial position falls through to a
+      // capability pick on the bound rig (evidenced no-match →
+      // registered-human selection, with an explicit error if no
+      // human can be selected). Evidence-read failures propagate
+      // and roll back the close. Fresh decision per episode.
+      resolveRoleTarget: (role) =>
+        spec.roles?.[role]?.preferred_targets?.[0] ??
+        tryResolveRoleByCapability(roleResolutionContext(this.db, instance.boundRig), role),
+      humanFallbackSeat: this.exceptionDial?.humanFallbackSeat,
+    });
+    const evidenceRef = `rig workflow trace ${instance.instanceId}`;
+    const itemBody =
+      `WORKFLOW EXCEPTION (${exception.identity.exceptionClass})\n` +
+      `workflow: ${instance.workflowName} v${instance.workflowVersion}\n` +
+      `instance: ${instance.instanceId}\n` +
+      `step: ${currentStep.id} (role ${currentStep.actor_role})\n` +
+      `occurrence: ${input.currentPacketId}\n` +
+      `reason: ${exception.reason}\n` +
+      `evidence: ${evidenceRef}\n` +
+      `resolve: diagnose via the trace above, then \`rig workflow resume ${instance.instanceId}${occurrenceId ? ` --occurrence ${occurrenceId}` : ""} [--decision <text>]\` re-drives from this step (completed steps never re-run).`;
+    const createExceptionItem = (destination: string, tier: string) =>
+      this.queueRepo.createWithinTransaction({
+        sourceSession: input.actorSession,
+        destinationSession: destination,
+        body: itemBody,
+        priority: "urgent",
+        tier,
+        tags: workflowExceptionTags(exception.identity),
+        summary: exception.reason,
+        evidenceRef,
+        chainOfRecord: [input.currentPacketId],
+      });
+    let createdException;
+    try {
+      createdException = createExceptionItem(route.destinationSession, route.tier);
+    } catch (error) {
+      if (!(error instanceof QueueRepositoryError) || error.code !== "unknown_destination_rig" || route.humanRouted) throw error;
+      // Only an unavailable agent rig invokes human selection. Other
+      // admission/storage failures propagate unchanged and roll back the
+      // close, retaining the failure+attention-item atomic contract.
+      createdException = createExceptionItem(
+        workflowHumanDestination(this.exceptionDial?.humanFallbackSeat),
+        "human-gate",
+      );
+    }
+    registerEvent(createdException.persistedEvent);
+    this.queueRepo.stageWakeIntent(createdException.qitemId, input.actorSession,
+      createdException.destinationSession, null, createdException.nudge);
+    return { qitemId: createdException.qitemId, destinationSession: createdException.destinationSession, nudge: createdException.nudge };
   }
 
   private async projectDependencyGraph(args: {
@@ -1067,6 +1061,7 @@ export class WorkflowProjector {
 
     const evaluatedAt = this.now().toISOString();
     const emitted: PersistedEvent[] = [];
+    let exceptionWake: ReturnType<WorkflowProjector["admitFailureException"]> | null = null;
     const createdPackets: Array<{ qitemId: string; step: WorkflowStepSpec; owner: string; nudge: boolean | undefined; blocked: boolean }> = [];
     this.eventBus.withNotifyEnvelope((register) => {
       const addEvent = (event: PersistedEvent): void => { emitted.push(event); register(event); };
@@ -1202,6 +1197,9 @@ export class WorkflowProjector {
           hopsBaseline: packetBinding.hopsBaseline,
           failureReason: effectiveResultNote ?? null,
         });
+        exceptionWake = this.admitFailureException(
+          input, instance, spec, currentStep, effectiveResultNote ?? null, addEvent, input.currentPacketId,
+        );
       }
 
       const remainingFrontier = instance.currentFrontier.filter((packetId) => packetId !== input.currentPacketId);
@@ -1245,8 +1243,15 @@ export class WorkflowProjector {
       } else if (nextStatus === "failed") {
         addEvent(this.eventBus.persistWithinTransaction({ type: "workflow.failed", instanceId: instance.instanceId, workflowName: instance.workflowName, reason: effectiveResultNote ?? "workflow_step_failed" }));
       }
+      if (exceptionWake) this.queueRepo.assertTerminalClosureHasIntent(
+        input.currentPacketId, exceptionWake.qitemId, exceptionWake.nudge,
+      );
     });
 
+    const failureWake = exceptionWake as ReturnType<WorkflowProjector["admitFailureException"]> | null;
+    if (failureWake) await this.queueRepo.deliverWakeForSuccessor(
+      failureWake.qitemId, failureWake.destinationSession, failureWake.nudge, input.actorSession,
+    );
     for (const created of createdPackets) {
       await this.queueRepo.deliverWakeForSuccessor(created.qitemId, created.owner, created.nudge, input.actorSession);
     }

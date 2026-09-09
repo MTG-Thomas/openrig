@@ -215,8 +215,12 @@ cheaper than being it.
   does not continue anything**, despite the name — `project` is the advance verb.
 - **`rig workflow route`** — the owner of the current step is gone; move *that step* to a live seat
   without pretending it completed.
-- **`rig workflow resume`** — the instance failed, you fixed the cause, redrive from the broken
-  step rather than re-running what already succeeded.
+- **`rig workflow resume`** — after correcting a failure, redrive its step while retaining
+  completed work. A dependency branch can fail while siblings remain live. Use
+  `--occurrence <failed-qitem-id>` to select that failure (required when several are
+  unresolved); its obsolete exception obligation closes in the redrive transaction,
+  while unresolved siblings stay visible. An identical occurrence/decision retry returns
+  the existing redrive without duplicating work.
 - **`rig workflow run` / `watch` / `list`** — run to completion with an exit code you can act on,
   watch it happen, or see what exists.
 
