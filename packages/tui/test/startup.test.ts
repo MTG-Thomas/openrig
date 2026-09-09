@@ -89,6 +89,13 @@ describe("TUI startup choices", () => {
     await f.controller.key("f"); await f.controller.key("r"); await f.controller.key("y");
     expect(f.posts).toEqual([]);
   });
+  it("shows fresh confirmation and decline on an 80x24 screen even with a long instance path", async () => {
+    const f = fixture(); await chooseOperator(f); await f.controller.key("f");
+    f.controller.state.home = "/long-instance".repeat(20);
+    const screen = renderScreen(createViewState({ instanceId: "test" }).get(), emptySnapshot(), { cols: 80, rows: 24, startup: f.controller.state });
+    expect(screen.lines.join("\n")).toContain("Confirm this fresh start");
+    expect(screen.lines.join("\n")).toContain("Decline; leave stopped");
+  });
   it("one confirmation sends the exact seat/revision once despite repeated input", async () => {
     const f = fixture(); await chooseOperator(f);
     let finish!: (value: Response) => void;

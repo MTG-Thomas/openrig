@@ -60,6 +60,10 @@
     "./health-detectors": {
       "types": "./dist/health-detectors-surface.d.ts",
       "import": "./dist/health-detectors-surface.js"
+    },
+    "./local-reading": {
+      "types": "./dist/local-reading-surface.d.ts",
+      "import": "./dist/local-reading-surface.js"
     }
   },
   "scripts": {

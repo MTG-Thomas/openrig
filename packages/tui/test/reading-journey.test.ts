@@ -72,6 +72,8 @@ describe("current-file reading through real routes and TUI state", () => {
     open({ root: "project", path: "docs/chapter.md" }); await refresh(); draw();
     view.dispatch({ type: "content-scroll", delta: 25 }); draw();
     const caller = view.get();
+    view.dispatch({ type: "time-setting", timeZone: "Europe/London", timeZoneWarning: null });
+    expect(view.get()).toMatchObject({ file: caller.file, contentOffset: caller.contentOffset, history: caller.history, timeZone: "Europe/London" });
     view.dispatch(referenceAction(caller.file!, "../outline.md")); await refresh();
     expect(draw().lines.join("\n")).toContain("Current outline.");
     back(); draw(); // previous file response must not clamp the restored bookmark
@@ -102,6 +104,10 @@ describe("current-file reading through real routes and TUI state", () => {
   it("labels binary and truncated content without presenting them as complete text", async () => {
     writeFileSync(join(root, "binary.dat"), Buffer.from([0, 1, 2, 255]));
     open({ root: "project", path: "binary.dat" }); await refresh(); expect(draw().lines.join("\n")).toContain("Binary / non-UTF-8");
+    writeFileSync(join(root, "non-utf8.dat"), Buffer.from([255, 128, 42]));
+    open({ root: "project", path: "non-utf8.dat" }); await refresh();
+    expect(snap.fileRead!.result).toHaveProperty("binary", true);
+    expect(draw().lines.join("\n")).toContain("Binary / non-UTF-8");
     writeFileSync(join(root, "large.md"), "A paragraph.\n".repeat(100000));
     open({ root: "project", path: "large.md", anchor: "beyond-prefix" }); await refresh();
     const lines = fileLines(snap.fileRead!.result, view.get().file!, 100).map((line) => line.text).join("\n");

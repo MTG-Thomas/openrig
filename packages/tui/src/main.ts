@@ -28,6 +28,7 @@ import { driveRestoreLifecycle, buildRestoreLifecycleVM } from "./crash-cart/res
 import { restoreKeyAction, type RestoreInputEvent } from "./crash-cart/restore-input.js";
 import { evaluateOneClickGate, restoreConfirmMessage } from "./crash-cart/one-click-gate.js";
 import { daemonStartArgs } from "./crash-cart/start-daemon.js";
+import { readLocal } from "./local-reading.js";
 import { StartupController } from "./startup.js";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -54,15 +55,14 @@ async function run(): Promise<void> {
   // as named readErrors in the status line, never fabricated content).
   let snapshot: FleetSnapshot = demo ? demoSnapshot() : emptySnapshot();
   let timeReadWarning = false;
-  const timeSetting = await new Promise<unknown>((resolve) => {
+  const timeSetting = new Promise<unknown>((resolve) => {
     execFile(cliExecutable, cliArgs(["config", "get", "ui.timezone", "--json"]), { timeout: 5000, maxBuffer: 8192 }, (err, stdout, stderr) => {
       timeReadWarning = !!err || stderr.includes("ui.timezone");
       if (err) return resolve(null);
       try { resolve(JSON.parse(stdout).value); } catch { resolve(null); }
     });
   });
-  const timezone = resolveTimeZone(timeSetting, timeReadWarning);
-  const view = createViewState({ instanceId, getSnapshot: () => snapshot, timeZone: timezone.timeZone, timeZoneWarning: timezone.warning });
+  const view = createViewState({ instanceId, getSnapshot: () => snapshot, timeZoneWarning: "Reading configured timezone…" });
   let startupHeaders: () => Record<string, string> = () => ({});
   if (cliEntry) {
     try {
@@ -122,18 +122,29 @@ async function run(): Promise<void> {
   // Notification-only; the refresh rehydrates the same ps projection through the
   // daemon client (one oracle, with the owner's bounded quiet fallback; HTTP stays
   // in the client module).
-  const activityEvents = live && client
-    ? subscribeActivityEvents({ open: () => client.openActivityEvents(), onEvent: (event) => { if (event.type.startsWith("proof.")) reviewCache.clear(); void live.invalidate(); }, onStatus: (status) => live.connectionStatus(status) })
-    : null;
+  let liveEnabled = false;
+  let activityEvents: ReturnType<typeof subscribeActivityEvents> | null = null;
+  function enableLive(): boolean {
+    if (!live || !client || startup?.state.connection !== "up") return false;
+    liveEnabled = true;
+    activityEvents ??= subscribeActivityEvents({ open: () => client.openActivityEvents(), onEvent: (event) => { if (event.type.startsWith("proof.")) reviewCache.clear(); void live.invalidate(); }, onStatus: (status) => live.connectionStatus(status) });
+    return true;
+  }
+  function commandContext() {
+    return currentCommandContext(startup && startup.state.connection !== "up" ? "unverified" : crashCartOpts.daemonState ?? null);
+  }
 
   function draw(): void {
     if (nativeAttached) return;
     const cols = process.stdout.columns ?? 120;
     const rows = process.stdout.rows ?? 32;
     const nowMs = Date.now();
-    if (live) snapshot = { ...live.snapshot(), launchingCli: process.env["OPENRIG_TUI_CLI_IDENTITY"]?.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) };
-    const opts = { cols, rows, nowMs, completion, colorMode: style.mode, commandContext: currentCommandContext(crashCartOpts.daemonState ?? null), ...crashCartOpts, ...(startup?.state.open ? { startup: startup.state } : {}), restoreScroll: restoreScrollOffset, ...(live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
+    if (live) snapshot = { ...live.snapshot(),
+      ...(!liveEnabled ? { readErrors: [`Live data not loaded · connection ${startup?.state.connection ?? "probing"} · L Local reading · S Startup`] } : {}),
+      launchingCli: process.env["OPENRIG_TUI_CLI_IDENTITY"]?.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) };
+    const opts = { cols, rows, nowMs, completion, colorMode: style.mode, commandContext: commandContext(), ...crashCartOpts, ...(startup?.state.open && !view.get().palette ? { startup: startup.state } : {}), restoreScroll: restoreScrollOffset, ...(liveEnabled && live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
     lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
+    if (startup?.state.local) startup.state.local.scroll = Math.min(startup.state.local.scroll, lastScreen.contentMaxOffset);
     if (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length) {
       view.dispatch({ type: "layout", contentMaxOffset: lastScreen.contentMaxOffset, contentTargetCount: lastScreen.contentTargets.length });
       lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
@@ -165,6 +176,8 @@ async function run(): Promise<void> {
       });
     }),
     onChange: draw,
+    onHelp: () => { view.dispatch({ type: "palette-open" }); draw(); },
+    readLocal: (request) => readLocal(cliEntry, request),
     onNative: async (seat) => {
       if (!cliEntry || !["localhost", "127.0.0.1", "[::1]"].includes(new URL(client.baseUrl).hostname)) {
         throw new Error("Native terminal access requires this TUI on the selected daemon's machine.");
@@ -186,6 +199,9 @@ async function run(): Promise<void> {
     },
     onWork: async (rig, seat) => {
       crashCartOpts = {};
+      view.dispatch({ type: "notice", message: "Startup skipped · ? Help · L Local reading · S Startup / recovery. Live data waits for a confirmed connection." });
+      draw();
+      if (!enableLive()) return;
       await live?.refresh();
       const current = live?.snapshot() ?? snapshot;
       const host = current.hosts.find((host) => host.rigs.some((entry) => entry.id === rig?.rigId));
@@ -319,7 +335,7 @@ async function run(): Promise<void> {
   }
 
   function refreshFromActivity(): void {
-    if (live) void live.refresh();
+    if (enableLive()) void live?.refresh();
   }
 
   const socketPath = argOf(args, "--socket") ?? defaultSocketPath(instanceId);
@@ -330,14 +346,14 @@ async function run(): Promise<void> {
       draw();
       refreshFromActivity();
     },
-    currentContext: () => currentCommandContext(crashCartOpts.daemonState ?? null),
+    currentContext: () => commandContext(),
   });
 
   // Acts are drive-structure daemon WRITES (BR-8/BR-9) — executed here against
   // the two existing contracts; the view-state is only told the outcome.
   async function executeAct(action: Extract<Action, { type: "act" }>): Promise<void> {
-    if (!client) {
-      view.dispatch({ type: "notice", message: "demo mode: actions disabled" });
+    if (!client || startup?.state.connection !== "up") {
+      view.dispatch({ type: "notice", message: "Live actions require a confirmed daemon connection. S opens startup; L opens local reading." });
       draw();
       return;
     }
@@ -365,8 +381,11 @@ async function run(): Promise<void> {
       void executeAct(action);
       return;
     }
+    if (startup?.state.open && !["palette-open", "palette-close", "notice", "error", "time-setting"].includes(action.type)) {
+      startup.state.open = false; startup.state.consent = undefined;
+    }
     view.dispatch(action);
-    refreshFromActivity();
+    if (!["palette-open", "palette-close", "time-setting"].includes(action.type)) refreshFromActivity();
   }
 
   async function shutdown(): Promise<void> {
@@ -387,7 +406,7 @@ async function run(): Promise<void> {
   function handleInput(events: ReturnType<typeof inputDecoder.write>): void {
     if (nativeAttached) return;
     for (const ev of events) {
-      if (startup?.state.open) {
+      if (startup?.state.open && !view.get().palette) {
         if (ev.type === "char" && ev.ch === "q") { void shutdown(); return; }
         if (ev.type === "char") void startup.key(ev.ch);
         else if (ev.type === "key") void startup.key(ev.key);
@@ -397,7 +416,10 @@ async function run(): Promise<void> {
         }
         continue;
       }
-      if (ev.type === "char" && ev.ch === "S" && inputLine === "") { void startup?.open(); continue; }
+      if (!view.get().palette && ev.type === "char" && inputLine === "") {
+        if (ev.ch === "S") { void startup?.open(); continue; }
+        if (ev.ch === "L" && startup) { startup.state.open = true; void startup.key("L"); continue; }
+      }
       if (crashCartOpts.unavailable && !crashCartOpts.restore) {
         if (ev.type === "char" && ev.ch === "q") { void shutdown(); return; }
         if (ev.type === "char") {
@@ -434,7 +456,7 @@ async function run(): Promise<void> {
           continue;
         }
         if (ev.type === "key" && ev.key === "enter") {
-          const rows = filterPalette(pal.query, COMMAND_REGISTRY, currentCommandContext(crashCartOpts.daemonState ?? null));
+          const rows = filterPalette(pal.query, COMMAND_REGISTRY, commandContext());
           const row = rows[Math.min(pal.selection, Math.max(0, rows.length - 1))];
           view.dispatch({ type: "palette-close" });
           if (row && row.available) {
@@ -496,7 +518,7 @@ async function run(): Promise<void> {
       }
       if (ev.type === "key" && ev.key === "tab") {
         if (!crashCartOpts.daemonState) {
-          completion = completeCommand(inputLine, { state: view.get(), snapshot }, currentCommandContext(crashCartOpts.daemonState ?? null));
+          completion = completeCommand(inputLine, { state: view.get(), snapshot }, commandContext());
           inputLine = completion.line;
         }
         continue;
@@ -612,7 +634,11 @@ async function run(): Promise<void> {
   // A merely-open TUI must impose no steady-state fleet load. The initial
   // hydrate establishes honest state; navigation, commands, and socket-driven
   // mutations request later truth through the same single-flight owner.
-  if (live) void live.refresh();
+  // Optional data and event subscriptions start only on confirmed live entry.
+  void timeSetting.then((setting) => {
+    const timezone = resolveTimeZone(setting, timeReadWarning);
+    view.dispatch({ type: "time-setting", timeZone: timezone.timeZone, timeZoneWarning: timezone.warning }); draw();
+  });
 }
 
 run().catch((err: unknown) => {

@@ -113,6 +113,8 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
       return { ...resetContent({ ...next, file: action.target, externalUrl: null, healthOpen: null, recentOpen: null, timeZoneHelp: false }), focusedPane: "content" };
     case "external-open":
       return { ...resetContent({ ...next, externalUrl: action.url, file: null, healthOpen: null, recentOpen: null, timeZoneHelp: false }), focusedPane: "content" };
+    case "time-setting":
+      return { ...state, timeZone: action.timeZone, timeZoneWarning: action.timeZoneWarning };
     case "timezone":
       return resetContent({ ...next, timeZoneHelp: true, viewTab: "table", healthOpen: null });
     case "recent-open": {

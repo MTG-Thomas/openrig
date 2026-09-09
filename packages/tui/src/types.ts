@@ -410,6 +410,7 @@ export type Action =
   | { type: "file-open"; target: import("./reading.js").FileTarget }
   | { type: "external-open"; url: string }
   | { type: "startup"; key: string }
+  | { type: "time-setting"; timeZone: string; timeZoneWarning: string | null }
   | { type: "timezone" }
   | { type: "recent-open"; transitionId: number }
   | { type: "back" }
