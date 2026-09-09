@@ -1,3 +1,4 @@
+import { mockShellCommand } from "./helpers/shell-command-mock.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createFullTestDb } from "./helpers/test-app.js";
@@ -430,7 +431,7 @@ describe("CodexRuntimeAdapter.launchHarness fork branch", () => {
       getPanePid: vi.fn(async () => 900),
     } as unknown as TmuxAdapter;
     const adapter = new CodexRuntimeAdapter({
-      tmux,
+      tmux: mockShellCommand(tmux),
       fsOps: makeMinimalCodexFs(),
       listProcesses: () => [
         { pid: 900, ppid: 1, command: "-zsh" },
@@ -500,7 +501,7 @@ describe("CodexRuntimeAdapter.launchHarness fork branch", () => {
     }
   });
 
-  it("dismisses Codex hook review prompt during fork by sending '2' (Trust all)", async () => {
+  it("preserves Codex hook review consent during fork", async () => {
     const hookReviewContent = [
       "Hooks need review",
       "3 hooks are new or changed.",
@@ -529,7 +530,7 @@ describe("CodexRuntimeAdapter.launchHarness fork branch", () => {
     } as unknown as TmuxAdapter;
 
     const adapter = new CodexRuntimeAdapter({
-      tmux,
+      tmux: mockShellCommand(tmux),
       fsOps: makeMinimalCodexFs(),
       listProcesses: () => [
         { pid: 900, ppid: 1, command: "-zsh" },
@@ -552,10 +553,10 @@ describe("CodexRuntimeAdapter.launchHarness fork branch", () => {
 
     const sendTextCalls = (tmux.sendText as ReturnType<typeof vi.fn>).mock.calls;
     const trustDismissal = sendTextCalls.find((c) => c[1] === "2");
-    expect(trustDismissal).toBeDefined();
+    expect(trustDismissal).toBeUndefined();
   });
 
-  it("dismisses delayed hook-trust gate surfacing during captureFreshThreadId polling", async () => {
+  it("preserves delayed hook-trust consent while waiting for a new fork identity", async () => {
     const hookReviewContent = [
       "Hooks need review",
       "3 hooks are new or changed.",
@@ -589,7 +590,7 @@ describe("CodexRuntimeAdapter.launchHarness fork branch", () => {
     } as unknown as TmuxAdapter;
 
     const adapter = new CodexRuntimeAdapter({
-      tmux,
+      tmux: mockShellCommand(tmux),
       fsOps: makeMinimalCodexFs(),
       listProcesses: () => [
         { pid: 900, ppid: 1, command: "-zsh" },
@@ -604,15 +605,13 @@ describe("CodexRuntimeAdapter.launchHarness fork branch", () => {
       forkSource: { kind: "native_id", value: "PARENT-DELAYED" },
     });
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.resumeToken).toBe("DELAYED-TRUST-THREAD");
-      expect(result.resumeType).toBe("codex_id");
-    }
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("could not capture new post-fork thread id");
+    expect(threadIdAvailable).toBe(false);
 
     const sendTextCalls = (tmux.sendText as ReturnType<typeof vi.fn>).mock.calls;
     const trustDismissal = sendTextCalls.find((c) => c[1] === "2");
-    expect(trustDismissal).toBeDefined();
+    expect(trustDismissal).toBeUndefined();
   });
 });
 

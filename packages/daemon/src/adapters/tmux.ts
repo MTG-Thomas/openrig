@@ -11,7 +11,7 @@ export type ExecFn = (cmd: string) => Promise<string>;
  * without touching the real filesystem; production wires node fs + os.tmpdir.
  */
 export interface TmuxFileOps {
-  writeFile(path: string, content: string): Promise<void>;
+  writeFile(path: string, content: string, options?: { mode: number; flag: "wx" }): Promise<void>;
   unlink(path: string): Promise<void>;
   /** Unique temp-file path per call - parallel `rig up` stands up many seats. */
   tmpName(): string;
@@ -21,7 +21,7 @@ export interface TmuxFileOps {
 
 function defaultTmuxFileOps(): TmuxFileOps {
   return {
-    writeFile: (p, content) => fsWriteFile(p, content, "utf8"),
+    writeFile: (p, content, options) => fsWriteFile(p, content, { encoding: "utf8", ...options }),
     unlink: (p) => fsUnlink(p),
     tmpName: () => pathJoin(tmpdir(), `openrig-tmux-send-${process.pid}-${randomUUID()}.txt`),
     bufferName: () => `openrig_${process.pid}_${randomUUID().replace(/-/g, "")}`,
@@ -380,6 +380,43 @@ export class TmuxAdapter {
       try {
         await this.fileOps.unlink(path);
       } catch { /* best-effort cleanup */ }
+    }
+  }
+
+  /**
+   * Launch a POSIX command in an empty shell. A newly created pane can still
+   * be in canonical input mode: on macOS it silently drops input beyond 1024
+   * bytes, even when paste-buffer succeeds. Only a short invocation crosses
+   * that boundary; the command's PATH, quoting and arguments travel in a file.
+   * The shell removes its private script when consumed (not when pasted).
+   * A shell that never consumes the invocation leaves the file for diagnosis.
+   */
+  async sendShellCommand(target: string, command: string): Promise<TmuxResult> {
+    const path = this.fileOps.tmpName();
+    const invocation = `/bin/sh ${shellQuote(path)}`;
+    if (Buffer.byteLength(invocation, "utf8") > 512) {
+      return { ok: false, code: "launch_path_too_long", message: "Temporary launch-script path exceeds the safe terminal input bound" };
+    }
+    let created = false;
+    try {
+      await this.fileOps.writeFile(path, `/bin/rm -f -- ${shellQuote(path)}\n${command}\n`, { mode: 0o600, flag: "wx" });
+      created = true;
+      const text = await this.sendText(target, invocation);
+      if (!text.ok) return text;
+      const enter = await this.sendKeys(target, ["Enter"]);
+      if (!enter.ok) {
+        await this.sendKeys(target, ["C-c"]);
+        return enter;
+      }
+      // The receiver now owns removal. Unlinking here races shell startup.
+      created = false;
+      return { ok: true };
+    } catch (err) {
+      return classifyWriteError(err);
+    } finally {
+      if (created) {
+        try { await this.fileOps.unlink(path); } catch { /* best-effort cleanup */ }
+      }
     }
   }
 

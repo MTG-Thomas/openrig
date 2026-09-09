@@ -1,3 +1,4 @@
+import { mockShellCommand } from "./shell-command-mock.js";
 import { vi } from "vitest";
 import type Database from "better-sqlite3";
 import { createDb } from "../../src/db/connection.js";
@@ -168,7 +169,7 @@ export function createFullTestDb(): Database.Database {
 }
 
 export function mockTmuxAdapter(): TmuxAdapter {
-  return {
+  return mockShellCommand({
     createSession: vi.fn(async () => ({ ok: true as const })),
     killSession: vi.fn(async () => ({ ok: true as const })),
     listSessions: vi.fn(async () => []),
@@ -182,7 +183,7 @@ export function mockTmuxAdapter(): TmuxAdapter {
     startPipePane: vi.fn(async () => ({ ok: true as const })),
     setSessionOption: vi.fn(async () => ({ ok: true as const })),
     getSessionOption: vi.fn(async () => null),
-  } as unknown as TmuxAdapter;
+  } as unknown as TmuxAdapter);
 }
 
 export function unavailableCmuxAdapter(): CmuxAdapter {

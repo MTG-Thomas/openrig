@@ -1,3 +1,4 @@
+import { mockShellCommand } from "./helpers/shell-command-mock.js";
 // OPR.0.4.8.3 Seam B — Guard-correction lifecycle pins (NOT-CLEAR at 9e94c274), RED-first.
 // Production-altitude proofs for the four findings:
 //   F1: rig-level custom provenance is restart-complete (organic seats, structured
@@ -85,7 +86,7 @@ function rigLevelSpec(extraMembers: Record<string, unknown>[] = []): Record<stri
 }
 
 function mockTmux(): TmuxAdapter {
-  return {
+  return mockShellCommand({
     createSession: vi.fn(async () => ({ ok: true as const })),
     killSession: vi.fn(async () => ({ ok: true as const })),
     sendText: vi.fn(async () => ({ ok: true as const })),
@@ -96,7 +97,7 @@ function mockTmux(): TmuxAdapter {
     listWindows: vi.fn(async () => []),
     listPanes: vi.fn(async () => []),
     hasSession: vi.fn(async () => false),
-  } as unknown as TmuxAdapter;
+  } as unknown as TmuxAdapter);
 }
 
 describe("F1 — rig-level custom provenance is RESTART-COMPLETE", () => {
@@ -531,6 +532,7 @@ describe("GF2 — the COMPLETE production-altitude launch/restore matrix", () =>
         const tmux = mockTmux();
         const adapter = new RealCodexResume(tmux, { sleep: async () => {} });
         (tmux.getPaneCommand as ReturnType<typeof vi.fn>).mockResolvedValue("codex");
+        (tmux.capturePaneContent as ReturnType<typeof vi.fn>).mockResolvedValue("OpenAI Codex (v0.0.0)\n› Ask Codex to do anything");
         const result = await adapter.resume("s1", "codex_id", "thread-1", "/w", null, posture);
         const cmd = (tmux.sendText as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
         expect(cmd).toContain("codex");

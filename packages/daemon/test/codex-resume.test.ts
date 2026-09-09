@@ -1,3 +1,4 @@
+import { mockShellCommand } from "./helpers/shell-command-mock.js";
 import { describe, it, expect, vi } from "vitest";
 import { CodexResumeAdapter } from "../src/adapters/codex-resume.js";
 import type { TmuxAdapter, TmuxResult } from "../src/adapters/tmux.js";
@@ -15,13 +16,12 @@ function mockTmux(overrides?: {
   getPaneCommand?: (target: string) => Promise<string | null>;
   capturePaneContent?: (target: string, lines?: number) => Promise<string | null>;
 }) {
-  return {
+  const tmux = {
     sendText: overrides?.sendText ?? vi.fn(async () => ({ ok: true as const })),
     sendKeys: overrides?.sendKeys ?? vi.fn(async () => ({ ok: true as const })),
-    // Default verifyResume probe: pane shows codex foreground process so
-    // assessNativeResumeProbe returns resumed/active_runtime on first attempt.
+    // A ready prompt corroborates the foreground process; process name alone is insufficient.
     getPaneCommand: overrides?.getPaneCommand ?? vi.fn(async () => "codex"),
-    capturePaneContent: overrides?.capturePaneContent ?? vi.fn(async () => ""),
+    capturePaneContent: overrides?.capturePaneContent ?? vi.fn(async () => "OpenAI Codex (v0.0.0)\n› Ask Codex to do anything"),
     createSession: async () => ({ ok: true as const }),
     killSession: async () => ({ ok: true as const }),
     listSessions: async () => [],
@@ -29,6 +29,7 @@ function mockTmux(overrides?: {
     listPanes: async () => [],
     hasSession: async () => false,
   } as unknown as TmuxAdapter;
+  return mockShellCommand(tmux);
 }
 
 describe("CodexResumeAdapter", () => {
@@ -194,9 +195,16 @@ describe("CodexResumeAdapter", () => {
   describe("verifyResume", () => {
     const fastOptions = { pollMs: 1, maxWaitMs: 5, sleep: async () => {} };
 
-    it("probe returns resumed (codex foreground) -> { ok: true }", async () => {
+    it("does not claim readiness from a Codex process name alone", async () => {
+      const adapter = new CodexResumeAdapter(mockTmux({
+        getPaneCommand: async () => "codex", capturePaneContent: async () => "",
+      }), fastOptions);
+      expect(await adapter.resume("pane", "codex_id", "same-id", "/repo")).toMatchObject({ ok: false, code: "resume_failed" });
+    });
+
+    it("probe returns resumed (codex foreground and ready prompt) -> { ok: true }", async () => {
       const getPaneCommand = vi.fn(async () => "codex");
-      const capturePaneContent = vi.fn(async () => "");
+      const capturePaneContent = vi.fn(async () => "OpenAI Codex (v0.0.0)\n› Ask Codex to do anything");
       const adapter = new CodexResumeAdapter(
         mockTmux({ getPaneCommand, capturePaneContent }),
         fastOptions,
@@ -278,12 +286,12 @@ describe("CodexResumeAdapter", () => {
       }
     });
 
-    it("polls until resumed: first inconclusive, then codex foreground -> { ok: true }", async () => {
+    it("polls until resumed: first inconclusive, then Codex ready prompt -> { ok: true }", async () => {
       let attempt = 0;
       const adapter = new CodexResumeAdapter(
         mockTmux({
           getPaneCommand: async () => (attempt++ === 0 ? "node" : "codex"),
-          capturePaneContent: async () => "",
+          capturePaneContent: async () => attempt > 1 ? "OpenAI Codex (v0.0.0)\n› Ask Codex to do anything" : "",
         }),
         { pollMs: 1, maxWaitMs: 50, sleep: async () => {} },
       );
@@ -329,16 +337,14 @@ describe("CodexResumeAdapter", () => {
       const adapter = new CodexResumeAdapter(
         mockTmux({
           getPaneCommand: async () => "codex",
-          capturePaneContent: async () => "debug: access token could not be refreshed (retrying...)",
+          capturePaneContent: async () => "debug: access token could not be refreshed (retrying...)\nOpenAI Codex (v0.0.0)\n› Ask Codex to do anything",
         }),
         fastOptions,
       );
 
       const result = await adapter.resume("r99-demo1-impl", "codex_id", "uuid-123", "/repo");
 
-      // Probe should fall through to inconclusive (paneCommand=codex still
-      // returns active_runtime / resumed); auth-refusal pattern requires
-      // both anchors.
+      // A ready prompt is still present; the auth-refusal pattern requires both anchors.
       expect(result.ok).toBe(true);
     });
   });

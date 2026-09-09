@@ -1,3 +1,4 @@
+import { mockShellCommand } from "./helpers/shell-command-mock.js";
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
@@ -19,7 +20,7 @@ const CODEX_FLOOR_EFFECT = {
 } as const;
 
 function mockTmux(overrides?: Partial<TmuxAdapter>): TmuxAdapter {
-  return {
+  const tmux = {
     sendText: vi.fn(async () => ({ ok: true as const })),
     hasSession: vi.fn(async () => true),
     getPaneCommand: vi.fn(async () => "codex"),
@@ -33,6 +34,7 @@ function mockTmux(overrides?: Partial<TmuxAdapter>): TmuxAdapter {
     getPanePid: vi.fn(async () => null),
     ...overrides,
   } as unknown as TmuxAdapter;
+  return mockShellCommand(tmux);
 }
 
 function mockFs(files?: Record<string, string>): CodexAdapterFsOps {
