@@ -1,3 +1,4 @@
+import { delegatedPostureFixture } from "./helpers/delegated-posture.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,7 +44,7 @@ async function setup(count = 30) {
   for (let i = 1; i < count; i++) db.prepare("INSERT INTO queue_transitions(qitem_id,ts,state,actor_session) VALUES(?,?,?,?)").run(row.qitemId, new Date(Date.parse(now) + i * 1000).toISOString(), "in-progress", "builder@rig");
   now = new Date(Date.parse(now) + count * 1000).toISOString();
   const source = new PassiveCeremonySource(workspace, queue, policy, () => now);
-  const projection = new HealthProjectionService(source, () => policy.read());
+  const projection = new HealthProjectionService(source, () => policy.read(), delegatedPostureFixture);
   const checkpoints = new HealthCheckpointSource(home, queue, policy, () => now, workspace);
   let ready = false;
   const readiness = vi.fn(async () => ({ ready, reason: "isolated fixture readiness" }));

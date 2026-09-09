@@ -280,6 +280,7 @@ export interface HealthEvidenceReference {
 }
 
 export interface HealthRecord {
+  operatingPosture?: import("@openrig/daemon/health-projection").OperatingPosture;
   /** Passed through from the daemon; the TUI never derives confirmation. */
   ceremony?: {
     stage: "needs-diagnosis" | "confirmed" | "cleared" | "indeterminate";

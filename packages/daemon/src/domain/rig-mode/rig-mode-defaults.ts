@@ -46,6 +46,24 @@ export interface RecommendedModeDefaults {
 }
 
 export const RECOMMENDED_MODE_DEFAULTS: Record<OperatorContextMode, RecommendedModeDefaults> = {
+  "human-led": {
+    autonomy_scope: "pre_approved_only",
+    heartbeat_cadence: "normal",
+    inspection_depth: "normal",
+    update_detail: "normal",
+    escalation_threshold: "normal",
+    concurrency_limit: "unlimited",
+    permission_prompt_posture: "normal",
+  },
+  delegated: {
+    autonomy_scope: "bounded_continuation",
+    heartbeat_cadence: "normal",
+    inspection_depth: "normal",
+    update_detail: "normal",
+    escalation_threshold: "normal",
+    concurrency_limit: "unlimited",
+    permission_prompt_posture: "normal",
+  },
   sleep: {
     autonomy_scope: "pre_approved_only",
     heartbeat_cadence: "sparse",
@@ -111,6 +129,8 @@ export const RECOMMENDED_MODE_DEFAULTS: Record<OperatorContextMode, RecommendedM
  * authoritative.
  */
 export const RECOMMENDED_DEFAULT_SCOPE: Record<OperatorContextMode, OperatorContextScope> = {
+  "human-led": "rig",
+  delegated: "rig",
   sleep: "global_host",
   away: "global_host",
   desk: "global_host",

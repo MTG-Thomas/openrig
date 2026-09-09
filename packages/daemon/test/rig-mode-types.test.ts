@@ -17,7 +17,7 @@ import {
 
 describe("rig-mode types — slice 09 frozen contract", () => {
   // HG-1 — six modes, exact, reserved, closed.
-  it("HG-1: exposes exactly the six reserved mode names (lowercase single words)", () => {
+  it("HG-1: exposes legacy and explicit operating-posture mode names", () => {
     expect([...OPERATOR_CONTEXT_MODES]).toEqual([
       "sleep",
       "desk",
@@ -25,9 +25,11 @@ describe("rig-mode types — slice 09 frozen contract", () => {
       "away",
       "focus",
       "debug",
+      "human-led",
+      "delegated",
     ]);
     for (const m of OPERATOR_CONTEXT_MODES) {
-      expect(m).toMatch(/^[a-z]+$/);
+      expect(m).toMatch(/^[a-z]+(?:-[a-z]+)?$/);
     }
   });
 
@@ -56,10 +58,12 @@ describe("rig-mode types — slice 09 frozen contract", () => {
   });
 
   // HG-3 — four scopes, exact, reserved.
-  it("HG-3: exposes exactly the four reserved scope names", () => {
+  it("HG-3: exposes legacy and project/mission scope names", () => {
     expect([...OPERATOR_CONTEXT_SCOPES]).toEqual([
       "global_host",
       "rig",
+      "project",
+      "mission",
       "workstream",
       "qitem",
     ]);

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { demoSnapshot } from "../src/demo-data.js";
 import { parseCommand } from "../src/grammar.js";
-import { healthListLines, healthSummaryLine } from "../src/health/health-model.js";
+import { healthDetailLines, healthListLines, healthSummaryLine } from "../src/health/health-model.js";
 import { resolveEscapeAction } from "../src/input.js";
 import { renderScreen } from "../src/render.js";
 import { createViewState } from "../src/state.js";
@@ -208,4 +208,14 @@ describe("fleet/system health TUI", () => {
       renderScreen(view.get(), snap, { cols: 120, rows: 34, nowMs: 800 }).lines,
     );
   });
+});
+
+ it.each([58, 89, 129])("renders posture source and phase without removing operational findings at width %i", (width) => {
+  const snap = healthSnapshot(), finding = snap.health!.records[0]!;
+  finding.operatingPosture = { posture: "human-led", source: "product-default", context: { rigId: "openrig-build", phase: { value: "planning", source: "mission.yaml" }, sources: ["mission.yaml"] }, binding: null, reason: "Process-only interruptions are quiet; operational health remains visible.", grantsAuthority: false };
+  const lines = healthDetailLines(snap, finding.id, width);
+  const text = lines.map(l => l.text).join("\n");
+  expect(text).toContain("human-led"); expect(text).toContain("product-default"); expect(text).toContain("planning");
+  expect(text).toContain("context.pressure"); expect(snap.health!.records).toHaveLength(2);
+  expect(lines.every(l => stripAnsi(l.text).length <= width)).toBe(true);
 });

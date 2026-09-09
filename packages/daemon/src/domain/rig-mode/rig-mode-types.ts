@@ -2,7 +2,8 @@
 //
 // Typed graduation of the operator-context-mode-system v0 doctrine. The
 // convention at conventions/operator-context-mode-system/README.md is
-// the FROZEN spec; types below mirror it as closed enums + a 10-field
+// the legacy spec; S07 adds deliberate operating posture and project/mission scopes.
+// Types remain closed enums + a 10-field
 // schema. None of these fields may be silently merged or dropped — the
 // validator enforces field-set integrity.
 //
@@ -16,13 +17,14 @@
 // FROZEN contract — review will reject otherwise.
 
 /**
- * Component 2 — six reserved mode names. Lowercase single English
+ * Component 2 — six legacy modes plus human-led/delegated operating posture.
+ * Legacy modes are lowercase single English
  * words; synonyms and numeric aliases (`L0`–`L3`, `operator:L<n>`)
  * are explicitly forbidden by the convention. The L0–L3 collision
  * warning at `conventions/operator-context-mode-system/README.md`
  * §"L0–L3 Collision Warning" is load-bearing.
  */
-export type OperatorContextMode = "sleep" | "desk" | "mobile" | "away" | "focus" | "debug";
+export type OperatorContextMode = "sleep" | "desk" | "mobile" | "away" | "focus" | "debug" | "human-led" | "delegated";
 
 export const OPERATOR_CONTEXT_MODES = [
   "sleep",
@@ -31,18 +33,22 @@ export const OPERATOR_CONTEXT_MODES = [
   "away",
   "focus",
   "debug",
+  "human-led",
+  "delegated",
 ] as const satisfies readonly OperatorContextMode[];
 
 /**
- * Component 4 — four scopes. More-specific overrides less-specific
+ * Component 4 — six scopes. More-specific overrides less-specific
  * when multiple modes coexist (Scope hierarchy: qitem > workstream >
- * rig > global_host).
+ * mission > project > rig > global_host).
  */
-export type OperatorContextScope = "global_host" | "rig" | "workstream" | "qitem";
+export type OperatorContextScope = "global_host" | "rig" | "project" | "mission" | "workstream" | "qitem";
 
 export const OPERATOR_CONTEXT_SCOPES = [
   "global_host",
   "rig",
+  "project",
+  "mission",
   "workstream",
   "qitem",
 ] as const satisfies readonly OperatorContextScope[];
@@ -54,8 +60,10 @@ export const OPERATOR_CONTEXT_SCOPES = [
 export const SCOPE_SPECIFICITY: Record<OperatorContextScope, number> = {
   global_host: 0,
   rig: 1,
-  workstream: 2,
-  qitem: 3,
+  project: 2,
+  mission: 3,
+  workstream: 4,
+  qitem: 5,
 };
 
 // --- 10-field schema enums ---
@@ -214,6 +222,13 @@ export interface EffectiveOperatorContextMode {
  */
 export interface OperatorContextReadContext {
   rigId?: string;
+  projectId?: string;
+  missionId?: string;
   workstreamId?: string;
   qitemId?: string;
+}
+
+/** Mission IDs are project-qualified; identical mission names never share a binding. */
+export function missionModeQualifier(projectId: string, missionId: string): string {
+  return `${projectId}/${missionId}`;
 }

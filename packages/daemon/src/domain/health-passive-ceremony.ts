@@ -3,6 +3,7 @@ import { dirname, join, relative } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { QueueRepository } from "./queue-repository.js";
 import type { HealthCheckpointSource } from "./health-checkpoints.js";
+import type { OperatingPostureService } from "./rig-mode/operating-posture.js";
 import { readHealthArtifact } from "./health-context.js";
 import { validateMissionComposition } from "./lifecycle-manifest.js";
 import { healthHash, type HealthPolicyStore } from "./health-policy.js";
@@ -18,7 +19,8 @@ const tagged = (tags: string[], prefix: string) => tags.filter((t) => t.startsWi
  * are material for the diagnosing agent, never an automatic outcome counter. */
 export class PassiveCeremonySource implements HealthObservationSource {
   constructor(private readonly workspace: string, private readonly queue: QueueRepository, private readonly policy: HealthPolicyStore,
-    private readonly now = () => new Date().toISOString(), private readonly checkpoints?: HealthCheckpointSource) {}
+    private readonly now = () => new Date().toISOString(), private readonly checkpoints?: HealthCheckpointSource,
+    private readonly posture?: { reader: OperatingPostureService; instanceId: string }) {}
 
   read(): HealthDetectorObservation[] {
     const now = this.now(); const p = this.policy.read().policy;
@@ -74,14 +76,28 @@ export class PassiveCeremonySource implements HealthObservationSource {
       if (transitions.length < p.thresholds.ceremonyTransitions) continue;
       const rows = [...new Set(transitions.map((t) => t.qitemId))].map((id) => get(id)!);
       const tags = rows.flatMap((r) => r.tags ?? []);
-      const missionId = one(tagged(tags, "mission:"));
+      let missionId = one(tagged(tags, "mission:"));
       // Normal work linkage is explicit tags. Untagged work has no invented mission.
-      if (!missionId || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(missionId)) continue;
-      const project = readHealthArtifact(this.workspace, "project.yaml", 65536, true);
-      const projectId = project.content ? (parseYaml(project.content) as { metadata?: { id?: unknown } })?.metadata?.id : undefined;
-      if (typeof projectId !== "string" || !projectId) continue;
-      const slices = tagged(tags, "slice:"); const sliceId = one(slices);
-      const scope: HealthScope = sliceId ? { type: "slice", projectId, missionId, sliceId } : { type: "mission", projectId, missionId };
+      const resolved = this.posture?.reader.resolve({ qitemId: lineageId });
+      const selected = resolved?.context;
+      let workspace = this.workspace, missionRoot: string | undefined;
+      let scope: HealthScope;
+      const slices = tagged(tags, "slice:");
+      if (this.posture) {
+        if (resolved?.posture !== "unknown" && selected?.projectId && selected.missionId && selected.paths) {
+          workspace = selected.paths.project; missionRoot = selected.paths.mission; missionId = selected.missionId;
+          const sliceId = selected.workstreamId?.split("/").at(-1);
+          scope = sliceId ? { type: "slice", projectId: selected.projectId, missionId, sliceId }
+            : { type: "mission", projectId: selected.projectId, missionId };
+        } else scope = { type: "instance", instanceId: this.posture.instanceId };
+      } else {
+        if (!missionId || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(missionId)) continue;
+        const project = readHealthArtifact(workspace, "project.yaml", 65536, true);
+        const projectId = project.content ? (parseYaml(project.content) as { metadata?: { id?: unknown } })?.metadata?.id : undefined;
+        if (typeof projectId !== "string" || !projectId) continue;
+        const sliceId = one(slices);
+        scope = sliceId ? { type: "slice", projectId, missionId, sliceId } : { type: "mission", projectId, missionId };
+      }
       const first = this.queue.db.prepare("SELECT ts FROM queue_transitions WHERE qitem_id = ? ORDER BY transition_id LIMIT 1").get(lineageId) as { ts: string } | undefined;
       if (!first) throw new Error("health_passive_episode_start_unavailable");
       const boundaries = this.closedBoundaries(lineageId);
@@ -102,7 +118,9 @@ export class PassiveCeremonySource implements HealthObservationSource {
         const episodeKey = resumed ? `${lineageId}:${segmentFirst.transitionId}` : lineageId;
         const measuredEnd = boundaries.find((b) => b.transitionId === segment.at(-1)!.transitionId)?.endedAt ?? now;
         const scopeKey = healthHash(scope);
-        if (!contexts.has(scopeKey)) contexts.set(scopeKey, this.context(scope));
+        if (!contexts.has(scopeKey)) contexts.set(scopeKey, scope.type === "mission" || scope.type === "slice"
+          ? this.context(scope, workspace, missionRoot)
+          : [{ path: this.workspace, state: "unavailable", role: "Scope identity unresolved; inspect operatingPosture.reason" }]);
         const context = contexts.get(scopeKey)!;
         const memberIds = [...new Set(segment.map((t) => t.qitemId))];
         const trails = this.queue.db.prepare(`SELECT trail_id, instance_id, step_id, prior_qitem_id, closure_reason, actor_session, closed_at, closure_evidence_json FROM workflow_step_trails WHERE prior_qitem_id IN (${memberIds.map(() => "?").join(",")}) AND closed_at >= ? AND closed_at <= ? ORDER BY trail_id LIMIT 201`)
@@ -112,8 +130,9 @@ export class PassiveCeremonySource implements HealthObservationSource {
         const transitionIds = segment.map((t) => t.transitionId);
         const basis = healthHash({ lineageId, scope, transitions: segment.map(adaptQueueTransitionEvidence), context, workflowReceipts });
         const id = healthEpisodeId(detector, scope, episodeStartedAt, episodeKey);
-        const receipt = this.assessment(id);
+        const receipt = this.assessment(id, workspace);
         const missingFacts: string[] = [];
+        if (resolved?.posture === "unknown") missingFacts.push("scope identity unresolved: " + resolved.reason);
         if (Date.parse(episodeStartedAt) < Date.parse(start)) missingFacts.push("lineage begins before retained observation window; full interval unavailable");
         if (new Set(slices).size > 1) missingFacts.push("handoff family crosses slice identities; product boundary unresolved");
         if (receipt && receipt.result.basis !== basis) missingFacts.push("normal evidence changed since the attributed assessment; reassess the current basis");
@@ -150,7 +169,7 @@ export class PassiveCeremonySource implements HealthObservationSource {
     }).sort((a, b) => a.transitionId - b.transitionId);
   }
 
-  private assessment(id: string): (NonNullable<PassiveCeremony["assessment"]> & { evidenceChanged: boolean }) | undefined {
+  private assessment(id: string, workspace = this.workspace): (NonNullable<PassiveCeremony["assessment"]> & { evidenceChanged: boolean }) | undefined {
     const qitemId = `qitem-health-diagnosis-${id}`;
     const row = this.queue.getById(qitemId);
     if (!row?.tags?.includes("health-diagnosis")) return undefined;
@@ -160,32 +179,32 @@ export class PassiveCeremonySource implements HealthObservationSource {
       try {
         const r = JSON.parse(t.transitionNote ?? "null") as { kind?: string; action?: string; disposition?: { progress?: CeremonyProgressAssessment }; progressEvidence?: Array<{ path: string; sha256?: string }> } | null;
         if (r?.kind === "health-diagnosis" && r.action === "disposition" && r.disposition?.progress) {
-          return { evidenceChanged: !r.progressEvidence?.length || r.progressEvidence.some((e) => readHealthArtifact(this.workspace, e.path).sha256 !== e.sha256), result: r.disposition.progress, actor: t.actorSession, at: t.ts, transitionId: t.transitionId, identityProvenance: t.identityProvenance };
+          return { evidenceChanged: !r.progressEvidence?.length || r.progressEvidence.some((e) => readHealthArtifact(workspace, e.path).sha256 !== e.sha256), result: r.disposition.progress, actor: t.actorSession, at: t.ts, transitionId: t.transitionId, identityProvenance: t.identityProvenance };
         }
       } catch { /* Ordinary queue prose is not an assessment. */ }
     }
     return undefined;
   }
 
-  private context(scope: Extract<HealthScope, { type: "mission" | "slice" }>): PassiveCeremony["context"] {
+  private context(scope: Extract<HealthScope, { type: "mission" | "slice" }>, workspace = this.workspace, missionRoot = join(workspace, "missions", scope.missionId)): PassiveCeremony["context"] {
     const result: PassiveCeremony["context"] = [];
-    const add = (path: string, role: string) => { const r = readHealthArtifact(this.workspace, path, 65536); result.push({ ...r, role }); };
+    const add = (path: string, role: string) => { const r = readHealthArtifact(workspace, join(workspace, path), 65536); result.push({ ...r, role }); };
     ["SPEC.md", "project.yaml"].forEach((path) => add(path, "project authority / selected SDLC"));
-    const missionDir = join("missions", scope.missionId);
+    const missionDir = relative(workspace, missionRoot);
     ["SPEC.md", "mission.yaml", "PROGRESS.md"].forEach((name) => add(join(missionDir, name), "mission authority / selected SDLC / progress"));
     const manifestPath = join(missionDir, "mission.yaml");
-    const manifest = readHealthArtifact(this.workspace, manifestPath, 65536, true);
+    const manifest = readHealthArtifact(workspace, manifestPath, 65536, true);
     if (scope.type === "slice" && manifest.content) {
-      const members = validateMissionComposition(parseYaml(manifest.content), join(this.workspace, manifestPath));
+      const members = validateMissionComposition(parseYaml(manifest.content), join(workspace, manifestPath));
       if (members.length > 200) throw new Error("health_passive_scope_membership_limit");
       for (const member of members) {
-        const dir = relative(realpathSync(this.workspace), dirname(member.path));
-        const spec = readHealthArtifact(this.workspace, join(dir, "SPEC.md"), 65536, true);
+        const dir = relative(realpathSync(workspace), dirname(member.path));
+        const spec = readHealthArtifact(workspace, join(dir, "SPEC.md"), 65536, true);
         const fm = spec.content?.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
         if (!fm || (parseYaml(fm) as { id?: string })?.id !== scope.sliceId) continue;
         ["SPEC.md", "slice.yaml", "PROGRESS.md", "PROOF.md"].forEach((name) => add(join(dir, name), "slice authority / selected SDLC / progress / proof"));
         try {
-          const proofs = readdirSync(join(this.workspace, dir, "proof"), { withFileTypes: true }).filter((f) => f.isFile() && f.name.endsWith(".md"));
+          const proofs = readdirSync(join(workspace, dir, "proof"), { withFileTypes: true }).filter((f) => f.isFile() && f.name.endsWith(".md"));
           if (proofs.length > 100) throw new Error("health_passive_proof_directory_limit");
           proofs.sort((a, b) => a.name.localeCompare(b.name)).forEach((f) => add(join(dir, "proof", f.name), "proof artifact to inspect, not accepted-outcome count"));
         } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
