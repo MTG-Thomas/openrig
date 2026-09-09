@@ -8,6 +8,31 @@ deprecations, and behavioral changes. Breaking changes are called out explicitly
 
 ---
 
+## [0.5.12] - 2026-09-09
+
+**Status**: release candidate; exact-cut review, final verification and
+publication remain pending.
+
+- Record authorized proof judgments and corrections once; derive affected
+  slice, mission and project readiness with attributable evidence.
+- Inspect authored versus running graphs, deliberately adopt supported
+  revisions, and reconcile ambiguous operations without duplicate work.
+- Discover exception ownership before failure; admit dependency-failure
+  tasks/wakes atomically and recover one occurrence without hiding another.
+- Keep healthy unchanged waits quiet while preserving change-driven wake,
+  bounded recovery and explicit expansion of compact reads.
+- Enter through bare interactive `rig` for normal startup and selective
+  return, preserving conversation history or requesting an explicit fresh start.
+- Browse general instance settings and provenance in CONFIG, with Slack as
+  one subsection and passive, secret-safe inspection.
+
+Root, CLI, daemon and web UI are `0.5.12`; terminal TUI remains `0.1.0`.
+Migration head remains `079_workflow_lifecycle_parallel`. Accepted development
+and native evidence retains its original attribution; release preparation does
+not imply a new human usability study, full-platform run or public adoption.
+See [the full release notes](docs/releases/v0.5.12.md) for operational guidance
+and known limits, including deferred historical judgment registration.
+
 ## [0.5.11] - 2026-09-07
 
 **Status**: release candidate; final verification and publication remain pending.
