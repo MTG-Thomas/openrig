@@ -50,6 +50,7 @@ function open(target: { root: string; path: string; anchor?: string }) { view.di
 describe("current-file reading through real routes and TUI state", () => {
   it.each([[140, 42], [80, 24]])("previews actual purpose, opens detail/source and preserves the caller at %ix%i", async (cols, rows) => {
     view.dispatch({ type: "jump", section: "specs" }); await refresh();
+    view.dispatch({ type: "filter", text: "story" });
     const index = computeExplorerRows(view.get(), snap).findIndex((r) => r.key === "spec:story");
     view.dispatch({ type: "select", index });
     let screen = draw(cols, rows);
@@ -63,7 +64,7 @@ describe("current-file reading through real routes and TUI state", () => {
     expect(screen.lines.join("\n")).toContain("summary: |");
     expect(screen.lines.join("\n")).toContain("Read from disk");
     back(); draw(cols, rows); await refresh(); back();
-    expect(view.get()).toMatchObject({ selection: caller.selection, contentOffset: caller.contentOffset, drill: [] });
+    expect(view.get()).toMatchObject({ selection: caller.selection, contentOffset: caller.contentOffset, filter: "story", drill: [] });
     expect(requests.every((r) => /GET \/(?:healthz|api\/(?:specs\/library|files\/))/.test(r))).toBe(true);
     expect(requests.some((r) => r.includes("review/fleet"))).toBe(false);
   });

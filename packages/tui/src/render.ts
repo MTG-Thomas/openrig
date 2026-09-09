@@ -497,8 +497,10 @@ function specSourceLines(spec: FleetSnapshot["specs"][number], snap: FleetSnapsh
   if (!target.root) lines.push({ text: "Source is not mapped to a configured readable root." });
   if (target.root) {
     lines.push({ text: `Readable root: ${target.root}` }, ...referenceLines(spec.description ?? "", target));
+    const markdownLinks = new Set([...((spec.description ?? "").matchAll(/\[[^\]\n]+\]\(<?([^\s)>]+)/g))].map((match) => match[1]));
     // Prose paths stay relative to the named source, not an inferred checkout.
     for (const match of (spec.description ?? "").matchAll(/(?:[\w.-]+\/)+[\w.-]+\.(?:md|txt|ya?ml)(?:#[\w-]+)?/g)) {
+      if (markdownLinks.has(match[0])) continue;
       lines.push(listItem(`Reference: ${match[0]} · relative to source`, referenceAction(target, match[0])));
     }
   }

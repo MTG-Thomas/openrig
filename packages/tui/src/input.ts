@@ -136,7 +136,7 @@ export function resolveEscapeAction(
   commandEditing = false,
 ): Action | null {
   if (event.key !== "escape" || commandEditing) return null;
-  if ((state.file || state.externalUrl) && state.history?.length) return { type: "back" };
+  if ((state.file || state.externalUrl || (state.section === "specs" && state.drill.length > 0)) && state.history?.length) return { type: "back" };
   if (state.healthOpen) return { type: "health-close" };
   if (state.filter) return { type: "filter", text: "" };
   if (state.history?.length) return { type: "back" };
