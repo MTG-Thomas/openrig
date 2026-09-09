@@ -682,6 +682,14 @@ describe("Codex runtime adapter", () => {
     ]);
   });
 
+  it("does not type a blanket trust choice into fresh hook review", async () => {
+    const tmux = mockTmux({ capturePaneContent: vi.fn(async () => "Hooks need review\n1. Review hooks\n2. Trust all and continue\n3. Continue without trusting"), getPanePid: vi.fn(async () => 900) });
+    const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs(), sleep: async () => {}, listProcesses: () => [] });
+    await adapter.launchHarness(makeBinding(), { name: "impl" });
+    expect(tmux.sendText).toHaveBeenCalledTimes(1);
+    expect(tmux.sendKeys).toHaveBeenCalledTimes(1);
+  });
+
   it("launchHarness captures a fresh Codex thread id from the live child process", async () => {
     const tmux = mockTmux({
       getPanePid: vi.fn(async () => 900),

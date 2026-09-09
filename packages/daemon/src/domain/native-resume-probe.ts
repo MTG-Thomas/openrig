@@ -332,6 +332,10 @@ function looksLikeCodexTrustPrompt(paneContent: string): boolean {
 function looksLikeCodexHookReviewPrompt(paneContent: string): boolean {
   // A newer header supersedes a dismissed prompt retained in scrollback.
   const current = paneContent.slice(Math.max(0, paneContent.lastIndexOf("OpenAI Codex (v")));
+  // Closing a review panel may redraw only the input prompt, without a new
+  // header. A later non-menu conversation prompt supersedes that old panel.
+  const gateEnd = Math.max(current.lastIndexOf("Press t to trust"), current.lastIndexOf("Trust all and continue"));
+  if (gateEnd >= 0 && current.slice(gateEnd).split("\n").some((line) => /^\s*›(?:\s|$)/.test(line) && !/^\s*›\s*\d+\.\s/.test(line))) return false;
   return (current.includes("Hooks need review") && current.includes("Trust all and continue"))
     || (/hooks? needs? review before (?:it|they) can run\./.test(current)
       && /Press t to trust(?: all)?;/.test(current));

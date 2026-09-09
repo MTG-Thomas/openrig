@@ -130,9 +130,9 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
    * command is `node "<activityRelayPath>"` (the daemon's OWN shipped relay, FR-B —
    * cwd-independent, version-matched, NOT `${PLUGIN_ROOT}` nor a per-cwd copy). Also
    * pins `[features].hooks = true` (canonical key; the deprecated `codex_hooks` alias
-   * is intentionally NOT used here). Trust is granted at launch by the hook_trust_gate
-   * auto-clear (dismissCodexInteractiveGates → "2" Trust all and continue, verified on
-   * Codex 0.139). The relay inherits the seat's OPENRIG_* env from the tmux session.
+   * is intentionally NOT used here). Trust is scoped to the exact authored hook
+   * hashes below; remaining native review prompts require an operator decision.
+   * The relay inherits the seat's OPENRIG_* env from the tmux session.
    *
    * Fail-safe: skips + warns when the relay asset is missing — never writes a hook that
    * points at a nonexistent script. Verified-firsthand (Codex 0.139, dev1-qa AC-2 proof):
@@ -162,8 +162,8 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     // ([hooks.state."<key>"] trusted_hash) for exactly our 4 authored hooks, on the SAME
     // seam that provisions them, so the daemon's unmanaged inline hooks are trusted from
     // clean config on EVERY path a fresh Codex process reads config (launch/adopt/reconcile)
-    // — not just the launch keystroke gate. Layer-2 floor (dismissCodexInteractiveGates)
-    // stays as the fail-safe if a Codex-version drift changes the identity/hash. Idempotent
+    // — without a blanket native trust keystroke. If native identity/hash semantics
+    // change, the remaining review is surfaced for a decision. Idempotent
     // + non-clobbering; only touches our 4 keys. See applyCodexActivityHookTrust for the RTFM.
     const trusted = this.applyCodexActivityHookTrust(withHooks, configPath, relay);
     if (trusted !== withHooks) {
@@ -493,14 +493,10 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
         continue;
       }
 
-      if (probe.code === "hook_trust_gate") {
-        const textResult = await this.tmux.sendText(tmuxSession, "2");
-        if (!textResult.ok) return;
-        const enterResult = await this.tmux.sendKeys(tmuxSession, ["Enter"]);
-        if (!enterResult.ok) return;
-        await this.sleep(500);
-        continue;
-      }
+      // Activity hooks are provisioned by exact authored hash above. A remaining
+      // review can include unrelated hooks or a changed native UI; never type
+      // a blanket trust choice into it. The TUI exposes the native decision.
+      if (probe.code === "hook_trust_gate") return;
 
       if (probe.status === "resumed" || probe.code === "trust_gate") {
         return;
@@ -883,7 +879,7 @@ function upsertCodexProjectTrust(content: string, projectPath: string): string {
 // open source (RTFM, cited) and are PROVISIONAL until pinned by a byte-for-byte read-back of a
 // real Codex `[hooks.state]` after `/hooks`->"Trust all" (the QA VM proof — see the unit test
 // fixture marked PIN-TO-VM). A mismatch is fail-safe: Codex re-shows the gate and the launch-time
-// Layer-2 keystroke floor (dismissCodexInteractiveGates) clears it — never a false-trusted run.
+// review remains visible for the operator — never a blanket trust keystroke.
 //
 // RTFM sources (cite):
 //   - https://developers.openai.com/codex/hooks
