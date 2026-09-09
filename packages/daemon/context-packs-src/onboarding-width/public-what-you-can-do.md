@@ -11,7 +11,7 @@ not know exists.** So the point of what follows is not skill. It is recognition:
 lands, something rhymes, and you go check instead of building.
 
 Eighty-one-plus top-level verbs ship (capability canon refreshed through
-`capability-delta-v0.5.11`). Read this once for shape, and let it make you suspicious that a thing
+`capability-delta-v0.5.12`). Read this once for shape, and let it make you suspicious that a thing
 already exists. Model-divergence proclamations are live product (trust them; pins use canonical
 model IDs).
 
@@ -155,10 +155,10 @@ you that is still running.
 
 ## Running a pipeline without relaying every step
 
-**Work does not only move because you move it.** A configured workflow routes each step to the next
-owner and wakes them. Where one exists, **you are exception handling, not the engine** — and if you
-find yourself hand-relaying every step, the loop has not been built yet, and building it is usually
-cheaper than being it.
+**A workflow remembers the plan and routes the next action; agents judge the outcome.** Its
+conditions, packets and waits carry decisions across returns. Inspect and revise the selected
+graph when reality changes, preserving completed work and current ownership. Repeated manual
+relay is a reason to inspect the available routing, not to surrender judgment to a fixed pipeline.
 
 - **`rig workflow specs`** — what can be started here, and which are shipped versus authored by
   this rig.
@@ -370,6 +370,13 @@ scheme, and nothing downstream can see it.
   from the authored SPEC with a named advisory, and `contractSource` in the echo records which
   source actually bound. When someone later asks where the contract items came from, the drop's
   own echo is the answer — not a re-read of the files.
+- **`rig proof judge` / `rig proof show`** — record an attributed judgment on a contract item once,
+  then read derived proof, slice, mission and project readiness. The owning scope selects
+  `proofPolicy.judges` (nearest slice, mission or project policy wins); consult `rig proof --help`
+  for that setup and the item/evidence selectors. Accept, reject or withdraw against readable
+  evidence; corrections preserve history and unrelated judgments without ancestor status edits.
+  Non-code work can name its actual artifact instead of inventing a commit. Evidence capture,
+  policy acceptance, higher outcome judgment and publication remain separate decisions.
 - **`rig workspace doctor` / `validate`** — does the daemon agree with you about where the work
   tree is, and which files are missing the frontmatter their kind requires.
 - **`rig context work-install --project … --mission … --slice … [--deliver]`** — resolves the ordered
