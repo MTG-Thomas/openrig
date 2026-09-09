@@ -419,6 +419,13 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     return ` --add-dir ${shellQuote(queueStateRoot)}`;
   }
 
+  private async captureProbeScreen(target: string): Promise<string> {
+    // Current readiness belongs to the rendered screen. Scrollback may retain
+    // dismissed prompts, loading headers, or refusals from earlier attempts.
+    if (this.tmux.capturePaneScreen) return await this.tmux.capturePaneScreen(target) ?? "";
+    return await this.tmux.capturePaneContent(target, 40) ?? "";
+  }
+
   async checkReady(binding: NodeBinding): Promise<ReadinessResult> {
     if (!binding.tmuxSession) {
       return { ready: false, reason: "No tmux session bound" };
@@ -429,7 +436,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
     }
 
     const paneCommand = await this.tmux.getPaneCommand(binding.tmuxSession);
-    const paneContent = (await this.tmux.capturePaneContent(binding.tmuxSession, 40)) ?? "";
+    const paneContent = await this.captureProbeScreen(binding.tmuxSession);
     const probe = assessNativeResumeProbe({
       runtime: "codex",
       paneCommand,
@@ -443,7 +450,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
   private async dismissSkippableCodexUpdatePrompt(tmuxSession: string, attempts = 6): Promise<boolean> {
     for (let attempt = 0; attempt < attempts; attempt++) {
       const paneCommand = await this.tmux.getPaneCommand(tmuxSession);
-      const paneContent = (await this.tmux.capturePaneContent(tmuxSession, 40)) ?? "";
+      const paneContent = await this.captureProbeScreen(tmuxSession);
       const probe = assessNativeResumeProbe({
         runtime: "codex",
         paneCommand,
@@ -476,7 +483,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
   private async dismissCodexInteractiveGates(tmuxSession: string, attempts = 8): Promise<void> {
     for (let attempt = 0; attempt < attempts; attempt++) {
       const paneCommand = await this.tmux.getPaneCommand(tmuxSession);
-      const paneContent = (await this.tmux.capturePaneContent(tmuxSession, 40)) ?? "";
+      const paneContent = await this.captureProbeScreen(tmuxSession);
       const probe = assessNativeResumeProbe({
         runtime: "codex",
         paneCommand,
@@ -753,7 +760,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapter {
       }
 
       const paneCommand = await this.tmux.getPaneCommand(tmuxSession);
-      const paneContent = (await this.tmux.capturePaneContent(tmuxSession, 40)) ?? "";
+      const paneContent = await this.captureProbeScreen(tmuxSession);
       lastPaneContent = paneContent;
       const probe = assessNativeResumeProbe({
         runtime: "codex",

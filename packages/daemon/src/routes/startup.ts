@@ -80,7 +80,7 @@ async function observeSeat(c: Context, rig: RigWithRelations, node: Node) {
     if (node.runtime === "terminal") return { state: "running", detail: "Terminal is available", sessionName: name };
     const probe = assessNativeResumeProbe({ runtime: node.runtime,
       paneCommand: await tmux(c).getPaneCommand(pane.pane),
-      paneContent: await tmux(c).capturePaneContent(pane.pane, 40) ?? "" });
+      paneContent: (tmux(c).capturePaneScreen ? await tmux(c).capturePaneScreen(pane.pane) : await tmux(c).capturePaneContent(pane.pane, 40)) ?? "" });
     return { state: probe.status === "resumed" ? "running" : "attention_required", detail: probe.detail, sessionName: name };
   } catch (error) {
     return { state: "unverified", detail: error instanceof Error ? error.message : String(error), sessionName: name };

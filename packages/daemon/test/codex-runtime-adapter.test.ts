@@ -682,6 +682,16 @@ describe("Codex runtime adapter", () => {
     ]);
   });
 
+  it("uses the visible conversation rather than dismissed loading/review scrollback", async () => {
+    const tmux = mockTmux({ capturePaneContent: vi.fn(async () => "OpenAI Codex (v0.153.4)\nmodel: loading\nHooks need review\nTrust all and continue"),
+      capturePaneScreen: vi.fn(async () => "› Ask Codex to do anything\n  gpt-6-astra xhigh · /work") });
+    const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs() });
+    expect(await adapter.checkReady(makeBinding())).toEqual({ ready: true });
+    expect(tmux.capturePaneContent).not.toHaveBeenCalled();
+    vi.mocked(tmux.capturePaneScreen).mockResolvedValue(null);
+    expect((await adapter.checkReady(makeBinding())).ready).toBe(false);
+  });
+
   it("does not type a blanket trust choice into fresh hook review", async () => {
     const tmux = mockTmux({ capturePaneContent: vi.fn(async () => "Hooks need review\n1. Review hooks\n2. Trust all and continue\n3. Continue without trusting"), getPanePid: vi.fn(async () => 900) });
     const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs(), sleep: async () => {}, listProcesses: () => [] });
