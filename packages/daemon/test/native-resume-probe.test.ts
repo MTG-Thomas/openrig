@@ -7,6 +7,22 @@ import {
 } from "../src/domain/native-resume-probe.js";
 
 describe("native resume probe", () => {
+  it.each([
+    "Hooks need review\n2 hooks are new or changed.\n2. Trust all and continue",
+    "Hooks\nLifecycle hooks from config and enabled plugins.\n2 hooks need review before they can run.\nPress t to trust all; enter to review hooks; esc to close",
+    "PostCompact hooks\n1 hook needs review before it can run.\nTrust     New hook - review required\nPress t to trust; esc to go back",
+  ])("keeps hook review unavailable even with the native header: %s", (panel) => {
+    const result = assessNativeResumeProbe({ runtime: "codex", paneCommand: "node",
+      paneContent: `OpenAI Codex (v0.153.4)\nmodel: gpt-6-astra\n${panel}` });
+    expect(result).toMatchObject({ status: "inconclusive", code: "hook_trust_gate" });
+  });
+
+  it("does not treat hook review before a newer native header as a current gate", () => {
+    const result = assessNativeResumeProbe({ runtime: "codex", paneCommand: "node",
+      paneContent: "Hooks need review\n2. Trust all and continue\nOpenAI Codex (v0.153.4)\n› Ready" });
+    expect(result.status).toBe("resumed");
+  });
+
   it("keeps a visible client/model compatibility failure distinct from a usable TUI", () => {
     const result = assessNativeResumeProbe({ runtime: "codex", paneCommand: "node",
       paneContent: "OpenAI Codex\n■ The configured model requires a\nnewer version of Codex. Please upgrade.\n› Write tests for @filename" });

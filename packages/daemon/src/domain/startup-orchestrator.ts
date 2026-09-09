@@ -408,12 +408,12 @@ export class StartupOrchestrator {
       );
     } catch { /* best-effort persistence */ }
 
-    // Delivering the first native prompt can reveal a provider/client refusal
-    // that an idle harness could not expose. A positive refusal is not ready.
+    // Delivering the first native prompt can reveal a provider refusal or
+    // interactive gate. A positive attention requirement is not ready.
     if (postLaunchFiles.length > 0) {
       try {
         const readiness = await input.adapter.checkReady(input.binding);
-        if (!readiness.ready && ["codex_auth_refusal", "codex_client_incompatible", "login_required"].includes(readiness.code ?? "")) {
+        if (!readiness.ready && isAttentionRequiredReadinessCode(readiness.code)) {
           return this.fail(input, "attention_required", [readiness.reason ?? "The native provider prerequisite failed after context delivery."]);
         }
       } catch (error) {

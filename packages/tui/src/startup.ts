@@ -149,7 +149,7 @@ export class StartupController {
       await this.launch(consent.rigId, consent.seat, "fresh"); return;
     }
     if (s.page === "seats" && seat && key === "enter") {
-      if (seat.observed.state === "running") { s.open = false; this.deps.onWork(s.rig, seat); this.changed(); return; }
+      if (["running", "attention_required"].includes(seat.observed.state)) { s.open = false; this.deps.onWork(s.rig, seat); this.changed(); return; }
       await this.launch(s.rig!.rigId, seat, seat.hasHistory ? "resume" : "start");
     }
   }
@@ -198,8 +198,8 @@ export function startupLines(s: StartupState): Array<{ text: string; action?: Ac
     const seat = s.rig.seats[s.selected];
     if (seat) {
       lines.push({ text: "" }, { text: `${seat.logicalId} · ${seat.runtime} · model ${seat.model ?? "configured default"}` },
-        { text: seat.prerequisite ?? seat.reason ?? seat.observed.detail },
-        button(seat.observed.state === "running" ? "Enter  Open live work" : `Enter  ${seat.hasHistory ? "Resume previous conversation" : "Start this new seat"}`, "enter"));
+        { text: seat.prerequisite ?? (["attention_required", "unverified"].includes(seat.observed.state) ? seat.observed.detail : seat.reason ?? seat.observed.detail) },
+        button(seat.observed.state === "running" ? "Enter  Open live work" : seat.observed.state === "attention_required" ? "Enter  Open existing runtime to resolve this prerequisite" : `Enter  ${seat.hasHistory ? "Resume previous conversation" : "Start this new seat"}`, "enter"));
       if (seat.hasHistory && seat.freshAllowed !== false && !s.freshBlocked && (seat.intendedAction === "resume-original" || seat.freshRequired)) lines.push(button("f  Consider a fresh conversation…", "f"));
     }
   }

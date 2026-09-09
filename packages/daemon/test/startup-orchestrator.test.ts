@@ -159,14 +159,14 @@ describe("StartupOrchestrator", () => {
     expect(row.startup_status).toBe("ready");
     expect(row.startup_completed_at).not.toBeNull();
   });
-  it("does not mark ready when context delivery exposes a native client refusal", async () => {
+  it.each(["codex_client_incompatible", "hook_trust_gate"])("does not mark ready when context delivery exposes %s", async (code) => {
     const seed = seedSession();
     let delivered = false;
     const adapter = mockAdapter({
       runtime: "codex",
       deliverStartup: vi.fn(async (files) => { if (files.some((file) => file.deliveryHint === "send_text")) delivered = true; return { delivered: files.length, failed: [] }; }),
       checkReady: vi.fn(async () => delivered
-        ? { ready: false, code: "codex_client_incompatible", reason: "The configured model requires a compatible client" }
+        ? { ready: false, code, reason: "The native runtime requires attention" }
         : { ready: true }),
     });
     const result = await createOrchestrator().startNode(makeInput(seed, { adapter,

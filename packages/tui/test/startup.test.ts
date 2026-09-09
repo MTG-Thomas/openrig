@@ -29,6 +29,20 @@ function fixture() {
 async function chooseOperator(f: ReturnType<typeof fixture>) { await f.controller.refresh(); await f.controller.key("enter"); }
 
 describe("TUI startup choices", () => {
+  it("shows the current native gate and opens that existing seat without another launch", async () => {
+    const f = fixture();
+    f.seat.observed.state = "attention_required";
+    f.seat.observed.detail = "Codex is waiting for hook trust approval";
+    f.seat.freshAllowed = false;
+    await chooseOperator(f);
+    const text = startupLines(f.controller.state).map((line) => line.text).join("\n");
+    expect(text).toContain("Codex is waiting for hook trust approval");
+    expect(text).not.toContain("No native history identity was recorded");
+    expect(text).not.toContain("Consider a fresh");
+    await f.controller.key("enter");
+    expect(f.posts).toEqual([]);
+    expect(f.onWork).toHaveBeenCalledWith(expect.objectContaining({ rigId: "r1" }), expect.objectContaining({ nodeId: "n1" }));
+  });
   it("makes terminal transport repair a separate action with no seat launch", async () => {
     const f = fixture();
     f.seat.observed.state = "transport_unavailable"; f.seat.freshAllowed = false;

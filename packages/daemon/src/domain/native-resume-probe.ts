@@ -170,6 +170,15 @@ export function assessNativeResumeProbe(
         detail: "Codex is waiting for model selection before the session can become interactive.",
       };
     }
+    // Native review panels can overlay a normal Codex header. The header
+    // alone does not prove the prompt can receive startup context.
+    if (looksLikeCodexHookReviewPrompt(paneContent)) {
+      return {
+        status: "inconclusive",
+        code: "hook_trust_gate",
+        detail: "Codex is waiting for hook trust approval before the session can become interactive.",
+      };
+    }
     if (looksLikeCodexTui(paneContent)) {
       return {
         status: "resumed",
@@ -182,13 +191,6 @@ export function assessNativeResumeProbe(
         status: "inconclusive",
         code: "trust_gate",
         detail: "Codex is waiting for workspace trust approval before the session can become interactive.",
-      };
-    }
-    if (looksLikeCodexHookReviewPrompt(paneContent)) {
-      return {
-        status: "inconclusive",
-        code: "hook_trust_gate",
-        detail: "Codex is waiting for hook trust approval before the session can become interactive.",
       };
     }
     if (paneContent.includes("Update available!") || paneContent.includes("Updating Codex")) {
@@ -335,8 +337,11 @@ function looksLikeCodexTrustPrompt(paneContent: string): boolean {
 }
 
 function looksLikeCodexHookReviewPrompt(paneContent: string): boolean {
-  return paneContent.includes("Hooks need review")
-    && paneContent.includes("Trust all and continue");
+  // A newer header supersedes a dismissed prompt retained in scrollback.
+  const current = paneContent.slice(Math.max(0, paneContent.lastIndexOf("OpenAI Codex (v")));
+  return (current.includes("Hooks need review") && current.includes("Trust all and continue"))
+    || (/hooks? needs? review before (?:it|they) can run\./.test(current)
+      && /Press t to trust(?: all)?;/.test(current));
 }
 
 function looksLikeCodexModelSelectionPrompt(paneContent: string): boolean {
