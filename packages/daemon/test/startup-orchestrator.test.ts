@@ -164,6 +164,28 @@ describe("StartupOrchestrator", () => {
     expect(adapter.deliverStartup).toHaveBeenCalledWith([], expect.anything());
   });
 
+  it.each(["launch", "readiness"])("pod-aware exact resume cannot continue fresh context after a %s gate", async (gate) => {
+    const seed = seedSession(); const orch = createOrchestrator();
+    await orch.startNode(makeInput(seed, { startupActions: [makeIdentityAction()], includeDurableObligations: true }));
+    const before = db.prepare("SELECT * FROM node_startup_context WHERE node_id=?").get(seed.nodeId);
+    vi.mocked(tmux.sendText).mockClear();
+    const adapter = mockAdapter(gate === "launch"
+      ? { launchHarness: vi.fn(async () => ({ ok: false, recovery: "attention_required", error: "Hook review" })) }
+      : { checkReady: vi.fn(async () => ({ ready: false, code: "hook_trust_gate", reason: "Hook review" })) });
+    // RestoreOrchestrator's pod-aware exact-resume path contains replay via
+    // empty files/actions, but uses isRestore:false to launch the native harness.
+    const input = makeInput(seed, { adapter, isRestore: false, resumeToken: "native-original",
+      resumeType: "claude_id", preserveStartupContext: true, allowFreshFallback: false });
+    expect((await orch.startNode(input)).startupStatus).toBe("attention_required");
+    expect(orch.canContinueFresh(seed.nodeId, seed.sessionId)).toBe(false);
+    expect(createOrchestrator().canContinueFresh(seed.nodeId, seed.sessionId)).toBe(false);
+    expect(db.prepare("SELECT * FROM node_startup_context WHERE node_id=?").get(seed.nodeId)).toEqual(before);
+    expect(tmux.sendText).not.toHaveBeenCalled();
+    const retry = await createOrchestrator().startNode({ ...input, adapter: mockAdapter() });
+    expect(retry).toMatchObject({ ok: true, continuityOutcome: "resumed" });
+    expect(tmux.sendText).not.toHaveBeenCalled();
+  });
+
   // T1: fresh launch enters pending before startup delivery
   it("marks pending before delivery", async () => {
     const seed = seedSession();

@@ -130,11 +130,13 @@ describe("SeatLifecycleService.launchFresh", () => {
 
   afterEach(() => db.close());
 
-  it("continues a gated fresh occupant exactly once without another launch", async () => {
+  it.each(["launch", "readiness"])("continues a fresh occupant gated at %s exactly once without another launch", async (gate) => {
     const seat = seedSeat();
-    harnessResult = { ok: false, recovery: "attention_required", error: "native gate" };
+    if (gate === "launch") harnessResult = { ok: false, recovery: "attention_required", error: "native gate" };
+    else adapter.checkReady = async () => ({ ready: false, code: "hook_trust_gate", reason: "native gate" });
     const first = await service.launchFresh({ seatRef: seat.sessionName, fresh: true, stop: true, reason: "explicit fresh" });
     expect(first.ok).toBe(false);
+    adapter.checkReady = async () => ({ ready: true });
     const rows = sessionRegistry.getSessionsForRig(seat.rig.id).map((s) => s.id);
     const launch = vi.spyOn(adapter, "launchHarness");
     const delivery = vi.spyOn(adapter, "deliverStartup");

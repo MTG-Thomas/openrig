@@ -275,7 +275,9 @@ export class StartupOrchestrator {
               } catch { /* best-effort */ }
             }
             errors.push(`Harness launch requires attention: ${launchResult.error}`);
-            return this.fail(input, "attention_required", errors, launchResult.evidence, !input.isRestore);
+            // isRestore selects context, not native continuity: pod-aware exact
+            // resume also uses false. Only an actual fresh launch may re-prime.
+            return this.fail(input, "attention_required", errors, launchResult.evidence, continuityOutcome === "fresh");
           }
 
           errors.push(`Harness launch failed: ${launchResult.error}`);
@@ -305,7 +307,7 @@ export class StartupOrchestrator {
       if (!readiness.ready) {
         if (isAttentionRequiredReadinessCode(readiness.code)) {
           errors.push(`Startup requires attention: ${readiness.reason ?? "unknown"}`);
-          return this.fail(input, "attention_required", errors, undefined, !input.isRestore);
+          return this.fail(input, "attention_required", errors, undefined, isFreshLaunch);
         }
         errors.push(`Readiness timeout after 30s — harness did not become interactive: ${readiness.reason ?? "unknown"}`);
         return this.fail(input, "failed", errors);
