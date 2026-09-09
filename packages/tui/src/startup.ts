@@ -169,7 +169,8 @@ export class StartupController {
       const notice = this.state.notice;
       await this.readRig(rigId);
       this.state.selected = Math.max(0, this.state.rig!.seats.findIndex((s) => s.nodeId === seat.nodeId));
-      this.state.notice = notice;
+      const observed = this.state.rig!.seats[this.state.selected]?.observed;
+      this.state.notice = observed && observed.state !== "running" ? observed.detail : notice;
     });
   }
 }

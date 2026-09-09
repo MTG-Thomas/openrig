@@ -23,7 +23,7 @@ function mockTmux(overrides?: Partial<TmuxAdapter>): TmuxAdapter {
     sendText: vi.fn(async () => ({ ok: true as const })),
     hasSession: vi.fn(async () => true),
     getPaneCommand: vi.fn(async () => "codex"),
-    capturePaneContent: vi.fn(async () => "OpenAI Codex (v0.0.0)"),
+    capturePaneContent: vi.fn(async () => "OpenAI Codex (v0.0.0)\n› Ask Codex to do anything"),
     createSession: vi.fn(async () => ({ ok: true as const })),
     killSession: vi.fn(async () => ({ ok: true as const })),
     listSessions: vi.fn(async () => []),
@@ -572,7 +572,7 @@ describe("Codex runtime adapter", () => {
       capturePaneContent: vi.fn()
         .mockResolvedValueOnce(initialShell)
         .mockResolvedValueOnce(updatePrompt)
-        .mockResolvedValue("OpenAI Codex (v0.120.0)"),
+        .mockResolvedValue("OpenAI Codex (v0.120.0)\n› Ask Codex to do anything"),
       getPanePid: vi.fn(async () => 900),
     });
     const adapter = new CodexRuntimeAdapter({
@@ -651,7 +651,7 @@ describe("Codex runtime adapter", () => {
         .mockResolvedValueOnce(initialShell)
         .mockResolvedValueOnce(initialShell)
         .mockResolvedValueOnce(updatePrompt)
-        .mockResolvedValue("OpenAI Codex (v0.120.0)"),
+        .mockResolvedValue("OpenAI Codex (v0.120.0)\n› Ask Codex to do anything"),
       getPanePid: vi.fn()
         .mockResolvedValueOnce(null)
         .mockResolvedValue(900),
@@ -921,7 +921,7 @@ describe("Codex runtime adapter", () => {
     const tmux = mockTmux({
       capturePaneContent: vi.fn()
         .mockResolvedValueOnce(updatePrompt)
-        .mockResolvedValue("OpenAI Codex (v0.120.0)"),
+        .mockResolvedValue("OpenAI Codex (v0.120.0)\n› Ask Codex to do anything"),
     });
     const adapter = new CodexRuntimeAdapter({ tmux, fsOps: mockFs(), sleep: async () => {} });
 

@@ -81,10 +81,22 @@ describe("TUI startup choices", () => {
     const first = f.controller.key("y"); await Promise.resolve();
     await f.controller.key("y"); await f.controller.key("enter");
     expect(f.posts).toEqual([{ route: "/api/startup/r1/operator.agent", body: { action: "fresh", revision: "rev1" } }]);
+    f.seat.observed.state = "running";
     finish(new Response(JSON.stringify({ ok: true })));
     await first;
     expect(f.controller.state.consent).toBeUndefined();
     expect(f.controller.state.notice).toContain("new conversation");
+  });
+  it("reports a gate observed after a successful producer return instead of repeating its success claim", async () => {
+    const f = fixture();
+    f.response(async () => {
+      f.seat.observed = { ...f.seat.observed, state: "attention_required", detail: "Hook review needs a decision" };
+      f.seat.freshAllowed = false;
+      return new Response(JSON.stringify({ ok: true, message: "Previous conversation resumed." }));
+    });
+    await chooseOperator(f); await f.controller.key("enter");
+    expect(f.controller.state.notice).toBe("Hook review needs a decision");
+    expect(f.posts).toHaveLength(1);
   });
   it("a lost launch response reads the actual effect and never repeats the POST", async () => {
     const f = fixture(); f.seat.intendedAction = "resume-original";

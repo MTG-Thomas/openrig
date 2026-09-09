@@ -200,13 +200,6 @@ export function assessNativeResumeProbe(
         detail: "Codex reached an update flow, so process-alive alone is not proof of a restored conversation.",
       };
     }
-    if (paneCommand.startsWith("codex")) {
-      return {
-        status: "resumed",
-        code: "active_runtime",
-        detail: "Codex is the active foreground process in the probe pane.",
-      };
-    }
     if (SHELL_COMMANDS.has(paneCommand)) {
       return {
         status: "failed",
@@ -217,7 +210,7 @@ export function assessNativeResumeProbe(
     return {
       status: "inconclusive",
       code: "awaiting_runtime",
-      detail: "Codex did not report an explicit failure, but it is not yet the active pane process.",
+      detail: "Codex did not report an explicit failure, but an interactive conversation has not been observed.",
     };
   }
 
@@ -299,15 +292,15 @@ function looksLikeClaudeMcpApprovalPrompt(paneContent: string): boolean {
 }
 
 function looksLikeCodexTui(paneContent: string): boolean {
-  if (paneContent.includes("OpenAI Codex (v")) {
-    return true;
-  }
-
-  const recentLines = paneContent.split("\n").slice(-12).join("\n");
-  const hasPromptLine = /(^|\n)\s*›(?:\s|$)/.test(recentLines);
+  const current = paneContent.slice(Math.max(0, paneContent.lastIndexOf("OpenAI Codex (v")));
+  if (/model:\s*loading\b/i.test(current)) return false;
+  const recentLines = current.trimEnd().split("\n").slice(-20).join("\n");
+  const hasPromptLine = recentLines.split("\n").some((line) => {
+    const text = line.trimStart();
+    return text.startsWith("›") && !/^\d+\.\s/.test(text.slice(1).trimStart());
+  });
   const hasModelFooter = /(^|\n)\s{2,}gpt-[^\n]+ · [^\n]+(?:\n|$)/.test(recentLines);
-
-  return hasPromptLine && hasModelFooter;
+  return hasPromptLine && (current.includes("OpenAI Codex (v") || hasModelFooter);
 }
 
 // Codex prints these messages when its stored OAuth access token can no

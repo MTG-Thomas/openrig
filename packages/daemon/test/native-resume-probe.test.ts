@@ -7,6 +7,9 @@ import {
 } from "../src/domain/native-resume-probe.js";
 
 describe("native resume probe", () => {
+  it.each(["", "OpenAI Codex (v0.153.4)", "OpenAI Codex (v0.153.4)\nmodel: loading\n› Ask Codex to do anything"])("does not treat process/header startup as an interactive conversation: %s", (paneContent) => {
+    expect(assessNativeResumeProbe({ runtime: "codex", paneCommand: "codex", paneContent }).status).toBe("inconclusive");
+  });
   it.each([
     "Hooks need review\n2 hooks are new or changed.\n2. Trust all and continue",
     "Hooks\nLifecycle hooks from config and enabled plugins.\n2 hooks need review before they can run.\nPress t to trust all; enter to review hooks; esc to close",
@@ -420,7 +423,7 @@ describe("native resume probe", () => {
     });
   });
 
-  it("classifies a live Codex foreground process without failure markers as resumed", () => {
+  it("keeps a foreground Codex process without a native prompt unverified", () => {
     expect(
       assessNativeResumeProbe({
         runtime: "codex",
@@ -428,9 +431,9 @@ describe("native resume probe", () => {
         paneContent: "Ready.",
       })
     ).toEqual({
-      status: "resumed",
-      code: "active_runtime",
-      detail: "Codex is the active foreground process in the probe pane.",
+      status: "inconclusive",
+      code: "awaiting_runtime",
+      detail: "Codex did not report an explicit failure, but an interactive conversation has not been observed.",
     });
   });
 
