@@ -503,9 +503,15 @@ your circumstances is configuration, and the ones that are not, another agent ca
   Open the instance row for one continuous cross-rig agent table with pod separators and material
   `RECENT` transitions; drill into a rig, mission, slice, or agent without losing the owning
   identity. Use the mission's workflow/packet view and Specs purpose/source to understand work.
-  Tab completes commands and snapshot arguments; Recent opens original events. `connections`
-  compares effective config with running services and human bindings, passively; dated
-  verification does not prove delivery. `timezone` gives persistent local-time guidance.
+  Tab completes commands and snapshot arguments; Recent opens original events. **CONFIG**
+  browses instance/work roots, context, display, waiting, recovery, activity and advanced settings;
+  Slack and people are one category. Select a category, use right/left to change panes,
+  Enter for full value/default/source/scope, `/` to search labels and keys, and Escape or `back`
+  to return. Long detail scrolls; `v` enables terminal text selection. `refresh` reads the current
+  view again without changing settings or verifying delivery. Sources & coverage names exclusions,
+  daemon/CLI identity and the client timezone separately. Resolved settings do not prove runtime
+  adoption. The legacy `connections` command still inspects gateway services and human routes;
+  dated verification does not prove delivery. `timezone` gives persistent local-time guidance.
   **`rig tui commands`** lists everything it can do without launching it. **`rig ui open`** is
   unmaintained, best-effort, and replaced by the TUI, so never diagnose product behaviour from
   the web UI. The TUI plus Slack are the human surface; the CLI plus terminal are the agent surface.

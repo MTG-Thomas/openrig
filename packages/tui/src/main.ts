@@ -545,7 +545,7 @@ async function run(): Promise<void> {
           draw();
         } else {
           const action = resolveEscapeAction(ev, view.get(), inputLine !== "");
-          if (action) view.dispatch(action);
+          if (action) perform(action);
         }
         inputLine = "";
       } else if (ev.type === "key" && ev.key === "enter") {

@@ -1,3 +1,4 @@
+import { CONFIG_CATEGORIES } from "./config/config-model.js";
 import { availableTabs } from "./commands/registry.js";
 import { DEFAULT_TIME_ZONE, resolveTimeZone } from "./time.js";
 // ONE instance-scoped view-state with ONE mutation path (dispatch) — PIN 1.
@@ -81,10 +82,10 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 
   function dispatch(action: Action): ViewState {
     const previous = state;
-    if (["jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone"].includes(action.type)) state = { ...state, recentOpen: null, timeZoneHelp: false };
+    if (["jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, recentOpen: null, timeZoneHelp: false };
     state = reduce(state, action, getSnapshot());
     // Connections is a side trip from work, including explorer/palette entry.
-    if (action.type === "jump" && action.section !== "connections" && previous.section !== "connections") state.history = [];
+    if (action.type === "jump" && !["connections", "config"].includes(action.section) && !["connections", "config"].includes(previous.section)) state.history = [];
     else if (!["back", "execution-close"].includes(action.type) && !state.lastError && location(previous) !== location(state)) {
       state.history = [...(previous.history ?? []), navigationFrame(previous)].slice(-50);
     }
@@ -121,12 +122,20 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
       return next;
     case "error":
       return { ...next, lastError: action.message };
+    case "config-category": {
+      if (!CONFIG_CATEGORIES.some((c) => c.id === action.category)) return { ...next, lastError: "Unknown CONFIG category" };
+      return syncSelection(resetContent({ ...next, section: "config", drill: [], viewTab: "table", configCategory: action.category, configKey: null, filter: "", healthOpen: null }), snap);
+    }
+    case "config-setting":
+      return resetContent({ ...next, section: "config", drill: [], viewTab: "table", configKey: action.key, healthOpen: null });
     case "jump": {
       // scopes: jumping anywhere (incl. back to :scopes) closes the opened slice.
       next.scopesMission = null;
       next.scopesSelected = null;
       next.executionOpen = null;
       next.healthOpen = null;
+      next.configCategory = null;
+      next.configKey = null;
       if (!state.sections.some((s) => s.name === action.section))
         return { ...next, lastError: `unknown section "${action.section}"` };
       return syncSelection(
@@ -215,7 +224,9 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
     case "notice":
       return { ...next, notice: action.message };
     case "filter":
-      return resetContent({ ...next, filter: action.text, selection: 0 });
+      return state.section === "config"
+        ? syncSelection({ ...resetContent({ ...next, filter: action.text, configKey: null, configCategory: "all" }), focusedPane: "content" }, snap)
+        : resetContent({ ...next, filter: action.text, selection: 0 });
     case "select": {
       const count = Math.max(action.rowCount ?? Number.MAX_SAFE_INTEGER, 1);
       const target = action.index ?? state.selection + (action.delta ?? 0);
@@ -252,12 +263,12 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
 }
 
 function location(s: ViewState): string {
-  return JSON.stringify([s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp]);
+  return JSON.stringify([s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey]);
 }
 
 function navigationFrame(s: ViewState): NavigationFrame {
-  const { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp } = s;
-  return { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp };
+  const { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
+  return { section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
 }
 
 function clearScopeCoordinatesOnSectionChange(previous: ViewState, next: ViewState): ViewState {
@@ -279,11 +290,12 @@ function resetContent(state: ViewState): ViewState {
  *  footer/indicator affordances (render.ts) both read this ONE predicate, so
  *  the hint can never again promise a gesture the keys don't perform. */
 export function specDetailArrowsScroll(state: ViewState): boolean {
-  return state.section === "specs" && state.drill.length > 0 && state.contentMaxOffset > 0 && state.focusedPane !== "content";
+  return ((state.section === "specs" && state.drill.length > 0) || (state.section === "config" && !!state.configKey)) && state.contentMaxOffset > 0 && state.focusedPane !== "content";
 }
 
 /** The explorer key for the state's current location (drill leaf or section). */
 export function locationKey(state: ViewState): string {
+  if (state.section === "config" && state.configCategory) return `config:${state.configCategory}`;
   if (state.section === "scopes" && state.scopesSelected) return `scopes-slice:${state.scopesSelected.mission}/${state.scopesSelected.slice}`;
   if (state.section === "scopes" && state.scopesMission) return `scopes-mission:${state.scopesMission}`;
   const names = new Map(state.drill.map((seg) => [seg.kind, seg.name]));
@@ -493,6 +505,8 @@ export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): Expl
   const rows: ExplorerRow[] = [];
   for (const section of state.sections) {
     const active = section.name === state.section;
+    // The legacy command remains addressable; CONFIG owns normal settings navigation.
+    if (section.name === "connections" && !active) continue;
     const label =
       section.name === "topology"
         ? "TOPOLOGY"
@@ -505,6 +519,11 @@ export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): Expl
     // a disclosure glyph that cannot be toggled.
     rows.push({ label, action: { type: "jump", section: section.name }, key: `section:${section.name}` });
     if (!active) continue;
+    if (section.name === "config") {
+      rows.push(...CONFIG_CATEGORIES.map((c) => ({ label: "  " + c.label, key: `config:${c.id}`, action: { type: "config-category" as const, category: c.id } })));
+      if (state.history?.length) rows.push({ label: "  Back", key: "config:back", action: { type: "back" } });
+      continue;
+    }
     if (section.name === "scopes") {
       const expanded = new Set(state.expanded);
       rows.push(...scopesExplorerRows(snap.scopes, expanded, "  "));

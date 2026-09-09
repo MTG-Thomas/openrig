@@ -8,6 +8,7 @@
 // renders in every state; "standard" requires the normal daemon-up shell.
 import type { Action, ResourceKind, SectionDef, FleetSnapshot, ViewState, ViewTab } from "../types.js";
 
+import { CONFIG_CATEGORIES } from "../config/config-model.js";
 import { GRAPH_STYLE_NAMES } from "../topology/render-graph.js";
 
 export interface CompletionContext { state: ViewState; snapshot: FleetSnapshot }
@@ -83,9 +84,12 @@ function drillEntry(resource: ResourceKind): CommandEntry {
 }
 
 export const COMMAND_REGISTRY: readonly CommandEntry[] = [
+  { name: "config", aliases: [], args: "[category]", description: "browse instance settings; Slack is one category", context: "standard", sample: "config", complete: () => CONFIG_CATEGORIES.map((c) => c.id), build: (category) => category ? { type: "config-category", category } : { type: "jump", section: "config" } },
+  { name: "setting", aliases: [], args: "<key>", description: "open a setting with its full value, source and scope", context: "standard", sample: "setting workspace.root", complete: ({ snapshot }) => (snapshot.config?.entries ?? []).map((e) => e.key), build: (key) => key ? { type: "config-setting", key } : { type: "error", message: "setting needs a key" } },
+  { name: "refresh", aliases: [], args: "", description: "read the current view again; stored values do not prove runtime adoption", context: "standard", sample: "refresh", build: () => ({ type: "noop" }) },
   { name: "timezone", aliases: [], args: "", description: "show local time setting and persistent rig config instructions", context: "standard", sample: "timezone", build: () => ({ type: "timezone" }) },
   { name: "recent", aliases: [], args: "<transition-id>", description: "inspect an original event from the served Recent window", context: "standard", sample: "recent 1", complete: ({ snapshot }) => (snapshot.recentTransitions ?? []).map((r) => String(r.transitionId)), build: (id) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) ? { type: "recent-open", transitionId: Number(id) } : { type: "error", message: "recent needs a transition id from the served window" } },
-  { name: "connections", aliases: [], args: "", description: "inspect effective settings, running services and human routes (passive)", context: "standard", sample: "connections", build: () => ({ type: "jump", section: "connections" }) },
+  { name: "connections", aliases: [], args: "", description: "legacy gateway/routes view; use CONFIG for instance settings", context: "standard", sample: "connections", build: () => ({ type: "jump", section: "connections" }) },
   { name: "back", aliases: [], args: "", description: "return to the previous view, selection and scroll", context: "standard", sample: "back", build: () => ({ type: "back" }) },
   { name: "mission", aliases: [], args: "<name>", description: "open a mission's work and workflows", context: "standard", sample: "mission release-demo", complete: ({ snapshot }) => (snapshot.scopes ?? []).map((m) => m.mission), build: (name) => name ? { type: "scopes-mission-open", mission: name } : { type: "error", message: "mission needs a name" } },
   { name: "workflow", aliases: [], args: "<instance-id>", description: "open a workflow in the selected mission", context: "standard", sample: "workflow example", complete: (ctx) => workflowArgs(ctx, false), build: (name) => name ? { type: "execution-open", key: `workflow:${name}` } : { type: "error", message: "workflow needs an instance id" } },

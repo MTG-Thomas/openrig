@@ -11,6 +11,8 @@
 //     by construction: identity/summary/evidence/threshold render verbatim.
 //   - host/rig-down composes BESIDE the items (hostsDown), never into them.
 //   - A failed read leaves its portion honest-empty and records a NAMED error.
+import { emptySnapshot } from "./state.js";
+import type { ConfigRead } from "./config/config-model.js";
 import type { ConnectionsRead, ControlPlaneRead } from "./connections/connections-model.js";
 import { DaemonClient } from "./daemon-client.js";
 import { parse as parseYaml } from "yaml";
@@ -358,6 +360,22 @@ export async function hydrateSnapshot(
       readErrors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
+  }
+
+  // CONFIG never invokes fleet aggregation, host probes, queue enrichment or provider checks.
+  // Failures replace earlier values with an explicit unavailable state.
+  if (viewContext?.section === "config") {
+    const passive = async <T>(label: string, read: () => Promise<unknown>): Promise<T | null> => {
+      try { return await read() as T; } catch { readErrors.push(`${label}: unavailable`); return null; }
+    };
+    const [config, controlPlane, connections] = await Promise.all([
+      passive<ConfigRead>("CONFIG", () => client.configBrowser()),
+      passive<ControlPlaneRead>("control plane", () => client.health()),
+      passive<ConnectionsRead>("Slack observation", () => client.connections()),
+    ]);
+    let daemonTarget = "unreported";
+    try { daemonTarget = new URL(client.baseUrl).origin; } catch { /* no raw invalid target */ }
+    return { ...emptySnapshot(), config, controlPlane, connections, daemonTarget, hydratedAt: new Date().toISOString(), readErrors };
   }
 
   const topologyLeaf = viewContext?.section === "topology" ? viewContext.drill.at(-1) : undefined;

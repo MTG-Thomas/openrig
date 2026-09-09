@@ -1,5 +1,6 @@
 import { DEFAULT_TIME_ZONE, displayTime } from "./time.js";
 import { startupLines, type StartupState } from "./startup.js";
+import { configLines } from "./config/config-model.js";
 import { connectionsLines } from "./connections/connections-model.js";
 // Hand-rolled ANSI renderer (Phase-0 substrate decision). Pure function:
 // (state, snapshot) → {lines, hitMap, explorerRows}. BOTH panes emit hit
@@ -667,6 +668,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
   const lines: ContentLine[] = [];
   if (state.timeZoneHelp) return timeZoneLines(state, contentWidth);
   if (state.recentOpen) return recentDetailLines(state, snap, contentWidth);
+  if (state.section === "config") return configLines(state, snap, contentWidth);
   if (state.section === "connections") return connectionsLines(snap, contentWidth, state.timeZone);
   if (state.healthOpen) return healthDetailLines(snap, state.healthOpen, contentWidth, state.timeZone);
   // PULSE is a FULL-WIDTH view handled by an early return in renderScreen
@@ -778,7 +780,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       lines.push({ text: `  style: ${state.graphStyle} · style hatchet|braille|braille-fallback rides the command bar` });
       return lines;
     }
-    lines.push(listItem("Configuration and human routes", { type: "jump", section: "connections" }));
+    lines.push(listItem("CONFIG · instance settings", { type: "jump", section: "config" }));
     lines.push(healthSummaryLine(snap, healthScope, contentWidth));
     lines.push({ text: state.filter ? `/ filter agents: ${state.filter} · / replace · esc clear` : "/ filter agents…" });
     if (state.viewTab === "overview") {
@@ -1230,6 +1232,7 @@ function keybindHints(state: ViewState): string {
   // hint hid exactly where it was needed). When ↑↓ themselves scroll (a
   // scrollable spec detail), the nav label says so; otherwise ↑↓ move and the
   // page keys carry the scroll.
+  if (state.section === "config") return state.configKey ? "↑↓ scroll · esc back · v select/copy · refresh · q quit" : "↑↓ move · ←→ pane · ⏎ open · / search · esc back · refresh · q quit";
   const arrowsScroll = specDetailArrowsScroll(state);
   const nav = arrowsScroll ? "↑↓ scroll" : "↑↓ move";
   const pageScroll = state.contentMaxOffset > 0 && !arrowsScroll ? "⇞⇟ scroll · " : "";

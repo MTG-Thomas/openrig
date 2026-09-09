@@ -104,6 +104,15 @@ export class DaemonClient {
   }
 
   /** Running daemon identity. `selfHostId` may be absent on an older daemon. */
+  async configBrowser() {
+    const data = await this.get("/api/config?view=browser") as Partial<import("./config/config-model.js").ConfigRead> | null;
+    // Older daemons ignore the view query and return raw settings; never render that response.
+    if (!data || data.readOnly !== true || !Array.isArray(data.entries) || !Array.isArray(data.sources) || !Array.isArray(data.exclusions)) {
+      throw new Error("CONFIG browser unavailable");
+    }
+    return data;
+  }
+
   connections() { return this.get("/api/gateway/connections"); }
 
   health() {

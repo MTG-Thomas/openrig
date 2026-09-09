@@ -323,6 +323,7 @@ export interface HealthSnapshot {
 }
 
 export interface FleetSnapshot {
+  config?: import("./config/config-model.js").ConfigRead | null;
   connections?: import("./connections/connections-model.js").ConnectionsRead | null;
   controlPlane?: import("./connections/connections-model.js").ControlPlaneRead | null;
   daemonTarget?: string;
@@ -406,6 +407,8 @@ export type Action =
   | { type: "timezone" }
   | { type: "recent-open"; transitionId: number }
   | { type: "back" }
+  | { type: "config-category"; category: string }
+  | { type: "config-setting"; key: string }
   | { type: "noop" }
   | { type: "error"; message: string }
   | { type: "jump"; section: string }
@@ -461,6 +464,8 @@ export interface ViewState {
   timeZoneHelp: boolean;
   recentOpen: RecentTransitionSnap | null;
   history?: NavigationFrame[];
+  configCategory?: string | null;
+  configKey?: string | null;
   /** Canonical health finding opened from any instance/rig/seat surface. */
   healthOpen: string | null;
   /** SCOPES view: the mission whose execution story is open (null = selector only). */
@@ -500,7 +505,7 @@ export interface ViewState {
   lastError: string | null;
 }
 
-export type NavigationFrame = Pick<ViewState, "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen">;
+export type NavigationFrame = Pick<ViewState, "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
 
 export interface ViewStateStore {
   instanceId: string;

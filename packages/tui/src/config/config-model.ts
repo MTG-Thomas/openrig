@@ -1,4 +1,5 @@
 import { fieldLine, wrapDetailLines, type ContentLine } from "../detail.js";
+import type { FleetSnapshot, ViewState } from "../types.js";
 
 export interface ConfigEntry {
   key: string;
@@ -149,4 +150,54 @@ export function configSourceLines(read: ConfigRead | null, width: number): Conte
     { text: "" }, ...read.exclusions.map((text) => ({ text })),
     { text: "Resolved settings describe the daemon instance. Client display and rig declarations retain their own scopes." },
   ], width);
+}
+
+/** Settings use the normal explorer, content targets, wrapping and history. */
+export function configLines(state: ViewState, snap: FleetSnapshot, width: number): ContentLine[] {
+  const read = snap.config ?? null;
+  const category = state.configCategory;
+  const back: ContentLine = { text: "‹ Back", action: { type: "back" } };
+  if (state.configKey) return [back, ...configDetailLines(read, state.configKey, width)];
+  if (category === "sources") return [back, ...wrapDetailLines([
+    fieldLine({ label: "target", value: snap.daemonTarget ?? "Unreported" }),
+    fieldLine({ label: "daemon", value: snap.controlPlane ? `${snap.controlPlane.semver ?? "Unstamped"} · ${snap.controlPlane.commit ?? "commit unreported"}${snap.controlPlane.dirty ? " · dirty" : ""}` : "Unavailable" }),
+    fieldLine({ label: "launching CLI", value: snap.launchingCli ?? "Unreported (direct TUI launch)" }),
+    fieldLine({ label: "client timezone", value: `${state.timeZone} · selected when this TUI started; independent of daemon setting` }),
+    fieldLine({ label: "instance home", value: read?.home ?? "Unavailable" }),
+    fieldLine({ label: "observed", value: read?.observedAt ?? "Unavailable" }),
+  ], width), ...configSourceLines(read, width)];
+  const name = read?.entries.find((e) => e.key === "host.name");
+  const identity = snap.controlPlane?.selfHostId ?? (name ? configValue(name) : "Unreported");
+  const heading: ContentLine[] = wrapDetailLines([
+    { text: category ? CONFIG_CATEGORIES.find((c) => c.id === category)?.label ?? "Settings" : "Your instance settings" },
+    { text: `${identity} · ${snap.daemonTarget ?? "target unreported"}` },
+    { text: "Read only · resolved now; application not inferred" },
+  ], width);
+  if (!read) return [...heading, ...wrapDetailLines([
+    { text: "" }, { text: "CONFIG unavailable. Refresh to try this daemon again." },
+    { text: "An older daemon may not support this view." },
+    { text: "Optional diagnosis: rig status; rig --version; rig daemon logs" }, back,
+  ], width)];
+  if (!category) return [...heading, { text: "" }, ...[
+    ["Where is my work?", "workspace.root"], ["Which context root?", "context.root"],
+    ["Which timezone?", "ui.timezone"], ["How long between retries?", "queue.wake_retry_interval_seconds"],
+    ["Are periodic snapshots on?", "snapshots.periodic.enabled"],
+  ].map(([label, key]) => ({ text: label!, action: { type: "config-setting" as const, key: key! } })),
+  { text: "" }, { text: `Slack: ${snap.connections?.state ?? "unavailable"}` },
+  { text: "Categories at left · / searches every setting" },
+  { text: "Sources & coverage holds identity and exclusions", action: { type: "config-category", category: "sources" } }, back];
+  const entries = configEntries(read, category, state.filter);
+  const lines: ContentLine[] = [...heading];
+  if (category === "slack") lines.push(...wrapDetailLines([
+    { text: `Slack: ${snap.connections?.state ?? "unavailable"} · external reach unverified` },
+    { text: `Source: ${read.sources.find((s) => s.id === "slack")?.state ?? "unavailable"}` },
+    { text: `Gateway: ${snap.connections?.running.state ?? "unreported"}; configuration ${snap.connections?.running.applied ?? "unreported"}` },
+    { text: `Next: ${snap.connections?.nextAction ?? "rig gateway status"}` },
+    { text: "Guidance only; verification contacts Slack explicitly." },
+  ], width));
+  if (category === "display") lines.push(...wrapDetailLines([{ text: `Client timezone: ${state.timeZone} (selected at TUI start)` }], width));
+  lines.push({ text: `${entries.length} settings${state.filter ? ` matching “${state.filter}”` : ""} · Enter opens full value/source` }, { text: "" });
+  lines.push(...configListLines(entries, width).map((line, i) => ({ ...line, action: { type: "config-setting" as const, key: entries[i]!.key } })));
+  if (!entries.length) lines.push({ text: "No matching settings. Escape clears search." });
+  return lines;
 }
