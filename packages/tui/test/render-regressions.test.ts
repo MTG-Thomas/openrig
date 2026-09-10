@@ -104,7 +104,7 @@ describe("live visual regressions", () => {
     expect(screen.lines.some((line) => line.includes("▶") && line.includes("spec-15"))).toBe(true);
   });
 
-  it("does not advertise open on a Needs-You target that cannot navigate", () => {
+  it("does not turn legacy agent signals into human Attention requests", () => {
     const base = demoSnapshot();
     const snap: FleetSnapshot = {
       ...base,
@@ -114,10 +114,9 @@ describe("live visual regressions", () => {
     view.dispatch({ type: "jump", section: "needs" });
 
     const screen = renderScreen(view.get(), snap, { cols: 140, rows: 20 });
-    const lineIndex = screen.lines.findIndex((line) => line.includes("qitem-123"));
-    expect(lineIndex).toBeGreaterThanOrEqual(0);
-    expect(screen.lines[lineIndex]).not.toContain("open ▸");
-    expect(screen.hitMap.some((hit) => hit.y === lineIndex + 1 && hit.x1 > 30)).toBe(false);
+    expect(screen.lines.join("\n")).not.toContain("qitem-123");
+    expect(screen.lines.join("\n")).toContain("Unavailable: Attention");
+    expect(screen.contentTargets).toHaveLength(0);
   });
 
   it("never opens a local seat for a remote Needs row with the same canonical session", () => {
@@ -132,9 +131,8 @@ describe("live visual regressions", () => {
     const view = createViewState({ instanceId: "t", getSnapshot: () => snap });
     view.dispatch({ type: "jump", section: "needs" });
     const screen = renderScreen(view.get(), snap, { cols: 140, rows: 34 });
-    const row = screen.lines.find((line) => line.includes("remote guard needs attention"));
-    expect(row).toContain("[remote-a]");
-    expect(row).not.toContain("open ▸");
+    expect(screen.lines.join("\n")).not.toContain("remote guard needs attention");
+    expect(screen.lines.join("\n")).toContain("Unavailable: Attention");
     expect(screen.contentTargets).toHaveLength(0);
   });
 

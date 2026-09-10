@@ -327,6 +327,7 @@ export interface HealthSnapshot {
 export interface ProjectSelection { id: string; root: string }
 export interface ProjectEntry extends ProjectSelection { name: string; sourcePath: string | null; missionsRoot: string; error?: string }
 export interface FleetSnapshot {
+  attentionRead?: import("@openrig/daemon/attention").AttentionRead | null;
   projects?: { catalogPath: string; projects: ProjectEntry[] } | null;
   projectRead?: ProjectSelection | null;
   projectSources?: Record<string, string>;
@@ -419,6 +420,8 @@ export type Action =
   | { type: "terminal-result"; view: string; message: string }
   | { type: "terminal-preview"; view: string }
   | { type: "terminal-page"; page: number }
+  | { type: "attention-open"; id: string }
+  | { type: "attention-source"; path: string }
   | { type: "file-open"; target: import("./reading.js").FileTarget }
   | { type: "external-open"; url: string }
   | { type: "startup"; key: string }
@@ -483,6 +486,7 @@ export interface ViewState {
   terminalResult?: { view: string; message: string };
   terminalView?: string | null;
   terminalPage?: number;
+  attentionOpen?: string | null;
   file?: import("./reading.js").FileTarget | null;
   externalUrl?: string | null;
   timeZone: string;
@@ -532,7 +536,7 @@ export interface ViewState {
   lastError: string | null;
 }
 
-export type NavigationFrame = Pick<ViewState, "project" | "terminalView" | "terminalPage" | "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
+export type NavigationFrame = Pick<ViewState, "attentionOpen" | "project" | "terminalView" | "terminalPage" | "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
 
 export interface ViewStateStore {
   instanceId: string;

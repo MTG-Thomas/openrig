@@ -40,15 +40,16 @@ describe("motion primitives", () => {
 
 describe("motion wiring + region discipline", () => {
   const snap = demoSnapshot();
-  it("the needs-you ⚑ glyph carries the slow attention-pulse (blink) — the ONLY persistent motion in that region", () => {
+  it("unavailable Attention stays static and does not pulse legacy operational signals", () => {
     const s = createViewState({ instanceId: "m", getSnapshot: () => snap });
     s.dispatch({ type: "jump", section: "needs" });
     const screen = renderScreen(s.get(), snap, { cols: 140, rows: 34 });
     const styled = stylizeLines(screen, createStyle("truecolor"));
-    const needsRow = styled.find((l) => stripAnsi(l).includes("⚑"))!;
-    expect(needsRow, "pulse on the needs-you glyph").toMatch(/\x1b\[[0-9;]*5;[0-9;]*m⚑|\x1b\[5m⚑/);
-    // discipline: the ⚑ is the only blinking cell on that row
-    expect((needsRow.match(/\x1b\[5;/g) ?? []).length).toBe(1);
+    const body = styled.join("\n");
+    expect(body).toContain("Unavailable: Attention");
+    expect(body).not.toContain("⚑");
+    expect(body).not.toMatch(/\x1b\[(?:\d+;)*5(?:;\d+)*m/);
+    expect(screen.motionActive).toBeFalsy();
     styled.forEach((l, i) => expect(stripAnsi(l)).toBe(screen.lines[i]));
   });
 
@@ -129,15 +130,16 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
     expect(failed.motionActive).toBeFalsy();
   });
 
-  it("HUMAN-QUEUE: in-flight spins with '(read pending)'; a settled unprobed state renders static without it", () => {
+  it("Attention source absence remains unavailable during and after a refresh", () => {
     const unprobed = { ...structuredClone(snap), humanQueueProbed: false, needs: [] };
     const s = createViewState({ instanceId: "hq", getSnapshot: () => unprobed });
     s.dispatch({ type: "jump", section: "needs" });
     const loading = renderScreen(s.get(), unprobed, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING }).lines.join("\n");
-    expect(loading).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] human-queue: not yet known \(read pending\)/);
+    expect(loading).toContain("Unavailable: Attention sources have not answered.");
+    expect(loading).not.toContain("No current items");
     const settled = renderScreen(s.get(), unprobed, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor" });
-    const line = settled.lines.find((l) => l.includes("human-queue"))!;
-    expect(line).toMatch(/human-queue: not yet known/);
+    const line = settled.lines.find((l) => l.includes("Unavailable: Attention"))!;
+    expect(line).toContain("sources have not answered");
     expect(line).not.toMatch(/read pending|[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
     expect(settled.motionActive).toBeFalsy();
   });
@@ -156,14 +158,15 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
     }
   });
 
-  it("region discipline: while a ⚑ pulse is visible on the needs page, the IN-FLIGHT spinner degrades to the static dot", () => {
+  it("Attention does not animate an old fleet pulse while its own sources are absent", () => {
     const probing = { ...structuredClone(snap), humanQueueProbed: false };
     const s = createViewState({ instanceId: "rd", getSnapshot: () => probing });
     s.dispatch({ type: "jump", section: "needs" });
     const screen = renderScreen(s.get(), probing, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING });
-    const pending = screen.lines.find((l) => l.includes("not yet known"))!;
-    expect(pending).toMatch(/· human-queue: not yet known/); // static — the ⚑ pulse owns the region's one persistent animation
-    expect(pending).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+    const unavailable = screen.lines.find((l) => l.includes("Unavailable: Attention"))!;
+    expect(unavailable).toBeDefined();
+    expect(unavailable).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⚑]/);
+    expect(screen.motionActive).toBeFalsy();
   });
 });
 

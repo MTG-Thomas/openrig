@@ -95,7 +95,7 @@ export class OperatingPostureService {
         ctx.phase = { value: workflow.step_id, source: "workflow:" + workflow.instance_id + "/frontier/" + ctx.qitemId };
       }
       if (row.destination_session.includes("@")) merge("rigId", row.destination_session.slice(row.destination_session.lastIndexOf("@") + 1), "queue:" + ctx.qitemId + "/destination");
-      if (!ctx.missionId) throw new Error("qitem project/mission linkage is missing");
+      if (!ctx.projectId && !ctx.missionId) throw new Error("qitem project/mission linkage is missing");
     }
     if (ctx.rigId) {
       ctx.sources.push("rig:" + ctx.rigId);
@@ -207,6 +207,8 @@ export class OperatingPostureService {
     const unresolved = results.find(r => r.result.posture === "unknown");
     if (unresolved) return { ...unknown(unresolved.qitemId + ": " + unresolved.result.reason, unresolved.result.context), members };
     if (new Set(results.map(r => r.result.posture)).size !== 1) return { ...unknown("Finding spans different operating postures; inspect its exact members."), members };
+    if (new Set(results.map(r => JSON.stringify([r.result.context?.projectId, r.result.context?.missionId, r.result.context?.workstreamId]))).size !== 1)
+      return { ...unknown("Finding spans different work contexts; no single project authority is selected."), members };
     return { ...results[0]!.result, members, reason: "All finding members resolve to " + results[0]!.result.posture + "; binding/source above describe the first member. Inspect members for each source." };
   }
 }

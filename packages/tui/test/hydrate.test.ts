@@ -178,10 +178,8 @@ function expectIncompleteNeedsTruth(snap: Awaited<ReturnType<typeof hydrateSnaps
   const view = createViewState({ instanceId: "t", getSnapshot: () => snap });
   view.dispatch({ type: "jump", section: "needs" });
   const text = renderScreen(view.get(), snap, { cols: 140, rows: 34 }).lines.join("\n");
-  // guard round-5 (NOT-CLEAR at b92c2a58): a SETTLED unprobed queue renders the
-  // honest static "not yet known" — "(read pending)" is reserved for a real
-  // in-flight refresh (load lifecycle), so the settled default drops it
-  expect(text).toContain("human-queue: not yet known");
+  // A legacy fleet read cannot stand in for the dedicated Attention authority.
+  expect(text).toContain("Unavailable: Attention sources have not answered.");
   expect(text).not.toContain("(read pending)");
   expect(text).not.toContain("no fleet attention items right now");
 }
@@ -344,7 +342,7 @@ describe("snapshot hydration over the §4.A reads (Phase 2)", () => {
     ]);
   });
 
-  it("keeps a served-first high human gate visible at 140x34 above a long normal-derived tail", async () => {
+  it("preserves legacy fleet priority data without substituting it for the Attention authority", async () => {
     const items = [
       { source: "agent", identity: "q-high", summary: "HIGH HUMAN APPROVAL", leg: "human-routed", where: "human@kernel", priority: "high", destinationSession: "human@kernel", derived: null, hostId: "local" },
       ...Array.from({ length: 30 }, (_, index) => ({
@@ -362,10 +360,11 @@ describe("snapshot hydration over the §4.A reads (Phase 2)", () => {
     view.dispatch({ type: "jump", section: "needs" });
     const screen = renderScreen(view.get(), snap, { cols: 140, rows: 34 });
 
-    const humanRow = screen.lines.findIndex((line) => line.includes("HIGH HUMAN APPROVAL"));
-    const firstNormalRow = screen.lines.findIndex((line) => line.includes("normal exception 0"));
-    expect(humanRow).toBeGreaterThanOrEqual(0);
-    expect(humanRow).toBeLessThan(firstNormalRow);
+    expect(snap.needs[0]?.detail).toContain("HIGH HUMAN APPROVAL");
+    const text = screen.lines.join("\n");
+    expect(text).toContain("Unavailable: Attention");
+    expect(text).not.toContain("HIGH HUMAN APPROVAL");
+    expect(text).not.toContain("normal exception 0");
   });
 
   it("marks fleet attention incomplete when any remote host is absent, never proven-empty", async () => {

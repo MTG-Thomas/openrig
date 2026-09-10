@@ -119,6 +119,7 @@ import { registerTerminalWs } from "./routes/terminal-ws.js";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { steeringRoutes } from "./routes/steering.js";
 import { healthSummaryRoutes } from "./routes/health-summary.js";
+import { attentionRoutes } from "./routes/attention.js";
 import { healthRoutes } from "./routes/health.js";
 import { gatewayRoutes } from "./routes/gateway.js";
 import type { StreamStore } from "./domain/stream-store.js";
@@ -784,6 +785,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/api/steering", steeringRoutes());
   app.route("/api/health-summary", healthSummaryRoutes());
   app.route("/api/health", healthRoutes());
+  app.route("/api/attention", attentionRoutes());
   app.route("/api/health-diagnosis", healthDiagnosisRoutes());
   // S10 — gateway subsystem admin (slack enable/disable with the seeding rule preserved).
   app.route("/api/gateway", gatewayRoutes());

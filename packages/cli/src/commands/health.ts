@@ -29,8 +29,12 @@ interface DiagnosisEntry {
   finding: HealthRecord;
   packet: Record<string, unknown> & { instructions: string };
   receipts: unknown[];
-  authority: Array<{ path: string; state: string; content?: string }>;
-  disposition: { verdict: string; causalStart: string | null; steering: string; uncertainty: string; evidenceRefs: string[] } | null;
+  authority: Array<{ path: string; state: string; content?: string; role?: string; reason?: string; selectedBy?: string }>;
+  disposition: { verdict: string; causalStart: string | null; steering: string; uncertainty: string; evidenceRefs: string[];
+    correction?: { applicability: string; causalJudgment: string; action: { state: string; summary: string }; effect: { state: string; summary: string } } } | null;
+  assessment?: { actor?: string; at: string } | null;
+  behavioralEffect?: string;
+  guidance?: string;
   humanDelivery: { qitemId: string; outcome: string } | null;
   notificationReadiness?: { ready: boolean; reason: string } | null;
 }
@@ -48,7 +52,7 @@ function diagnosisPreview(entry: DiagnosisEntry) {
     }
     return copy as T;
   }
-  const result = without(entry, ["receipts"]);
+  const result = without(entry, ["receipts", "guidance"]);
   result.row = without(entry.row, ["body", "chainOfRecord"], "row.");
   result.packet = without(entry.packet, ["finding", "authority", "instructions"], "packet.");
   result.finding = without(entry.finding, ["evidence"], "finding.");
@@ -416,7 +420,15 @@ list/explain never mutate. Diagnosis mutations use explicit subcommands; automat
           console.log(`  Start: ${entry.disposition?.causalStart ?? "unknown"}`);
           console.log(`  Steering: ${entry.disposition?.steering ?? "not yet recorded"}`);
           console.log(`  Uncertainty: ${entry.disposition?.uncertainty ?? entry.finding.indeterminateReason ?? "diagnosis pending"}`);
-          for (const ref of entry.authority) console.log(`  Authority (${ref.state}): ${ref.path}`);
+          if (entry.assessment) console.log(`  Attributed assessment: ${entry.assessment.actor ?? "unknown"} at ${entry.assessment.at}`);
+          const correction = entry.disposition?.correction;
+          if (correction) {
+            console.log(`  Applicability: ${correction.applicability}`);
+            console.log(`  Causal judgment: ${correction.causalJudgment}`);
+            console.log(`  Action (${correction.action.state}): ${correction.action.summary}`);
+          }
+          console.log(`  Later behavioral effect (owner report): ${correction?.effect.state ?? "unobserved"}${correction ? " — " + correction.effect.summary : " — a disposition or clearance alone is not changed behavior"}`);
+          for (const ref of entry.authority) console.log(`  ${ref.role ?? "Authority"} (${ref.state}): ${ref.path}${ref.selectedBy ? " selected by " + ref.selectedBy : ""}${ref.reason ? " — " + ref.reason : ""}`);
           if (occurrenceRead) {
             const view = diagnosisPreview(entry).readView;
             console.log(`  Evidence preview; full record ${view.fullJsonBytes} JSON bytes: ${view.fullCommand}`);

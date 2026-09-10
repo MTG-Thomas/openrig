@@ -80,7 +80,7 @@ and 99. CLI/TUI finding explanations show the policy version used.
 
 Ordinary queue activity can admit a diagnosis without a health checkpoint.
 The source discovers declared handoff families touched in the observation window,
-uses their explicit `mission:` / `slice:` tags, and collects exact transition IDs,
+uses their explicit `project:` / `mission:` / `slice:` tags and workflow membership, and collects exact transition IDs,
 normal project/mission/slice authority, progress and proof references, and workflow
 closure evidence. It never interprets Markdown or counts proof files, approvals,
 C1 pairing, commits, tests, or terminal rows as accepted product outcomes.
@@ -131,13 +131,15 @@ traffic in the same family starts a new episode. Repeated reads never advance
 these boundaries. One occurrence and the existing owner cooldown apply to each
 episode; a disposition stops repeated requests.
 
-This bounded source covers explicitly tagged mission work: at most 2,000 touched
+This bounded source covers explicitly linked project or mission work: at most 2,000 touched
 qitems, 200 roots, 1,000 members / 10,000 transitions per family, 200 workflow
 receipts, 200 declared slices, and 100 proof files per selected slice. Overflow
 refuses visibly. Context files are bounded to 64 KiB. A lineage beginning before
 the retained window remains indeterminate, with the missing interval named.
-Untagged or ambiguously mission-tagged work is outside this source's coverage;
-absence is not health. The packet includes missing context references so an agent
+Project planning does not require a successor mission: an explicit project identity
+resolves its current context, with mission and phase absent unless evidenced.
+Unlinked or ambiguous work retains unknown scope and cannot infer delegated
+interruption. Absence is not health. The packet includes missing context references so an agent
 can name or repair its own knowledge gap without manufacturing source truth.
 
 ## Optional outcome-boundary checkpoint
@@ -221,7 +223,7 @@ indeterminate source truth and cannot admit a diagnosis. Availability is checked
 again on every projection; presence does not certify the artifact's meaning.
 This authority assessment is distinct from the
 project/mission/slice documents supplied to the diagnosing agent. Embedded
-context is limited to canonical `SPEC.md` and project/mission/slice YAML files
+authority is limited to canonical `SPEC.md` and project/mission/slice YAML files
 at their corresponding work-tree nodes, at most 64 KiB each. Other paths and
 symlink aliases are reported unavailable without embedding their contents.
 Each entry retains its authority level. Project files must be at the configured
@@ -230,6 +232,46 @@ must also have a sibling `SPEC.md` declaring the finding's slice ID (and matchin
 mission when declared). A sibling slice or another mission is unavailable even
 when its filename is canonical. Without mission/slice scope, those authority
 levels remain unavailable.
+
+## Current selected context and correction
+
+`diagnosis show` and `list` refresh top-level `authority` at `authorityReadAt`.
+The original `packet.authority` and presentation receipts remain historical
+snapshots. Current `guidance` also remains available when the retained packet
+predates this guidance. Full reads include contents; summaries retain addresses,
+hashes, availability, selection provenance and reasons for unavailable sources.
+
+The reader reuses `project.yaml`'s `install.context` and the selected
+`lifecycle.profiles[profile].workflow.context_refs`, plus the current mission's
+`lifecycle.workflow.context_refs`. Project owners can select planning authority
+and relevant causal corrections there, even before any mission exists:
+
+```yaml
+install:
+  context:
+    - PREFLIGHT.md#current-authority
+    - evidence/process-correction.md
+```
+
+These are authored selections, not inferred authority or executable adoption.
+Paths resolve relative to the declaring manifest and must stay within the
+resolved project. Local `file.md#h2/h3` addresses use the existing Markdown
+reader. Missing/ambiguous sections, aliases, unsupported addresses, unknown scope
+and missing selections' files remain unavailable. No links are followed
+recursively and no successor mission is guessed. The reader accepts at most 32
+selected addresses, each source file at most 64 KiB, with 128 KiB of selected
+content in total; exceeded limits are visible as unavailable references. A hash
+for a section covers exactly the returned section bytes. Bare library refs and
+remote URLs are not fetched by this local reader.
+
+Authority and current usefulness are separate questions. An incomplete global
+outcome census cannot justify retaining a particular restriction whose premise
+was disproved. Read current corrections before interpreting historical
+dispositions, preserve unrelated valid boundaries such as publication authority,
+and distinguish automatic wake/receipt bookkeeping from useful owner action.
+Normal interactive planning is not itself pathology. State the relevance and
+cost of the interruption in the assessment; do not turn the signal into a
+recurring self-audit or require a universal outside reviewer.
 
 Checkpoints are audited under `health/checkpoints/history/`; replaying identical
 bytes writes nothing. Later censuses advance observation time. High-to-high
@@ -251,7 +293,7 @@ not a closed evidence set.
 {
   "verdict": "insufficient evidence",
   "causalStart": null,
-  "steering": "Inspect the product-outcome census before changing work.",
+  "steering": "Inspect the missing outcome evidence; apply separately established corrections within current authority.",
   "uncertainty": "The cited artifact does not yet establish the denominator.",
   "evidenceRefs": ["<inspected-evidence-path>"]
 }
@@ -268,6 +310,35 @@ diagnostic qitem's transitions and visible in CLI output and the queue. Recordin
 it does not close or alter the underlying product work. Changed dispositions
 retain earlier testimony; exact replay is a no-op. A detector clearing is
 recorded separately from an agent declaring the problem resolved.
+
+An optional `correction` keeps the causal judgment, proposed or taken action,
+and later behavioral effect distinct. It does not require a complete `progress`
+census. For example, a retained-case assessment can record:
+
+```json
+{
+  "applicability": "The retired emergency restriction no longer applies; publication still needs its separate decision.",
+  "causalJudgment": "The retained trace attributes persistence of the restriction to a disproved premise.",
+  "action": {"state": "taken", "summary": "The authorized restriction was retired in the retained case.", "evidenceRefs": ["evidence/correction-action.md"]},
+  "effect": {"state": "unobserved", "summary": "No later natural opportunity has been observed.", "evidenceRefs": []}
+}
+```
+
+Put this object beside `verdict`, `causalStart`, `steering`, `uncertainty` and
+`evidenceRefs` in the existing disposition. Action states are `proposed` or
+`taken`; effect states are `unobserved` or `observed`. Every referenced artifact
+must be available locally; `taken` and `observed` each require evidence. These
+checks establish availability, not causal truth. The receipt retains evidence
+hashes and `assessment` identifies the actual queue actor, time and transition.
+`behavioralEffect` is the latest owner's reported effect, defaulting to
+`unobserved` for legacy dispositions. It is not an independent certification.
+A later owner submission preserves previous testimony. Record an observed
+effect only from a real later opportunity, with its next decision, useful work,
+recurrence and interruption burden; a scripted replay proves mechanics only.
+Closing a row, changing a prompt or clearing a numerical signal never supplies
+that evidence automatically. No opportunity means unobserved, with the release
+claim left to its decision owner. This guidance neither re-enables diagnosis nor
+assigns corrective work.
 
 ## Human delivery
 

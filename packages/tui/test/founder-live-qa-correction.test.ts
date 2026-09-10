@@ -293,14 +293,15 @@ describe("founder live-QA correction — operational agent zoom", () => {
     }
   });
 
-  it("lands on the same operational zoom from a needs-you row", () => {
+  it("keeps operational agent zoom out of the human Attention feed", () => {
     const snap = agentZoomSnapshot();
     const view = createViewState({ instanceId: "needs-agent-zoom", getSnapshot: () => snap });
     view.dispatch({ type: "jump", section: "needs" });
     let screen = renderScreen(view.get(), snap, { cols: 120, rows: 50 });
     const target = screen.contentTargets.find((item) => item.action.type === "drill" && item.action.resource === "agent");
-    expect(target).toBeDefined();
-    view.dispatch(target!.action);
+    expect(target).toBeUndefined();
+    expect(screen.lines.join("\n")).toContain("Unavailable: Attention");
+    view.dispatch({ type: "drill", resource: "agent", name: "dev50.guard" });
     screen = renderScreen(view.get(), snap, { cols: 120, rows: 80 });
     expect(screen.lines.join("\n")).toContain("CONTEXT · 69%");
     expect(view.get().drill.at(-1)).toEqual({ kind: "agent", name: "dev50.guard" });

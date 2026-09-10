@@ -11,6 +11,12 @@ import type { FleetSnapshot, Screen, ViewState, ViewStateStore } from "../src/ty
 // (a visible table cell, a spec member line), not a labeled control.
 
 const snap = demoSnapshot();
+// Explicit human request from the Attention authority, not a converted agent signal.
+snap.attentionRead = {
+  scope: "instance", readAt: "2026-09-10T00:00:00Z", sources: [{ source: "queue", state: "available", detail: "fixture" }],
+  items: [{ id: "queue:cover", kind: "action", summary: "Choose the readable cover", unblocks: "Print the edition", urgency: "urgent", at: "2026-09-10T00:00:00Z", scope: "instance", project: null, source: "/api/queue/cover" }],
+  detail: null, detailError: null,
+};
 
 function fresh(id: string): ViewStateStore {
   return createViewState({ instanceId: id, getSnapshot: () => snap });
@@ -98,13 +104,14 @@ describe("content-pane parity (Phase 3): click the surface, not a control", () =
     expect(screen.lines.some((l) => l.includes("2 pods"))).toBe(true);
   });
 
-  it("clicking a Needs-You item OPENS (navigates to) the agent — the only in-TUI action (B3)", () => {
+  it("clicking a human Attention item opens its source detail without resolving it", () => {
     const byMouse = fresh("ui");
     byMouse.dispatch(parseCommand(":needs"));
-    const item = findContentLine(byMouse, /⚑ stuck/);
-    expect(clickAt(byMouse, item.text.indexOf("stuck") + 1, item.y)).toBe(true);
-    expect(byMouse.get().section).toBe("topology");
-    expect(byMouse.get().drill.at(-1)).toEqual({ kind: "agent", name: "dev50.guard" });
+    const item = findContentLine(byMouse, /\[urgent\] Choose the readable cover/);
+    expect(clickAt(byMouse, item.text.indexOf("Choose") + 1, item.y)).toBe(true);
+    expect(byMouse.get().section).toBe("needs");
+    expect(byMouse.get().attentionOpen).toBe("queue:cover");
+    expect(snap.attentionRead!.items).toHaveLength(1);
   });
 
   it("renders NO resolve/reply affordance anywhere (B3: those are Studio's)", () => {
@@ -177,7 +184,8 @@ describe("content-pane parity (Phase 3): click the surface, not a control", () =
     needs.dispatch(parseCommand(":needs"));
     press(needs, "\x1b[C");
     press(needs, "\r");
-    expect(needs.get().drill.at(-1)).toEqual({ kind: "agent", name: "dev50.guard" });
+    expect(needs.get().attentionOpen).toBe("queue:cover");
+    expect(needs.get().section).toBe("needs");
   });
 });
 

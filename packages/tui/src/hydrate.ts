@@ -345,7 +345,7 @@ function agentSpecTruth(raw?: string): { runtime?: string; skills: string[] } {
  * avoids re-reading every spec every refresh; the key rolls when the library
  * entry's updatedAt changes. Owned by the caller (instance-scoped, no module state). */
 export type SpecReviewCache = Map<string, SpecLibraryReviewRead>;
-export type HydrateViewContext = Pick<ViewState, "project" | "section" | "viewTab" | "drill" | "file" | "externalUrl" | "terminalView">;
+export type HydrateViewContext = Pick<ViewState, "project" | "section" | "viewTab" | "drill" | "file" | "externalUrl" | "terminalView" | "attentionOpen">;
 
 export async function hydrateSnapshot(
   client: DaemonClient,
@@ -375,6 +375,14 @@ export async function hydrateSnapshot(
     return { ...emptySnapshot(), fileRead: { target, result, readAt: new Date().toISOString() }, fileRoots: roots?.roots ?? [], readErrors, hydratedAt: new Date().toISOString() };
   }
   if (viewContext?.externalUrl) return { ...emptySnapshot(), hydratedAt: new Date().toISOString() };
+
+  if (viewContext?.section === "needs") {
+    const [attentionRead, roots] = await Promise.all([
+      safe<NonNullable<FleetSnapshot["attentionRead"]>>("Attention", () => client.humanAttention(viewContext.attentionOpen)),
+      safe<Awaited<ReturnType<DaemonClient["fileRoots"]>>>("file-roots", () => client.fileRoots()),
+    ]);
+    return { ...emptySnapshot(), attentionRead, fileRoots: roots?.roots ?? [], readErrors, hydratedAt: new Date().toISOString() };
+  }
 
   // Project reads never fall back to the daemon's default workspace or fleet queue.
   if (viewContext?.section === "scopes") {

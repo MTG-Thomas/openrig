@@ -90,6 +90,22 @@ describe("deliberate full reads", () => {
     expect(logs.join("\n")).toContain("decision-1");
   });
 
+  it("keeps attributed correction and unobserved effect visible without expanding source bodies", async () => {
+    const original = { ...diagnosis(true), guidance: "Current correction guidance", assessment: { actor: "owner@rig", at: "2026-09-10T00:00:00Z", transitionId: 42 }, behavioralEffect: "unobserved" };
+    const correction = { applicability: "Emergency premise retired; publication still applies", causalJudgment: "Owner assessment of retained trace", action: { state: "taken", summary: "Retired reservation", evidenceRefs: ["action.md"] }, effect: { state: "unobserved", summary: "No natural opportunity", evidenceRefs: [] } };
+    const data = { ...original, disposition: { ...original.disposition, correction } };
+    const json = JSON.parse((await run("health", ["diagnosis", "show", "q-1", "--json"], data)).logs[0]!);
+    expect(json.disposition.correction).toEqual(correction);
+    expect(json.assessment).toEqual(original.assessment);
+    expect(json.behavioralEffect).toBe("unobserved");
+    expect(json).not.toHaveProperty("guidance");
+    expect(json.readView.omittedFields).toContainEqual(expect.objectContaining({ path: "guidance" }));
+    const text = (await run("health", ["diagnosis", "show", "q-1"], data)).logs.join("\n");
+    expect(text).toContain("Action (taken): Retired reservation");
+    expect(text).toContain("Later behavioral effect (owner report): unobserved");
+    expect(text).toContain("Attributed assessment: owner@rig");
+  });
+
   it.each(["", "😀".repeat(900)])("queue retains existing body semantics and adds exact full discovery", async (body) => {
     const original = { qitemId: "q-1", body, state: "blocked", blockedOn: "decision-1", summary: "Needs a decision" };
     const { logs } = await run("queue", ["show", "q-1", "--json"], original);

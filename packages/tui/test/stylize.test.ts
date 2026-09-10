@@ -75,10 +75,11 @@ describe("treatment (mockup palette semantics)", () => {
     expect(styled).toContain("\x1b[1;38;2;111;168;255mterm ▸\x1b[0m");
   });
 
-  it("alert lines are amber with the open-link kept accent; hosts-down red", () => {
+  it("Attention styling preserves unavailable truth without legacy fleet alerts", () => {
     const styled = stylizeLines(screenFor(":needs"), style).join("\n");
-    expect(styled).toMatch(/\x1b\[5;38;2;244;190;92m⚑/);
-    expect(styled).toContain("\x1b[38;2;224;108;117m  ✖ remote-host");
+    expect(stripAnsi(styled)).toContain("Unavailable: Attention");
+    expect(stripAnsi(styled)).not.toContain("✖ remote-host");
+    expect(styled).not.toMatch(/\x1b\[5;38;2;244;190;92m⚑/);
   });
 
   it("chrome rules carry pane titles; hint bar and status line are styled", () => {

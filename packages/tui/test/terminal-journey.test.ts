@@ -64,6 +64,19 @@ describe("terminal browser → preview → explicit Open", () => {
     screen = draw(cols, rows);
     expect(screen.lines.join("\n")).toContain("Page 2/2");
     expect(effects).toEqual([]); expect(requests.every(r => r.startsWith("GET /api/terminal/"))).toBe(true);
+    // Attention is a side trip: Help and Back must preserve this exact preview page.
+    view.dispatch(parseCommand("attention"));
+    view.dispatch({ type: "attention-open", id: "queue:fixture-request" });
+    view.dispatch({ type: "palette-open" });
+    expect(draw(cols, rows).lines.join("\n")).toContain("Esc return");
+    view.dispatch({ type: "palette-close" });
+    expect(view.get().attentionOpen).toBe("queue:fixture-request");
+    view.dispatch({ type: "back" });
+    expect(view.get().attentionOpen).toBeNull();
+    view.dispatch({ type: "back" }); await refresh();
+    expect(view.get()).toMatchObject({ section: "terminals", terminalView: "saved:fixture", terminalPage: 1 });
+    screen = draw(cols, rows);
+    expect(screen.lines.join("\n")).toContain("Page 2/2");
     const open = screen.contentTargets.find(t => t.action.type === "act")!.action;
     if (open.type !== "act" || open.act !== "open-terminal") throw new Error("missing explicit Open");
     const result = await client.openTerminal(open.view, open.expectedPlan);
