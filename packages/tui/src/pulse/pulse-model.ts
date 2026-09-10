@@ -1,3 +1,4 @@
+import { isHumanSeatSessionRef } from "@openrig/daemon/attention";
 // PULSE view data model (5.2 Wave B). A reusable, view-local model so the pulse
 // row/section renderers (pulse/render-pulse.ts) can be shared — crash-cart rides
 // the same renderers (plan §crash-cart-pre-work). Increment 1 populates this from
@@ -132,11 +133,9 @@ export function demoPulseModel(): PulseModel {
   };
 }
 
-// mirror of daemon human-route-enforcer.ts isHumanSeatSession — keep byte-identical to that canonical regex.
-// EXPORTED so hydrate reuses this ONE copy (no second mirror) to skip resolving human-park blockers.
-const HUMAN_SEAT_SESSION_PATTERN = /^human(?:-[A-Za-z0-9._-]+)?@(kernel|host)$/;
+// Shared with queue selection; gateway admission remains a separate decision.
 export function isHumanSeatSession(value: string | null | undefined): boolean {
-  return typeof value === "string" && HUMAN_SEAT_SESSION_PATTERN.test(value);
+  return typeof value === "string" && isHumanSeatSessionRef(value);
 }
 
 /** Coarse human age for an exception row's dim meta. Derives from the served

@@ -13,6 +13,7 @@ import { hydrateSnapshot } from "../src/hydrate.js";
 import { createViewState, emptySnapshot } from "../src/state.js";
 import { parseCommand } from "../src/grammar.js";
 import { renderScreen } from "../src/render.js";
+import { PageRead } from "../src/page-read.js";
 import { connectionsLines } from "../src/connections/connections-model.js";
 import type { FleetSnapshot } from "../src/types.js";
 
@@ -25,6 +26,7 @@ let observed: Array<{ path: string; method: string }>;
 let http: Hono;
 let external: ReturnType<typeof vi.fn>;
 let client: DaemonClient;
+let humanBlocker = false;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "s06-connections-"));
@@ -44,10 +46,12 @@ beforeEach(() => {
   http = new Hono();
   http.use("*", async (c, next) => { c.set("gatewaySubsystem" as never, { status: () => gateway, restart: external } as never); c.set("settingsStore" as never, settings as never); await next(); });
   http.route("/api/gateway", gatewayRoutes({ home }));
-  observed = [];
+  observed = []; humanBlocker = false;
   client = new DaemonClient({ baseUrl: "http://fixture", fetchImpl: (async (url, init) => {
     const path = new URL(String(url)).pathname;
     observed.push({ path, method: init?.method ?? "GET" });
+    if (humanBlocker && path === "/api/queue/list" && new URL(String(url)).searchParams.get("state") === "blocked") return Response.json([{ qitemId: "blocked", sourceSession: "author@demo", destinationSession: "worker@demo", state: "blocked", blockedOn: "alex@external", tags: [], body: "Needs a human", summary: "Choose a cover" }]);
+    if (path === "/api/queue/alex%40external") return Response.json({ error: "not_found" }, { status: 404 });
     if (path.startsWith("/api/gateway")) return http.request(path, init);
     const fixtures: Record<string, unknown> = {
       "/healthz": { status: "ok", semver: "0.5.11", commit: "fixture-daemon", selfHostId: "fixture-host", selfHostIdSource: "registry" },
@@ -200,4 +204,14 @@ describe("passive Connections journey", () => {
     expect(connectionsLines(snap, 80).map((l) => l.text).join("\n")).toContain("Connections unavailable");
     expect(external).not.toHaveBeenCalled();
   });
+});
+
+
+it("never resolves an external human blocker as a queue-item ID or poisons the page read", async () => {
+  humanBlocker = true;
+  const page = new PageRead(Date.now); page.begin();
+  await hydrateSnapshot(client.forPage(page, new AbortController().signal), undefined, null, null, "demo", { section: "connections", viewTab: "table", drill: [] });
+  page.end();
+  expect(observed.map(r => r.path)).not.toContain("/api/queue/alex%40external");
+  expect(page.errors).toEqual([]);
 });

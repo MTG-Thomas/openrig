@@ -24,3 +24,6 @@ export interface AttentionRead {
   detail: AttentionDetail | null;
   detailError: string | null;
 }
+
+// Consumers must use the same lexical human classification as queue selection.
+export { isHumanSeatSessionRef } from "./domain/session-name.js";
