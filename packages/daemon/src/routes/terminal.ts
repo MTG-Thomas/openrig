@@ -26,21 +26,23 @@ function getService(c: { get(key: string): unknown }): TerminalService | null {
 }
 
 /** Map a service OpenViewResult code to an HTTP status (body is always the full result). */
-function statusForOpen(ok: boolean, code: string | undefined): 200 | 400 | 404 {
+function statusForOpen(ok: boolean, code: string | undefined): 200 | 400 | 404 | 409 {
   if (ok) return 200;
   if (code === "view_required" || code === "unknown_provider") return 400;
   if (code === "view_not_found") return 404;
+  if (code === "preview_changed") return 409;
   // provider-unavailable / layout-unsupported / honest-partial: a truthful 200 body.
   return 200;
 }
 
 /** Parse the `{ provider?, view }` open body honestly (a non-object / missing view → structured 400 upstream). */
-function readOpenBody(raw: unknown): { provider?: string; view?: string } {
+function readOpenBody(raw: unknown): { provider?: string; view?: string; expectedPlan?: string } {
   if (raw === null || typeof raw !== "object") return {};
   const obj = raw as Record<string, unknown>;
   const provider = typeof obj["provider"] === "string" ? (obj["provider"] as string) : undefined;
   const view = typeof obj["view"] === "string" ? (obj["view"] as string) : undefined;
-  return { ...(provider !== undefined ? { provider } : {}), ...(view !== undefined ? { view } : {}) };
+  const expectedPlan = typeof obj["expectedPlan"] === "string" ? obj["expectedPlan"] : undefined;
+  return { ...(provider !== undefined ? { provider } : {}), ...(view !== undefined ? { view } : {}), ...(expectedPlan !== undefined ? { expectedPlan } : {}) };
 }
 
 /** The canonical, non-rig-scoped terminal route family. Mounted at `/api/terminal`. */
@@ -56,15 +58,22 @@ export function terminalRoutes(): Hono {
     } catch {
       return c.json({ error: "body_invalid", hint: "expected a JSON object { provider?, view }" }, 400);
     }
-    const { provider, view } = readOpenBody(raw);
-    const result = await svc.openView({ ...(provider !== undefined ? { provider } : {}), view: view ?? "" });
+    const { provider, view, expectedPlan } = readOpenBody(raw);
+    const result = await svc.openView({ ...(provider !== undefined ? { provider } : {}), view: view ?? "", ...(expectedPlan !== undefined ? { expectedPlan } : {}) });
     return c.json(result, statusForOpen(result.ok, result.code));
   });
 
   app.get("/views", async (c) => {
     const svc = getService(c);
     if (!svc) return c.json({ error: "terminal_service_unavailable" }, 503);
-    return c.json(await svc.listViews());
+    return c.json(await svc.listViews(c.req.query("detail") === "1"));
+  });
+
+  app.get("/preview", async (c) => {
+    const svc = getService(c);
+    if (!svc) return c.json({ error: "terminal_service_unavailable" }, 503);
+    const result = await svc.previewView({ view: c.req.query("view") ?? "", provider: c.req.query("provider") });
+    return c.json(result, "planId" in result ? 200 : statusForOpen(result.ok, result.code));
   });
 
   app.get("/status", async (c) => {

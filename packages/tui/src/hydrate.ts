@@ -1,3 +1,4 @@
+import { readTerminals } from "./terminals/terminal-model.js";
 import { fileTargetForPath } from "./reading.js";
 // Snapshot hydrator: maps the §4.A daemon reads (via DaemonClient, the one
 // HTTP module) into FleetSnapshot for the renderer. Mapping discipline
@@ -344,7 +345,7 @@ function agentSpecTruth(raw?: string): { runtime?: string; skills: string[] } {
  * avoids re-reading every spec every refresh; the key rolls when the library
  * entry's updatedAt changes. Owned by the caller (instance-scoped, no module state). */
 export type SpecReviewCache = Map<string, SpecLibraryReviewRead>;
-export type HydrateViewContext = Pick<ViewState, "project" | "section" | "viewTab" | "drill" | "file" | "externalUrl">;
+export type HydrateViewContext = Pick<ViewState, "project" | "section" | "viewTab" | "drill" | "file" | "externalUrl" | "terminalView">;
 
 export async function hydrateSnapshot(
   client: DaemonClient,
@@ -390,6 +391,11 @@ export async function hydrateSnapshot(
     ]);
     readErrors.push(...(scopes?.readErrors ?? []));
     return { ...emptySnapshot(), projects, projectRead: selected, projectSources: scopes?.sources, scopes: scopes?.missions ?? [], execution: execution?.rows[0] ?? null, executionMission, sliceDetail: detail, sliceDetailName, fileRoots: roots?.roots ?? [], readErrors, hydratedAt: new Date().toISOString() };
+  }
+
+  if (viewContext?.section === "terminals") {
+    const terminals = await readTerminals(client, viewContext.terminalView);
+    return { ...emptySnapshot(), terminals, hydratedAt: new Date().toISOString(), readErrors: terminals.error ? [terminals.error] : [] };
   }
 
   // CONFIG never invokes fleet aggregation, host probes, queue enrichment or provider checks.

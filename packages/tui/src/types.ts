@@ -331,6 +331,7 @@ export interface FleetSnapshot {
   projectRead?: ProjectSelection | null;
   projectSources?: Record<string, string>;
 
+  terminals?: import("./terminals/terminal-model.js").TerminalRead;
   fileRead?: { target: import("./reading.js").FileTarget; result: import("./reading.js").FileReadResult; readAt: string };
   fileRoots?: import("./reading.js").FileRoot[];
   specsLoaded?: boolean;
@@ -414,6 +415,9 @@ export interface DrillSegment {
 export type ViewTab = "table" | "recent" | "overview" | "graph" | "health" | "topology" | "configuration" | "yaml" | "pulse";
 
 export type Action =
+  | { type: "terminal-result"; view: string; message: string }
+  | { type: "terminal-preview"; view: string }
+  | { type: "terminal-page"; page: number }
   | { type: "file-open"; target: import("./reading.js").FileTarget }
   | { type: "external-open"; url: string }
   | { type: "startup"; key: string }
@@ -461,7 +465,7 @@ export type Action =
   | { type: "palette-move"; delta: number }
   /** drive-structure daemon writes (BR-8/BR-9): executed by the driver loop
    * against EXISTING write contracts; never a view-state mutation */
-  | { type: "act"; act: "open-terminal"; view: string }
+  | { type: "act"; act: "open-terminal"; view: string; expectedPlan?: string }
   | { type: "act"; act: "run"; rigId: string; agent: string }
   | { type: "notice"; message: string };
 
@@ -475,6 +479,9 @@ export interface SectionDef {
 }
 
 export interface ViewState {
+  terminalResult?: { view: string; message: string };
+  terminalView?: string | null;
+  terminalPage?: number;
   file?: import("./reading.js").FileTarget | null;
   externalUrl?: string | null;
   timeZone: string;
@@ -524,7 +531,7 @@ export interface ViewState {
   lastError: string | null;
 }
 
-export type NavigationFrame = Pick<ViewState, "project" | "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
+export type NavigationFrame = Pick<ViewState, "project" | "terminalView" | "terminalPage" | "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
 
 export interface ViewStateStore {
   instanceId: string;

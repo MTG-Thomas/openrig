@@ -1,4 +1,5 @@
 import { fileTargetForPath } from "./reading.js";
+import { terminalExplorerRows } from "./terminals/terminal-model.js";
 import { CONFIG_CATEGORIES } from "./config/config-model.js";
 import { availableTabs } from "./commands/registry.js";
 import { DEFAULT_TIME_ZONE, resolveTimeZone } from "./time.js";
@@ -86,7 +87,7 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 
   function dispatch(action: Action): ViewState {
     const previous = state;
-    if (["project-select", "jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, file: null, externalUrl: null, recentOpen: null, timeZoneHelp: false };
+    if (["project-select", "terminal-preview", "jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, file: null, externalUrl: null, recentOpen: null, timeZoneHelp: false };
     state = reduce(state, action, getSnapshot());
     // Connections is a side trip from work, including explorer/palette entry.
     if (action.type === "jump" && !["connections", "config"].includes(action.section) && !["connections", "config"].includes(previous.section)) state.history = [];
@@ -113,6 +114,12 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewState {
   const next: ViewState = { ...state, lastError: null, notice: action.type === "notice" || action.type === "act" ? state.notice : null };
   switch (action.type) {
+    case "terminal-result":
+      return { ...next, terminalResult: { view: action.view, message: action.message } };
+    case "terminal-preview":
+      return syncSelection(resetContent({ ...next, section: "terminals", terminalView: action.view, terminalPage: 0, drill: [], viewTab: "table", healthOpen: null }), snap);
+    case "terminal-page":
+      return resetContent({ ...next, terminalPage: Math.max(0, Math.min(action.page, (snap.terminals?.preview?.composed.pages.length ?? 1) - 1)) });
     case "file-open":
       return { ...resetContent({ ...next, file: action.target, externalUrl: null, healthOpen: null, recentOpen: null, timeZoneHelp: false }), focusedPane: "content" };
     case "external-open":
@@ -141,6 +148,8 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
     case "config-setting":
       return resetContent({ ...next, section: "config", drill: [], viewTab: "table", configKey: action.key, healthOpen: null });
     case "jump": {
+      next.terminalView = null;
+      next.terminalPage = 0;
       // scopes: jumping anywhere (incl. back to :scopes) closes the opened slice.
       if (action.section === "scopes") next.project = null;
       next.scopesMission = null;
@@ -294,12 +303,12 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
 }
 
 function location(s: ViewState): string {
-  return JSON.stringify([s.project, s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey, s.file, s.externalUrl]);
+  return JSON.stringify([s.project, s.terminalView, s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey, s.file, s.externalUrl]);
 }
 
 function navigationFrame(s: ViewState): NavigationFrame {
-  const { project, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
-  return { project, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
+  const { project, terminalView, terminalPage, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
+  return { project, terminalView, terminalPage, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
 }
 
 function clearScopeCoordinatesOnSectionChange(previous: ViewState, next: ViewState): ViewState {
@@ -326,6 +335,7 @@ export function specDetailArrowsScroll(state: ViewState): boolean {
 
 /** The explorer key for the state's current location (drill leaf or section). */
 export function locationKey(state: ViewState): string {
+  if (state.section === "terminals" && state.terminalView) return `terminal:${state.terminalView}`;
   if (state.section === "config" && state.configCategory) return `config:${state.configCategory}`;
   if (state.section === "scopes" && state.scopesSelected) return `scopes-slice:${state.scopesSelected.mission}/${state.scopesSelected.slice}`;
   if (state.section === "scopes" && state.scopesMission) return `scopes-mission:${state.scopesMission}`;
@@ -553,6 +563,10 @@ export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): Expl
     // a disclosure glyph that cannot be toggled.
     rows.push({ label, action: { type: "jump", section: section.name }, key: `section:${section.name}` });
     if (!active) continue;
+    if (section.name === "terminals") {
+      rows.push(...terminalExplorerRows(state, snap));
+      continue;
+    }
     if (section.name === "config") {
       rows.push(...CONFIG_CATEGORIES.map((c) => ({ label: "  " + c.label, key: `config:${c.id}`, action: { type: "config-category" as const, category: c.id } })));
       if (state.history?.length) rows.push({ label: "  Back", key: "config:back", action: { type: "back" } });

@@ -122,7 +122,7 @@ function blankPane(): HerdrPaneNode {
  * ssh-wrap) is preserved untouched. Rows are built as equal `right` strips,
  * then combined with equal `down` strips.
  */
-export function buildGridRoot(panes: ComposedPane[]): { root: HerdrLayoutNode; blanks: number } {
+export function buildGridRoot(panes: ComposedPane[]): { root: HerdrLayoutNode; blanks: number; columns: number; rows: number } {
   const cols = autoGridCols(panes.length);
   const rows = Math.ceil(panes.length / cols);
   const blanks = rows * cols - panes.length;
@@ -136,7 +136,7 @@ export function buildGridRoot(panes: ComposedPane[]): { root: HerdrLayoutNode; b
   for (let r = 0; r < rows; r++) {
     rowStrips.push(equalStrip(leaves.slice(r * cols, (r + 1) * cols), "right"));
   }
-  return { root: equalStrip(rowStrips, "down"), blanks };
+  return { root: equalStrip(rowStrips, "down"), blanks, columns: cols, rows };
 }
 
 /** The per-page socket request plan — pure, so it is asserted directly in tests. */

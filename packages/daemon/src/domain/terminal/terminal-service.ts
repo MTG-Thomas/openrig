@@ -31,6 +31,8 @@
 // outcome.
 
 import { composeView, type ViewMemberInput } from "./view-composer.js";
+import { createHash } from "node:crypto";
+import { buildGridRoot } from "./herdr-adapter.js";
 // deriveViewMembers is a VALUE exported by the views store (not the composer).
 import { deriveViewMembers } from "./terminal-views-store.js";
 import type {
@@ -42,6 +44,7 @@ import type {
 import type { HostEntry } from "../hosts/hosts-registry-reader.js";
 import type {
   OpenViewResult,
+  ComposedView,
   ProviderLiveness,
   ProviderStatus,
   TerminalProvider,
@@ -56,6 +59,18 @@ export interface OpenViewRequest {
   provider?: string;
   /** The view argument: a rig name | `mission:<id>` | `slice:<id>` | a saved-view id. */
   view: string;
+  /** Preview fingerprint. A changed membership/layout must be previewed again. */
+  expectedPlan?: string;
+}
+
+export interface TerminalPreview {
+  provider: string;
+  view: string;
+  planId: string;
+  composed: ComposedView;
+  /** The same pure grid roots consumed by the Herder adapter. */
+  grids: ReturnType<typeof buildGridRoot>[];
+  status: ProviderStatus;
 }
 
 /** The `rig terminal views` payload: saved views + the live rig names you can open. */
@@ -63,6 +78,7 @@ export interface ListViewsResult {
   saved: SavedView[];
   /** Rig names openable as per-rig derived views (live from the inventory). */
   rigs: string[];
+  catalog?: Array<{ view: string; name: string; kind: "saved" | "derived"; members: string[]; ready: number; absent: number; degraded: number; pages: number }>;
 }
 
 /** One provider's doctor line for `rig terminal status`. */
@@ -134,29 +150,55 @@ export class TerminalService {
       );
     }
 
-    const view = (req.view ?? "").trim();
-    if (!view) {
-      return errorResult(providerName, "view_required", "a view argument is required (a rig name, mission:<id>, slice:<id>, or a saved-view id)");
+    const composed = await this.resolveComposed(req.view);
+    if ("code" in composed) return errorResult(providerName, composed.code, composed.error);
+    if (req.expectedPlan !== undefined && req.expectedPlan !== this.planId(providerName, composed)) {
+      return errorResult(providerName, "preview_changed", "View membership or layout changed. Refresh the preview before Open; nothing was launched.");
     }
-
-    const resolved = await this.resolveView(view);
-    if ("code" in resolved) {
-      return errorResult(providerName, resolved.code, resolved.error);
-    }
-
-    const refined = await this.refineLiveness(resolved.members);
-    const composed = composeView(resolved.id, refined, {
-      resolveHost: (id) => this.deps.resolveHost(id),
-    });
     return provider.openView(composed);
   }
 
+  private async resolveComposed(viewArg: string): Promise<ComposedView | { code: string; error: string }> {
+    const view = (viewArg ?? "").trim();
+    if (!view) return { code: "view_required", error: "a view argument is required" };
+    const resolved = await this.resolveView(view);
+    if ("code" in resolved) return resolved;
+    return composeView(resolved.id, await this.refineLiveness(resolved.members), { resolveHost: (id) => this.deps.resolveHost(id) });
+  }
+
+  private planId(provider: string, composed: ComposedView): string {
+    return createHash("sha256").update(JSON.stringify({ provider, composed, grids: composed.pages.map(buildGridRoot) })).digest("hex");
+  }
+
+  /** Passive: inventory, local has-session and provider probe only. Never openView. */
+  async previewView(req: OpenViewRequest): Promise<TerminalPreview | OpenViewResult> {
+    const providerName = (req.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
+    const provider = this.deps.resolveProvider(providerName);
+    if (!provider) return errorResult(providerName, "unknown_provider", `unknown provider '${providerName}'`);
+    const composed = await this.resolveComposed(req.view);
+    if ("code" in composed) return errorResult(providerName, composed.code, composed.error);
+    return { provider: providerName, view: req.view, composed, grids: composed.pages.map(buildGridRoot), planId: this.planId(providerName, composed), status: await provider.status() };
+  }
+
   /** List saved views + the rig names openable as derived views. */
-  async listViews(): Promise<ListViewsResult> {
-    return {
+  async listViews(detail = false): Promise<ListViewsResult> {
+    const result: ListViewsResult = {
       saved: this.deps.viewsStore.list(),
       rigs: await this.deps.listRigNames(),
     };
+    if (detail) {
+      result.catalog = [];
+      const entries = [
+        ...result.saved.map((s) => ({ view: `saved:${s.id}`, name: s.name, kind: "saved" as const })),
+        ...result.rigs.map((name) => ({ view: `rig:${name}`, name, kind: "derived" as const })),
+      ];
+      for (const entry of entries) {
+        const plan = await this.resolveComposed(entry.view);
+        if ("code" in plan) continue;
+        result.catalog.push({ ...entry, members: [...plan.opened, ...plan.absent, ...plan.degraded].map((m) => m.seat), ready: plan.opened.length, absent: plan.absent.length, degraded: plan.degraded.length, pages: plan.pages.length });
+      }
+    }
+    return result;
   }
 
   /** Provider availability + liveness (doctor). Unknown named provider → empty report for it. */
@@ -180,6 +222,10 @@ export class TerminalService {
 
   /** Resolve a view argument into composer-ready members (precedence in the file header). */
   private async resolveView(view: string): Promise<ResolvedView> {
+    if (view.startsWith("saved:")) {
+      const saved = this.deps.viewsStore.get(view.slice(6));
+      return saved ? { id: saved.id, members: saved.members.map(savedMemberToInput) } : { code: "view_not_found", error: `unknown saved view '${view.slice(6)}'` };
+    }
     // 1. derived scope prefixes → live, read-only, never persisted.
     if (view.startsWith("mission:") || view.startsWith("slice:")) {
       const rows = await this.deps.listScopeSeats(view);
