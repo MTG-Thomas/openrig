@@ -379,7 +379,7 @@ The refocus hook resolves library refs automatically (ref beats file), fails lou
 
 1. **STOP copying library content into seat or mission files to compose context.** Compose by ref — addressing means there is no second copy to drift. Nothing catches the copy automatically; it is still a defect by rule.
 2. **STOP treating a `MODEL DIVERGENCE` proclamation as alias noise.** The canonicalize-then-compare fix ended the pinned=fable / effective=claude-fable-5 false-positive class, and the monitor now isolates per-seat throws. A proclamation on this runtime is a real escalation — act on it.
-3. **STOP reading "founder-gated" in tool errors as an authorization wall.** The overstated wording is retired from the scripts; those guards demand explicit paths (e.g. `OPENRIG_SKILL_CANON_ROOT`), not permission. The real founder boundary is exactly: pushes and PRs. Local commits and ordinary apply work never need founder word.
+3. **STOP confusing explicit-path requirements with permission.** The guards described in this release demand explicit paths (e.g. `OPENRIG_SKILL_CANON_ROOT`); that mechanism does not grant authorization. **Historical guidance correction (2026-09-10):** the earlier approval statement was project-specific, not a universal rule. Current project and mission authority determines whether local commits, apply operations, pushes or PRs require approval.
 4. **STOP hand-placing evidence or trusting a placeholder PRD as the proof contract.** `rig proof add` pairs evidence to the contract, and a pristine scaffold PRD can never silently become that contract: the authored SPEC serves with a named advisory (`contractSource` in the echo tells you which source bound).
 
 ### Landed but not yet drivable (recorded so nobody reaches for it)
@@ -1140,10 +1140,10 @@ Five read-commands flip from firehose-by-default to compact-by-default — close
 
 - Wrap worktree clean on `8d55ea60`.
 - CLI surfaces source-verified against the command modules at the release SHA.
-- CLI→skill cascade sweep: canonical `openrig-work/skills/openrig-user/SKILL.md` → product mirror at `packages/daemon/specs/agents/shared/skills/core/openrig-user/SKILL.md` → hub cwd `.claude/skills/openrig-user/SKILL.md` + `.agents/skills/openrig-user/SKILL.md` — all byte-identical (md5 `e2aa9176`).
+- The historical CLI→skill cascade sweep reported the internal canonical skill source → product mirror at `packages/daemon/specs/agents/shared/skills/core/openrig-user/SKILL.md` → hub cwd `.claude/skills/openrig-user/SKILL.md` + `.agents/skills/openrig-user/SKILL.md` as byte-identical (reported md5 `e2aa9176`). This records the historical report, not a fresh mirror check.
 - cli-reference.md updated for 6 changed commands + new `rig skill` section; `last-verified-against-source` bumped to `8d55ea60`.
 - Stale-pattern grep (`dumps everything` / `--notify required` / `rig down 404`) returned 0 hits across active SKILL.md locations.
-- AC-6 self-check evidence: `substrate/shared-docs/openrig-work/missions/release-0.4.0/slices/36-release-durability-close/AC-6-wrap-gate-self-check-evidence.md`.
+- The historical AC-6 self-check evidence was internal and is not a public reproducible receipt.
 
 ---
 
