@@ -71,7 +71,7 @@ export function terminalLines(state: ViewState, snap: FleetSnapshot, width: numb
     return wrapDetailLines(lines, width);
   }
   if (!preview) {
-    lines.push({ text: "Browse and preview are passive. Only Open creates a Herder space." });
+    lines.push({ text: "Browse and preview are passive. Only Open creates a Herdr space." });
     for (const kind of ["saved", "derived"] as const) {
       const entries = read.catalog.filter(e => e.kind === kind && `${e.name} ${e.members.join(" ")}`.toLowerCase().includes(state.filter.toLowerCase()));
       lines.push({ text: "" }, { text: `${kind === "saved" ? "Saved" : "Derived"} · ${entries.length} views` });
@@ -91,8 +91,8 @@ export function terminalLines(state: ViewState, snap: FleetSnapshot, width: numb
   lines.push({ text: plan.id }, { text: `${plan.opened.length} attachable · ${plan.absent.length} absent · ${plan.degraded.length} degraded` });
   // Actions precede the diagram so explicit Open/Back remain accessible at 80×24.
   lines.push({ text: "Back to views", action: { type: "back" } });
-  if (preview.status.available && plan.opened.length) lines.push({ text: `Open in Herder · all ${plan.pages.length} pages`, action: { type: "act", act: "open-terminal", view: preview.view, expectedPlan: preview.planId } });
-  else lines.push({ text: preview.status.available ? "Nothing attachable; no space will be opened." : "Herder unavailable on the selected daemon host. Start/connect Herder there, then refresh this preview. No automatic recovery." });
+  if (preview.status.available && plan.opened.length) lines.push({ text: `Open in Herdr · all ${plan.pages.length} pages`, action: { type: "act", act: "open-terminal", view: preview.view, expectedPlan: preview.planId } });
+  else lines.push({ text: preview.status.available ? "Nothing attachable; no space will be opened." : "Herdr unavailable on the selected daemon host. Start/connect Herdr there, then refresh this preview. No automatic recovery." });
   lines.push({ text: "Refresh preview", action: { type: "terminal-preview", view: preview.view } });
   if (plan.pages.length > 1) {
     if (pageIndex > 0) lines.push({ text: "Previous page", action: { type: "terminal-page", page: pageIndex - 1 } });

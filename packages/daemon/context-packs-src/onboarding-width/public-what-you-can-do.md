@@ -101,7 +101,7 @@ unseen — which makes messages the one delivery channel that never gets skipped
 - **`rig terminal open <view>`** — bring every live agent in a rig, mission or slice up as real
   typeable tiles at once.
   In the TUI, **TERMINALS** lists Saved and Derived views. Select a view to inspect its members,
-  layout and pages; preview is passive. **Open in Herder** deliberately opens the inspected plan
+  layout and pages; preview is passive. **Open in Herdr** deliberately opens the inspected plan
   and reports opened, absent or degraded members. Help or a side trip returns to the same preview.
 - **`rig walk <seat> --through <files> --pace <n>`** — deliver context pieces through
   file-backed terminal paste. When the current native generation record resolves, the complete

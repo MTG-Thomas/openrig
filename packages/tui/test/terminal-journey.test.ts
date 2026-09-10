@@ -55,7 +55,7 @@ describe("terminal browser → preview → explicit Open", () => {
     expect(view.get().terminalView).toBe("saved:fixture");
     let screen = draw(cols, rows);
     expect(screen.lines.every(line => line.length <= cols && !/[\r\n]/.test(line))).toBe(true);
-    expect(screen.lines.join("\n")).toContain("Open in Herder");
+    expect(screen.lines.join("\n")).toContain("Open in Herdr");
     const preview = snap.terminals!.preview!;
     expect(preview.grids.map(g => [g.columns, g.rows, g.blanks])).toEqual([[3, 3, 0], [3, 2, 1]]);
     view.dispatch({ type: "terminal-page", page: 1 }); await refresh();
@@ -102,7 +102,7 @@ describe("terminal browser → preview → explicit Open", () => {
     providerAlive = false;
     view.dispatch({ type: "terminal-preview", view: "saved:fixture" }); await refresh();
     const lines = terminalLines(view.get(), snap, 70);
-    expect(lines.map(l => l.text).join("\n")).toContain("Herder unavailable");
+    expect(lines.map(l => l.text).join("\n")).toContain("Herdr unavailable");
     expect(lines.some(l => l.action?.type === "act")).toBe(false);
     expect(lines.some(l => l.action?.type === "back")).toBe(true);
     expect(effects).toEqual([]);
@@ -116,8 +116,8 @@ describe("terminal browser → preview → explicit Open", () => {
 
   it("keeps wrapped partial/failure receipts readable across layout and refresh", async () => {
     view.dispatch({ type: "terminal-preview", view: "saved:fixture" }); await refresh();
-    view.dispatch({ type: "terminal-result", view: "saved:fixture", message: "Partial Open: 9 opened, 1 absent, 6 degraded. Herder refused page two." });
+    view.dispatch({ type: "terminal-result", view: "saved:fixture", message: "Partial Open: 9 opened, 1 absent, 6 degraded. Herdr refused page two." });
     draw(80, 24); await refresh(); draw(80, 24);
-    expect(terminalLines(view.get(), snap, 40).map(l => l.text).join(" ").replace(/\s+/g, " ")).toContain("Herder refused page two.");
+    expect(terminalLines(view.get(), snap, 40).map(l => l.text).join(" ").replace(/\s+/g, " ")).toContain("Herdr refused page two.");
   });
 });
