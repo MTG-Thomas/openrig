@@ -162,6 +162,18 @@ export function configSourceLines(read: ConfigRead | null, width: number): Conte
 
 /** Settings use the normal explorer, content targets, wrapping and history. */
 export function configLines(state: ViewState, snap: FleetSnapshot, width: number): ContentLine[] {
+  return configContentLines(state, snap, width).map(line => {
+    if (line.segs || line.text.startsWith("  ──")) return line;
+    const field = line.text.match(/^( {2}[^:]+:\s+)(.*)$/);
+    // Settings/provenance prose is not an operational status. In particular,
+    // "running application unverified" must not paint "running" as healthy.
+    return { ...line, segs: field
+      ? [{ text: field[1]!, token: "dim" as const }, { text: field[2]!, token: "bright" as const }]
+      : [{ text: line.text, token: "bright" as const }] };
+  });
+}
+
+function configContentLines(state: ViewState, snap: FleetSnapshot, width: number): ContentLine[] {
   const read = snap.config ?? null;
   const category = state.configCategory;
   const back: ContentLine = { text: "‹ Back", action: { type: "back" } };

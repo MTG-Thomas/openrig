@@ -9,10 +9,23 @@ import { stylizeLines } from "../src/stylize.js";
 import { createStyle } from "../src/theme.js";
 import { healthDetailLines, healthListLines } from "../src/health/health-model.js";
 import type { HealthRecord } from "../src/types.js";
+import type { ConfigEntry } from "../src/config/config-model.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe("S06 installed presentation contracts", () => {
+  it("does not color configuration provenance words as operational status", () => {
+    const snap = emptySnapshot(), view = createViewState({ instanceId: "colors", getSnapshot: () => snap });
+    const entry: ConfigEntry = { key: "host.name", group: "general", value: "running", defaultValue: "localhost", source: "file", visibility: "shown", reason: null, scope: "instance", application: "running application unverified" };
+    snap.config = { home: "/fixture", observedAt: "now", readOnly: true, entries: [entry], sources: [], exclusions: [] };
+    view.dispatch({ type: "config-setting", key: entry.key });
+    const screen = renderScreen(view.get(), snap, { cols: 140, rows: 42 });
+    const lines = stylizeLines(screen, createStyle("truecolor"));
+    const line = lines.find(l => l.includes("application unverified"))!;
+    expect(line).toBeTruthy();
+    expect(line).not.toContain("38;2;152;195;121");
+    expect(line).toContain("38;2;232;234;240");
+  });
   it.each([[140, 42], [80, 24]])("keeps every selected Help command and its registry example visible at %ix%i", (cols, rows) => {
     const snap = emptySnapshot();
     const view = createViewState({ instanceId: "help", getSnapshot: () => snap });
