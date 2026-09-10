@@ -134,6 +134,7 @@ export class DaemonClient {
     return data;
   }
 
+  humanUpdates() { return this.get("/api/queue/human-updates?limit=20"); }
   connections() { return this.get("/api/gateway/connections"); }
 
   fileRoots() { return this.get("/api/files/roots") as Promise<{ roots: import("./reading.js").FileRoot[]; hint?: string }>; }

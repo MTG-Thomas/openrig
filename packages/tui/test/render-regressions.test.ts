@@ -115,7 +115,7 @@ describe("live visual regressions", () => {
 
     const screen = renderScreen(view.get(), snap, { cols: 140, rows: 20 });
     expect(screen.lines.join("\n")).not.toContain("qitem-123");
-    expect(screen.lines.join("\n")).toContain("Unavailable: Attention");
+    expect(screen.lines.join("\n")).toContain("Unavailable: Feed");
     expect(screen.contentTargets).toHaveLength(0);
   });
 
@@ -132,7 +132,7 @@ describe("live visual regressions", () => {
     view.dispatch({ type: "jump", section: "needs" });
     const screen = renderScreen(view.get(), snap, { cols: 140, rows: 34 });
     expect(screen.lines.join("\n")).not.toContain("remote guard needs attention");
-    expect(screen.lines.join("\n")).toContain("Unavailable: Attention");
+    expect(screen.lines.join("\n")).toContain("Unavailable: Feed");
     expect(screen.contentTargets).toHaveLength(0);
   });
 

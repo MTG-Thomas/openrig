@@ -179,7 +179,7 @@ function expectIncompleteNeedsTruth(snap: Awaited<ReturnType<typeof hydrateSnaps
   view.dispatch({ type: "jump", section: "needs" });
   const text = renderScreen(view.get(), snap, { cols: 140, rows: 34 }).lines.join("\n");
   // A legacy fleet read cannot stand in for the dedicated Attention authority.
-  expect(text).toContain("Unavailable: Attention sources have not answered.");
+  expect(text).toContain("Unavailable: Feed sources have not answered.");
   expect(text).not.toContain("(read pending)");
   expect(text).not.toContain("no fleet attention items right now");
 }
@@ -362,7 +362,7 @@ describe("snapshot hydration over the §4.A reads (Phase 2)", () => {
 
     expect(snap.needs[0]?.detail).toContain("HIGH HUMAN APPROVAL");
     const text = screen.lines.join("\n");
-    expect(text).toContain("Unavailable: Attention");
+    expect(text).toContain("Unavailable: Feed");
     expect(text).not.toContain("HIGH HUMAN APPROVAL");
     expect(text).not.toContain("normal exception 0");
   });

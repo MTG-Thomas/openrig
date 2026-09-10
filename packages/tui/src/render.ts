@@ -697,6 +697,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
   if (state.section === "config") return configLines(state, snap, contentWidth);
   if (state.section === "connections") return connectionsLines(snap, contentWidth, state.timeZone);
   if (state.healthOpen) return healthDetailLines(snap, state.healthOpen, contentWidth, state.timeZone);
+  if (state.section === "system") return [{ text: "System · Instance health" }, { text: "" }, ...healthListLines(snap, { kind: "instance", local: true }, contentWidth)];
   // PULSE is a FULL-WIDTH view handled by an early return in renderScreen
   // (renderPulseScreen) — it never reaches the sidebar+content layout below.
   if (state.section === "topology") {
@@ -1633,7 +1634,7 @@ function renderBody(state: ViewState, snap: FleetSnapshot, options: RenderOption
     if (options.completion.candidates.length > 4) lines.push(pad("  … keep typing to narrow matches", cols));
   }
 
-  const sectionTitle = { topology: "TOPOLOGY", specs: "SPECS", scopes: "PROJECTS", needs: "ATTENTION" }[state.section] ?? state.section.toUpperCase();
+  const sectionTitle = { topology: "TOPOLOGY", specs: "SPECS", scopes: "PROJECTS", needs: "FEED", system: "SYSTEM · HEALTH", config: "SYSTEM · CONFIGURATION", connections: "SYSTEM · CONNECTIONS" }[state.section] ?? state.section.toUpperCase();
   // active-pane emphasis (k9s-class chrome): the focused pane's title is bracketed
   const explorerTitle = state.focusedPane === "explorer" ? "{ EXPLORER }" : "EXPLORER";
   const contentTitle = state.focusedPane === "content" ? `{ ${sectionTitle} }` : sectionTitle;

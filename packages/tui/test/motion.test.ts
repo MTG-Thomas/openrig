@@ -46,7 +46,7 @@ describe("motion wiring + region discipline", () => {
     const screen = renderScreen(s.get(), snap, { cols: 140, rows: 34 });
     const styled = stylizeLines(screen, createStyle("truecolor"));
     const body = styled.join("\n");
-    expect(body).toContain("Unavailable: Attention");
+    expect(body).toContain("Unavailable: Feed");
     expect(body).not.toContain("⚑");
     expect(body).not.toMatch(/\x1b\[(?:\d+;)*5(?:;\d+)*m/);
     expect(screen.motionActive).toBeFalsy();
@@ -135,11 +135,11 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
     const s = createViewState({ instanceId: "hq", getSnapshot: () => unprobed });
     s.dispatch({ type: "jump", section: "needs" });
     const loading = renderScreen(s.get(), unprobed, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING }).lines.join("\n");
-    expect(loading).toContain("attention read pending");
+    expect(loading).toContain("feed read pending");
     expect(loading).not.toContain("Unavailable:");
     expect(loading).not.toContain("No current items");
     const settled = renderScreen(s.get(), unprobed, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor" });
-    const line = settled.lines.find((l) => l.includes("Unavailable: Attention"))!;
+    const line = settled.lines.find((l) => l.includes("Unavailable: Feed"))!;
     expect(line).toContain("sources have not answered");
     expect(line).not.toMatch(/read pending|[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
     expect(settled.motionActive).toBeFalsy();
@@ -164,8 +164,8 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
     const s = createViewState({ instanceId: "rd", getSnapshot: () => probing });
     s.dispatch({ type: "jump", section: "needs" });
     const screen = renderScreen(s.get(), probing, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING });
-    expect(screen.lines.join("\n")).toContain("attention read pending");
-    expect(screen.lines.join("\n")).not.toContain("Unavailable: Attention");
+    expect(screen.lines.join("\n")).toContain("feed read pending");
+    expect(screen.lines.join("\n")).not.toContain("Unavailable: Feed");
     expect(screen.motionActive).toBe(true);
   });
 });

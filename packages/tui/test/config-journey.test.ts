@@ -72,6 +72,7 @@ describe("CONFIG in the normal TUI journey", () => {
     const work = view.get();
     const sources = [join(home, "config.json"), configPathFor(home), join(home, "private.env")];
     const before = sources.map((p) => readFileSync(p, "utf8"));
+    click(draw(), (a) => a.type === "jump" && a.section === "system");
     click(draw(), (a) => a.type === "jump" && a.section === "config");
     await refresh();
     expect(draw().lines.join("\n")).toContain("Your instance settings");
@@ -83,7 +84,7 @@ describe("CONFIG in the normal TUI journey", () => {
     click(draw(), (a) => a.type === "config-category" && a.category === "slack");
     expect(draw().lines.join("\n")).toContain("disabled");
     expect(snap.config!.entries.filter((e) => e.group === "general").map((e) => e.key)).toEqual(expect.arrayContaining([...SETTINGS_VALID_KEYS]));
-    while (view.get().section === "config") escape();
+    while (["config", "system"].includes(view.get().section)) escape();
     expect(view.get()).toMatchObject({ section: work.section, selection: work.selection, filter: work.filter, contentOffset: work.contentOffset });
     expect(new Set(trace)).toEqual(new Set(["GET /api/config?view=browser", "GET /healthz", "GET /api/gateway/connections"]));
     expect(sources.map((p) => readFileSync(p, "utf8"))).toEqual(before);

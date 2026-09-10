@@ -18,6 +18,7 @@ it.each([140, 80])("keeps readable summaries, passive exact source navigation an
       if (unavailable) throw new Error("source offline");
       return Response.json({ ...data, detail: u.searchParams.get("item") ? { item, lines: ["Full original request", "History: still pending"], files: [{ label: "Evidence", path: "/books/alpha/proof.md#decision" }] } : null });
     }
+    if (u.pathname === "/api/queue/human-updates") { if (unavailable) throw new Error("source offline"); return Response.json({ items: [], limit: 20, truncated: false }); }
     if (u.pathname === "/api/files/roots") return Response.json({ roots: [{ name: "alpha", path: "/books/alpha" }] });
     if (u.pathname === "/api/files/read") return Response.json({ root: "alpha", path: "proof.md", absolutePath: "/books/alpha/proof.md", content: "# Decision\nReadable cover", mtime: item.at, contentHash: "fixture", size: 25, truncated: false, totalBytes: 25 });
     throw new Error(`Unexpected request: ${u}`);
@@ -27,7 +28,7 @@ it.each([140, 80])("keeps readable summaries, passive exact source navigation an
   const refresh = async () => { snap = await hydrateSnapshot(client, undefined, null, null, null, view.get()); };
   view.dispatch(parseCommand("attention")); await refresh();
   const lines = attentionLines(view.get(), snap, width - 33), text = lines.map(l => l.text).join("\n");
-  expect(text).toContain("Action required"); expect(text).toContain("Updates");
+  expect(text).toContain("Human requests"); expect(text).toContain("Updates");
   expect(text.replace(/\s+/g, " ")).toContain(item.summary);
   expect(lines.every(l => l.text.length <= width - 33)).toBe(true);
   view.dispatch(lines.find(l => l.action?.type === "attention-open")!.action!); await refresh();
@@ -35,7 +36,7 @@ it.each([140, 80])("keeps readable summaries, passive exact source navigation an
   expect(attentionLines(view.get(), snap, width).map(l => l.text).join("\n")).toContain("Full original request");
   const retained = { ...snap, attentionRead: { ...snap.attentionRead!, items: [] } };
   const resolved = attentionLines(view.get(), retained, width).map(l => l.text).join("\n");
-  expect(resolved).toContain("Source record"); expect(resolved).not.toContain("Action required");
+  expect(resolved).toContain("Source record"); expect(resolved).not.toContain("Human requests");
   const caller = view.get();
   view.dispatch({ type: "attention-source", path: "/books/alpha/proof.md#decision" });
   expect(view.get().file).toEqual({ root: "alpha", path: "proof.md", anchor: "decision" });

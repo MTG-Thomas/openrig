@@ -18,11 +18,15 @@ export const SECTION_REGISTRY: readonly SectionDef[] = [
     drillShape: "project>mission>execution-row>slice/source",
   },
   { name: "terminals", sourceRead: "GET /api/terminal/views?detail=1 + /api/terminal/preview (passive)", drillShape: "saved/derived>view>page" },
-  { name: "config", sourceRead: "GET /healthz + /api/config?view=browser + /api/gateway/connections (passive)", drillShape: "category>setting" },
-  { name: "connections", sourceRead: "GET /healthz + /api/gateway/connections (passive projection)", drillShape: "instance>human/routes>work" },
   {
     name: "needs",
-    sourceRead: "GET /api/attention (passive queue, native proof and canonical health)",
+    sourceRead: "GET /api/attention + /api/queue/human-updates?limit=20 (passive queue, delivered updates, proof and health)",
     drillShape: "flat",
   },
+  { name: "system", sourceRead: "GET /api/health (canonical instance findings)", drillShape: "health/configuration/connections" },
+  { name: "config", sourceRead: "GET /healthz + /api/config?view=browser + /api/gateway/connections (passive)", drillShape: "category>setting" },
+  { name: "connections", sourceRead: "GET /healthz + /api/gateway/connections (passive projection)", drillShape: "instance>human/routes>work" },
 ];
+
+/** Display grouping only; compatible configuration/connection coordinates remain. */
+export const SYSTEM_SECTIONS = ["system", "config", "connections"];

@@ -1,3 +1,4 @@
+import { composeHumanUpdates, type DeliveredHumanUpdates } from "./attention/attention-model.js";
 import { readTerminals } from "./terminals/terminal-model.js";
 import { fileTargetForPath } from "./reading.js";
 // Snapshot hydrator: maps the §4.A daemon reads (via DaemonClient, the one
@@ -377,11 +378,18 @@ export async function hydrateSnapshot(
   if (viewContext?.externalUrl) return { ...emptySnapshot(), hydratedAt: new Date().toISOString() };
 
   if (viewContext?.section === "needs") {
-    const [attentionRead, roots] = await Promise.all([
-      safe<NonNullable<FleetSnapshot["attentionRead"]>>("Attention", () => client.humanAttention(viewContext.attentionOpen)),
+    const [attention, updates, roots] = await Promise.all([
+      safe<NonNullable<FleetSnapshot["attentionRead"]>>("Feed", () => client.humanAttention(viewContext.attentionOpen)),
+      safe<DeliveredHumanUpdates>("delivered updates", () => client.humanUpdates()),
       safe<Awaited<ReturnType<DaemonClient["fileRoots"]>>>("file-roots", () => client.fileRoots()),
     ]);
+    const attentionRead = composeHumanUpdates(attention, updates, viewContext.attentionOpen);
     return { ...emptySnapshot(), attentionRead, fileRoots: roots?.roots ?? [], readErrors, hydratedAt: new Date().toISOString() };
+  }
+
+  if (viewContext?.section === "system") {
+    const health = await safe<HealthProjectionRead>("health-findings", () => client.healthFindings());
+    return { ...emptySnapshot(), ...(health ? { health: { ...health, availability: "loaded" as const } } : {}), readErrors, hydratedAt: new Date().toISOString() };
   }
 
   // Project reads never fall back to the daemon's default workspace or fleet queue.

@@ -300,7 +300,7 @@ describe("founder live-QA correction — operational agent zoom", () => {
     let screen = renderScreen(view.get(), snap, { cols: 120, rows: 50 });
     const target = screen.contentTargets.find((item) => item.action.type === "drill" && item.action.resource === "agent");
     expect(target).toBeUndefined();
-    expect(screen.lines.join("\n")).toContain("Unavailable: Attention");
+    expect(screen.lines.join("\n")).toContain("Unavailable: Feed");
     view.dispatch({ type: "drill", resource: "agent", name: "dev50.guard" });
     screen = renderScreen(view.get(), snap, { cols: 120, rows: 80 });
     expect(screen.lines.join("\n")).toContain("CONTEXT · 69%");

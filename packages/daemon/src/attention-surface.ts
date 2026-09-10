@@ -9,6 +9,7 @@ export interface AttentionItem {
   scope: string;
   project: { id: string; root: string } | null;
   source: string;
+  recipient?: string | null;
 }
 export interface AttentionDetail {
   item: AttentionItem;

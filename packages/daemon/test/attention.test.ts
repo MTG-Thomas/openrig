@@ -58,15 +58,19 @@ function fixture() {
 it("uses real human obligations, source summaries and dependents; excludes agent-only and terminal queue rows", async () => {
   const f = fixture();
   try {
-    f.row("decision"); f.row("blocker", "agent@fixture", "blocked", "human@kernel");
+    f.row("decision", "human-founder@external"); f.row("blocker", "agent@fixture", "blocked", "human-reader@external");
     f.row("dependent", "agent@fixture", "blocked", "decision"); f.row("agent-gate", "agent@fixture", "pending", null, "human-gate");
     f.row("ordinary", "agent@fixture", "blocked", "agent@fixture"); f.row("done", "human@kernel", "done");
     f.db.prepare("UPDATE queue_items SET evidence_ref = ? WHERE qitem_id = ?").run(join(f.root, "a/SPEC.md") + "#decision", "decision");
+    f.db.prepare("UPDATE queue_items SET human_detail = ? WHERE qitem_id = ?").run("Full supplemental human detail", "decision");
     const before = f.db.serialize();
     const read = await f.read("queue:decision");
     expect(read.items.filter(i => i.kind === "action").map(i => i.id).sort()).toEqual(["queue:blocker", "queue:decision"]);
-    expect(read.detail?.item).toMatchObject({ summary: "Choose decision", unblocks: "Choose dependent", project: { id: "a" } });
+    expect(read.detail?.item).toMatchObject({ recipient: "human-founder@external", summary: "Choose decision", unblocks: "Choose dependent", project: { id: "a" } });
     expect(read.detail?.lines.join("\n")).toContain("Real request for decision");
+    expect(read.detail?.lines.join("\n")).toContain("Full supplemental human detail");
+    expect(read.detail?.lines.join("\n")).toContain("Decision route:");
+    expect(read.items.find(i => i.id === "queue:blocker")?.recipient).toBe("human-reader@external");
     expect(read.detail?.files[0]?.path).toBe(realpathSync(join(f.root, "a/SPEC.md")) + "#decision");
     expect(read.items.filter(i => i.id.startsWith("health:"))).toHaveLength(1);
     expect(read.items.some(i => i.summary.includes("done"))).toBe(false);

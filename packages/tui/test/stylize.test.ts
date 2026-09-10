@@ -77,7 +77,7 @@ describe("treatment (mockup palette semantics)", () => {
 
   it("Attention styling preserves unavailable truth without legacy fleet alerts", () => {
     const styled = stylizeLines(screenFor(":needs"), style).join("\n");
-    expect(stripAnsi(styled)).toContain("Unavailable: Attention");
+    expect(stripAnsi(styled)).toContain("Unavailable: Feed");
     expect(stripAnsi(styled)).not.toContain("✖ remote-host");
     expect(styled).not.toMatch(/\x1b\[5;38;2;244;190;92m⚑/);
   });

@@ -19,7 +19,7 @@ import type {
   ViewStateStore,
   NavigationFrame,
 } from "./types.js";
-import { SECTION_REGISTRY } from "./sections.js";
+import { SECTION_REGISTRY, SYSTEM_SECTIONS } from "./sections.js";
 import { scopesExplorerRows } from "./scopes/scopes-model.js";
 import { GRAPH_STYLE_NAMES } from "./topology/render-graph.js";
 import { rowStatusGlyph } from "./topology/glyphs.js";
@@ -91,7 +91,7 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
     if (["attention-open", "terminal-preview", "project-select", "jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, file: null, externalUrl: null, recentOpen: null, timeZoneHelp: false, attentionOpen: null };
     state = reduce(state, action, getSnapshot());
     // Connections is a side trip from work, including explorer/palette entry.
-    if (action.type === "jump" && !["connections", "config", "needs"].includes(action.section) && !["connections", "config", "needs"].includes(previous.section)) state.history = [];
+    if (action.type === "jump" && ![...SYSTEM_SECTIONS, "needs"].includes(action.section) && ![...SYSTEM_SECTIONS, "needs"].includes(previous.section)) state.history = [];
     // A filter changes the current view; clearing it must not add the detail
     // being left back onto history (Escape would then cycle forever).
     else if (!["back", "execution-close", "filter"].includes(action.type) && !state.lastError && location(previous) !== location(state)) {
@@ -348,6 +348,7 @@ export function specDetailArrowsScroll(state: ViewState): boolean {
 
 /** The explorer key for the state's current location (drill leaf or section). */
 export function locationKey(state: ViewState): string {
+  if (state.section === "system") return "system:health";
   if (state.section === "terminals" && state.terminalView) return `terminal:${state.terminalView}`;
   if (state.section === "needs" && state.attentionOpen) return `attention:${state.attentionOpen}`;
   if (state.section === "config" && state.configCategory) return `config:${state.configCategory}`;
@@ -562,16 +563,15 @@ function crossNav(state: ViewState, kind: "spec-of" | "running", name: string, s
 export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): ExplorerRow[] {
   const rows: ExplorerRow[] = [];
   for (const section of state.sections) {
-    const active = section.name === state.section;
-    // The legacy command remains addressable; CONFIG owns normal settings navigation.
-    if (section.name === "connections" && !active) continue;
+    const active = section.name === state.section || section.name === "system" && SYSTEM_SECTIONS.includes(state.section);
+    if (section.name === "config" || section.name === "connections") continue;
     const label =
       section.name === "topology"
         ? "TOPOLOGY"
         : section.name === "specs"
           ? "SPECS"
           : section.name === "needs"
-            ? "ATTENTION"
+            ? "FEED"
             : section.name === "scopes" ? "PROJECTS" : section.name.toUpperCase();
     // A section changes view but has no independent collapse state. Do not draw
     // a disclosure glyph that cannot be toggled.
@@ -581,9 +581,12 @@ export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): Expl
       rows.push(...terminalExplorerRows(state, snap));
       continue;
     }
-    if (section.name === "config") {
-      rows.push(...CONFIG_CATEGORIES.map((c) => ({ label: "  " + c.label, key: `config:${c.id}`, action: { type: "config-category" as const, category: c.id } })));
-      if (state.history?.length) rows.push({ label: "  Back", key: "config:back", action: { type: "back" } });
+    if (section.name === "system") {
+      rows.push({ label: "  Health", key: "system:health", action: { type: "jump", section: "system" } },
+        { label: "  Configuration", key: "section:config", action: { type: "jump", section: "config" } });
+      if (state.section === "config") rows.push(...CONFIG_CATEGORIES.map((c) => ({ label: "    " + c.label, key: `config:${c.id}`, action: { type: "config-category" as const, category: c.id } })));
+      rows.push({ label: "  Connections", key: "section:connections", action: { type: "jump", section: "connections" } });
+      if (state.history?.length) rows.push({ label: "  Back", key: "system:back", action: { type: "back" } });
       continue;
     }
     if (section.name === "scopes") {
