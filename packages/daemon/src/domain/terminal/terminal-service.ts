@@ -99,6 +99,8 @@ export interface TerminalServiceDeps {
   viewsStore: Pick<TerminalViewsStore, "get" | "list">;
   /** Live seats of a rig BY NAME; null when no such rig is known (vs [] = a known-but-empty rig). */
   listRigSeats(rigName: string): Promise<LiveSeatRow[] | null> | LiveSeatRow[] | null;
+  /** One request-local inventory fold for the derived catalog entries. */
+  listRigSeatsBatch?(rigNames: string[]): Promise<Map<string, LiveSeatRow[]>> | Map<string, LiveSeatRow[]>;
   /** Live seats of a pod within a rig (by rig name-or-id + pod namespace); null when the rig/pod is unknown. */
   listPodSeats(rigArg: string, podNamespace: string): Promise<LiveSeatRow[] | null> | LiveSeatRow[] | null;
   /** Live seats for a derived scope (`mission:<id>` | `slice:<id>`); null when the scope is unknown/invalid. */
@@ -192,8 +194,11 @@ export class TerminalService {
         ...result.saved.map((s) => ({ view: `saved:${s.id}`, name: s.name, kind: "saved" as const })),
         ...result.rigs.map((name) => ({ view: `rig:${name}`, name, kind: "derived" as const })),
       ];
+      const inventory = await this.deps.listRigSeatsBatch?.(result.rigs);
       for (const entry of entries) {
-        const plan = await this.resolveComposed(entry.view);
+        const rows = entry.kind === "derived" ? inventory?.get(entry.name) : undefined;
+        const plan = rows ? composeView(entry.view, await this.refineLiveness(deriveViewMembers(rows, { readOnly: false })), { resolveHost: id => this.deps.resolveHost(id) })
+          : await this.resolveComposed(entry.view);
         if ("code" in plan) continue;
         result.catalog.push({ ...entry, members: [...plan.opened, ...plan.absent, ...plan.degraded].map((m) => m.seat), ready: plan.opened.length, absent: plan.absent.length, degraded: plan.degraded.length, pages: plan.pages.length });
       }

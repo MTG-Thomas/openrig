@@ -1630,7 +1630,7 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
     const { CmuxProviderAdapter } = await import("./domain/terminal/cmux-provider-adapter.js");
     const { CmuxLayoutService } = await import("./domain/cmux-layout-service.js");
     const { TerminalViewsStore } = await import("./domain/terminal/terminal-views-store.js");
-    const { getNodeInventory } = await import("./domain/node-inventory.js");
+    const { getNodeInventory, getNodeInventoryForRigs } = await import("./domain/node-inventory.js");
     const { loadHostRegistry, resolveHost: resolveHostInRegistry } = await import(
       "./domain/hosts/hosts-registry-reader.js"
     );
@@ -1668,6 +1668,16 @@ export async function createDaemon(opts?: DaemonOptions): Promise<DaemonResult> 
     deps.terminalService = new TerminalService({
       resolveProvider: (name) => providerMap[name] ?? null,
       viewsStore: new TerminalViewsStore(),
+      listRigSeatsBatch: (names) => {
+        const rigs = rigRepo.listRigs();
+        // Match listRigSeats' first-name resolution, including duplicate names.
+        const selected = new Map(names.flatMap(name => {
+          const rig = rigs.find(rig => rig.name === name);
+          return rig ? [[name, rig] as const] : [];
+        }));
+        const inventory = getNodeInventoryForRigs(db, new Set([...selected.values()].map(rig => rig.id)));
+        return new Map([...selected].map(([name, rig]) => [name, (inventory.get(rig.id) ?? []).map(toLiveSeatRow)]));
+      },
       listRigSeats: (rigArg) => {
         const rigs = rigRepo.listRigs();
         const rig = rigs.find((r) => r.name === rigArg) ?? rigs.find((r) => r.id === rigArg);

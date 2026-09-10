@@ -211,3 +211,20 @@ describe("TerminalService — view resolution + one-shape result", () => {
     expect(one.providers[0]?.status.available).toBe(false);
   });
 });
+
+describe("one terminal catalog inventory", () => {
+  it("uses one batch for derived entries and preserves the complete default catalog", async () => {
+    const normal = makeDeps();
+    const expected = await new TerminalService(normal.deps).listViews(true);
+    let batches = 0; let singles = 0;
+    const batched = makeDeps({
+      listRigSeats: () => { singles++; return rigRows; },
+      listRigSeatsBatch: names => { batches++; expect(names).toEqual(["acme-build"]); return new Map([["acme-build", rigRows]]); },
+    });
+    const actual = await new TerminalService(batched.deps).listViews(true);
+    expect(actual).toEqual(expected);
+    expect(batches).toBe(1);
+    expect(singles).toBe(0);
+    expect(batched.herdr.lastView).toBeNull();
+  });
+});

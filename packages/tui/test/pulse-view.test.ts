@@ -338,7 +338,7 @@ describe("PULSE view (5.2 Wave B — increment 5: live refresh-seam + motion bud
   it("F1: while the FIRST load is in flight (!settled) an honest loading indicator shows + motionActive; a settled empty frame is calm", () => {
     const { v } = primed();
     const loading = renderScreen(v.get(), snap, { ...OPTS, load: { inFlight: true, settled: false } });
-    const status = loading.lines.find((l) => l.startsWith("[t]"));
+    const status = loading.lines[0];
     expect(status).toBeDefined();
     expect(status!.toLowerCase()).toContain("loading");
     expect(loading.motionActive).toBe(true);

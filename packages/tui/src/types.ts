@@ -59,6 +59,7 @@ export interface PodNode {
 }
 
 export interface RigNode {
+  inventoryUnavailable?: boolean;
   authoredSpecName?: string;
   /** daemon rig id; absent only in static demo fixtures */
   id?: string;
@@ -564,6 +565,9 @@ export interface HitTarget {
 /** S19 round-5 (guard): the refresh owner's honest load lifecycle — the ONLY
  * state the loading spinner may ride (data absence is not a lifecycle fact) */
 export interface LoadState {
+  lastSuccessAt?: number;
+  /** Oldest successful source retained because its latest read failed. */
+  retainedAt?: number;
   /** Known change or lost authority contact; quiet elapsed time alone never sets this. */
   stale?: boolean;
   connection?: "connected" | "dropped" | "reconnecting" | "unavailable";

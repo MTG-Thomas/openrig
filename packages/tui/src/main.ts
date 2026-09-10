@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { pageReadKey } from "./page-read.js";
 import { completeCommand } from "./commands/completion.js";
 import { resolveTimeZone } from "./time.js";
 // Entry: wires the four input adapters (command bar / keyboard / mouse /
@@ -115,7 +116,7 @@ async function run(): Promise<void> {
   const selectedRigName = (): string | null =>
     view.get().drill.find((part) => part.kind === "rig")?.name ?? null;
   const live = client
-    ? createLiveRefresh({ hydrate: () => hydrateSnapshot(client, reviewCache, view.get().scopesMission, selectedSliceDirectory(), selectedRigName(), view.get()), onFrame: () => draw(), now: () => Date.now() })
+    ? createLiveRefresh({ scopeKey: () => pageReadKey(view.get()), hydrate: (page, signal) => hydrateSnapshot(client.forPage(page, signal), reviewCache, view.get().scopesMission, selectedSliceDirectory(), selectedRigName(), view.get()), onFrame: () => draw(), now: () => Date.now() })
     : null;
   let motionTimer: NodeJS.Timeout | null = null;
   // S19 AM-R18 — the open view updates ITSELF: oracle pushes drive the refresh owner.
@@ -123,6 +124,9 @@ async function run(): Promise<void> {
   // daemon client (one oracle, with the owner's bounded quiet fallback; HTTP stays
   // in the client module).
   let liveEnabled = false;
+  let inputRevision = 0;
+  let drawnScope = pageReadKey(view.get());
+  let drawnSnapshot = snapshot;
   let activityEvents: ReturnType<typeof subscribeActivityEvents> | null = null;
   function enableLive(): boolean {
     if (!live || !client || startup?.state.connection !== "up") return false;
@@ -139,6 +143,18 @@ async function run(): Promise<void> {
     const cols = process.stdout.columns ?? 120;
     const rows = process.stdout.rows ?? 32;
     const nowMs = Date.now();
+    if (live) {
+      const next = live.snapshot();
+      const scope = pageReadKey(view.get());
+      if (next !== drawnSnapshot && scope === drawnScope && live.load().settled) {
+        const oldKey = computeExplorerRows(view.get(), snapshot)[view.get().selection]?.key;
+        const rows = computeExplorerRows(view.get(), next);
+        const index = oldKey ? rows.findIndex(row => row.key === oldKey) : -1;
+        const selection = index >= 0 ? index : Math.min(view.get().selection, Math.max(0, rows.length - 1));
+        if (selection !== view.get().selection) view.dispatch({ type: "select", index: selection, rowCount: rows.length });
+      }
+      drawnScope = scope; drawnSnapshot = next;
+    }
     if (live) snapshot = { ...live.snapshot(),
       ...(!liveEnabled ? { readErrors: [`Live data not loaded · connection ${startup?.state.connection ?? "probing"} · L Local reading · S Startup`] } : {}),
       launchingCli: process.env["OPENRIG_TUI_CLI_IDENTITY"]?.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) };
@@ -146,7 +162,7 @@ async function run(): Promise<void> {
     lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     if (startup?.state.local) startup.state.local.scroll = Math.min(startup.state.local.scroll, lastScreen.contentMaxOffset);
     // Startup has its own selection/scroll; keep the underlying reader bookmark intact.
-    if (!startup?.state.open && !view.get().palette && (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length)) {
+    if (!startup?.state.open && !view.get().palette && (!liveEnabled || live?.load().settled) && (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length)) {
       view.dispatch({ type: "layout", contentMaxOffset: lastScreen.contentMaxOffset, contentTargetCount: lastScreen.contentTargets.length });
       lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     }
@@ -176,7 +192,12 @@ async function run(): Promise<void> {
         else resolve();
       });
     }),
-    onChange: draw,
+    onChange: () => {
+      draw();
+      // Skip during the probe must remain skipped, but can start reads when
+      // the connection later answers. This never changes the chosen page.
+      if (!startup?.state.open && startup?.state.connection === "up" && !liveEnabled && enableLive()) void live?.refresh();
+    },
     onHelp: () => { view.dispatch({ type: "palette-open" }); draw(); },
     readLocal: (request) => readLocal(cliEntry, request),
     onNative: async (seat) => {
@@ -199,17 +220,20 @@ async function run(): Promise<void> {
       }
     },
     onWork: async (rig, seat) => {
+      const revision = inputRevision;
       crashCartOpts = {};
-      view.dispatch({ type: "notice", message: "Startup skipped · ? Help · L Local reading · S Startup / recovery. Live data waits for a confirmed connection." });
+      view.dispatch({ type: "notice", message: startup?.state.connection === "up" ? "" : "Live data waits for a confirmed connection · S Startup · L Local" });
       draw();
       if (!enableLive()) return;
       await live?.refresh();
+      if (revision !== inputRevision) return;
       const current = live?.snapshot() ?? snapshot;
       const host = current.hosts.find((host) => host.rigs.some((entry) => entry.id === rig?.rigId));
       if (rig && host) {
         view.dispatch({ type: "drill", resource: "rig", name: rig.rigName, target: { host: host.name } });
         await live?.refresh();
       }
+      if (revision !== inputRevision) return;
       if (seat && host) view.dispatch({ type: "drill", resource: "agent", name: seat.observed.sessionName, target: { host: host.name, rig: rig!.rigName } });
       draw();
     },
@@ -344,6 +368,8 @@ async function run(): Promise<void> {
     socketPath,
     view,
     onMutation: () => {
+      inputRevision += 1; startup?.interacted();
+      if (startup) startup.state.open = false;
       draw();
       refreshFromActivity();
     },
@@ -409,6 +435,7 @@ async function run(): Promise<void> {
   function handleInput(events: ReturnType<typeof inputDecoder.write>): void {
     if (nativeAttached) return;
     for (const ev of events) {
+      inputRevision += 1; startup?.interacted();
       if (startup?.state.open && !view.get().palette) {
         if (ev.type === "char" && ev.ch === "q") { void shutdown(); return; }
         if (ev.type === "char") void startup.key(ev.ch);

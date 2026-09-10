@@ -42,7 +42,7 @@ describe("refresh owner — load lifecycle (guard round-5 finding 1)", () => {
     expect(frames).toEqual([{ inFlight: true, settled: false }]); // the loading frame IS drawn
     release(demoSnapshot());
     await done;
-    expect(live.load()).toEqual({ inFlight: false, settled: true, stale: false });
+    expect(live.load()).toEqual({ inFlight: false, settled: true, stale: false, lastSuccessAt: 0 });
     expect(frames).toHaveLength(2); // the settle frame is drawn too
     expect(live.snapshot().hosts.length).toBeGreaterThan(0);
   });

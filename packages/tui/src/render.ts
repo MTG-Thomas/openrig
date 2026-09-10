@@ -585,14 +585,14 @@ function instanceContentLines(
           fields: [
             { label: "identity", value: host.name },
             { label: "transport", value: host.id ?? "local" },
-            { label: "shape", value: `${host.rigs.length} rigs · ${host.rigs.reduce((n, rig) => n + rig.pods.reduce((m, pod) => m + pod.agents.length, 0), 0)} seats` },
+            { label: "shape", value: host.rigs.some(r => r.inventoryUnavailable) ? `${host.rigs.length} rigs · seat inventory incomplete` : `${host.rigs.length} rigs · ${host.rigs.reduce((n, rig) => n + rig.pods.reduce((m, pod) => m + pod.agents.length, 0), 0)} seats` },
           ],
         },
         {
           title: "rigs",
           lines: host.rigs.length > 0
             ? host.rigs.map((rig) => listItem(
-                alignedRow([[rig.name, 20], [rig.lifecycleState ?? "unknown", 20], [`${rig.pods.length} pods · ${rig.pods.reduce((n, pod) => n + pod.agents.length, 0)} seats`, 24]]),
+                alignedRow([[rig.name, 20], [rig.lifecycleState ?? "unknown", 20], [rig.inventoryUnavailable ? "inventory unavailable" : `${rig.pods.length} pods · ${rig.pods.reduce((n, pod) => n + pod.agents.length, 0)} seats`, 24]]),
                 { type: "drill", resource: "rig", name: rig.name, target: { host: host.name } },
               ))
             : [{ text: "  (no local rigs served — proven empty)" }],
@@ -644,7 +644,7 @@ function instanceContentLines(
     const rigAction: Action = { type: "drill", resource: "rig", name: rig.name, target: { host: host.name } };
     if (agents.length === 0) {
       lines.push({
-        text: tableRow(columns, { rig: rig.name, pod: "—", seat: "(no seats)", status: rig.lifecycleState ?? "unknown" }),
+        text: tableRow(columns, { rig: rig.name, pod: "—", seat: rig.inventoryUnavailable ? "(read failed)" : "(no seats)", status: rig.lifecycleState ?? "unknown" }),
         action: rigAction,
       });
       continue;
@@ -677,7 +677,7 @@ function instanceContentLines(
       });
     }
   }
-  lines.push({ text: "" }, { text: `${host.rigs.length} rigs · ${seatCount} seats · ${workingCount} working · ${attentionCount} need attention · ${openCount} open rows` });
+  lines.push({ text: "" }, { text: host.rigs.some(r => r.inventoryUnavailable) ? `${host.rigs.length} rigs · inventory incomplete · ${seatCount} seats read` : `${host.rigs.length} rigs · ${seatCount} seats · ${workingCount} working · ${attentionCount} need attention · ${openCount} open rows` });
   lines.push(...recentLines(snap, scope, contentWidth, false, state.timeZone));
   return lines;
 }
@@ -748,6 +748,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       }
       return [{ text: "(no rigs served — proven empty, not fabricated)" }];
     }
+    if (rig.inventoryUnavailable) return [{ text: `Inventory unavailable for ${rig.name} · refresh to Retry` }];
     const podFilter = leaf?.kind === "pod" ? leaf.name : null;
     const all = rig.pods.flatMap((p) => p.agents.map((a) => ({ pod: p.name, ...a })));
     const rows = all
@@ -1061,7 +1062,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     } else {
       lines.push({ text: "SPEC LIBRARY" }, { text: "Choose a spec at left to preview its purpose, contents and source." },
         { text: "Enter reads details · / filters · source opens current disk content" }, { text: "" });
-      for (const kind of ["rig", "agent", "workflow"] as const) lines.push({ text: `${kind}: ${snap.specs.filter((spec) => spec.kind === kind).length} available` });
+      if (snap.specsLoaded !== false && !snap.readErrors.some(e => e.startsWith("specs-library"))) for (const kind of ["rig", "agent", "workflow"] as const) lines.push({ text: `${kind}: ${snap.specs.filter((spec) => spec.kind === kind).length} available` });
       if (!snap.specs.length) {
         if (motion.loading) {
           if (!motion.reduced) motion.used = true;
@@ -1261,6 +1262,14 @@ function pushExplorerTargets(
   hitMap.push({ y, x1: 1, x2: explorerWidth, action: row.action });
 }
 
+function readStatus(load: import("./types.js").LoadState, zone: string): string {
+  const at = load.retainedAt ?? load.lastSuccessAt;
+  const basis = at === undefined ? "" : ` · last ${displayTime(new Date(at).toISOString(), zone)}`;
+  if (load.inFlight) return `${load.settled ? "Refreshing" : "Loading"}…${basis} · ? Help`;
+  if (load.stale) return `${at === undefined ? "Read failed" : "Could not refresh"}${basis} · refresh to Retry`;
+  return `Tab complete · ? help${basis}`;
+}
+
 function renderPulseScreen(state: ViewState, snap: FleetSnapshot, options: RenderOptions, inputLine: string): Screen {
   const { cols = 120, rows = 32, nowMs = 0 } = options;
   const explW = explorerWidth(cols);
@@ -1296,7 +1305,8 @@ function renderPulseScreen(state: ViewState, snap: FleetSnapshot, options: Rende
   const flashRows: number[] = [];
   let flashAck = false;
 
-  lines.push(pad(`cmd ▸ ${inputLine}▊${load.stale ? " · readiness unconfirmed — refreshing or authority unavailable" : load.connection && load.connection !== "connected" ? " · live updates unavailable — last HTTP basis; quiet refresh active" : inputLine ? "" : "  Tab complete · ? help · timezone"}`, cols));
+  lines.push(pad(`cmd ▸ ${inputLine}▊${inputLine ? "" : "  " + readStatus(load, state.timeZone)}`, cols));
+  if (load.stale && !inputLine) hitMap.push({ y: 1, x1: 9, x2: cols, action: { type: "noop" } });
   if (options.completion) {
     lines.push(pad(options.completion.message, cols));
     for (const candidate of options.completion.candidates.slice(0, 4)) lines.push(pad(`  ${candidate}`, cols));
@@ -1596,7 +1606,7 @@ function renderBody(state: ViewState, snap: FleetSnapshot, options: RenderOption
   // PULSE (founder Option-B): a content-pane view inside the NORMAL explorer│
   // content chrome — renderPulseScreen builds its own split (sidebar + lanes)
   // and rides the same segRows paint path, so it returns before the table layout.
-  if (state.viewTab === "pulse") return renderPulseScreen(state, snap, options, inputLine);
+  if (state.viewTab === "pulse" && options.load?.settled !== false) return renderPulseScreen(state, snap, options, inputLine);
   // S19 round-5 (guard): one spinner frame per render pass from caller time;
   // `loading` comes from the refresh OWNER (omitted = settled — demo/fixture
   // data IS the answer); reduced-motion kills all of it
@@ -1615,7 +1625,8 @@ function renderBody(state: ViewState, snap: FleetSnapshot, options: RenderOption
   // shell accepts typing from the empty state, so the honest readiness
   // affordance must show BEFORE the first key (no new focus state; stylize
   // paints the cell; the shared motion clock controls its visibility).
-  lines.push(pad(`cmd ▸ ${inputLine}▊${inputLine ? "" : "  Tab complete · ? help · timezone"}`, cols));
+  lines.push(pad(`cmd ▸ ${inputLine}▊${inputLine ? "" : "  " + readStatus(load, state.timeZone)}`, cols));
+  if (load.stale && !inputLine) hitMap.push({ y: 1, x1: 9, x2: cols, action: { type: "noop" } });
   if (options.completion) {
     lines.push(pad(options.completion.message, cols));
     for (const candidate of options.completion.candidates.slice(0, 4)) lines.push(pad(`  ${candidate}`, cols));
@@ -1632,7 +1643,10 @@ function renderBody(state: ViewState, snap: FleetSnapshot, options: RenderOption
   // Slice-17: the file-tree re-skin is a DISPLAY transform only — rows, keys,
   // actions, and the hit-map all keep resolving against the row model above.
   const { labels: explorerDisplay, metas: explorerMetas } = navigatorDisplay(explorer, snap, explW - 1);
-  const content = contentLines(state, snap, Math.max(cols - explW - (fullReading ? 1 : 2), 0), motion);
+  const content: ContentLine[] = !load.settled && !state.externalUrl
+    ? [{ text: `${motion.frame} ${state.section === "topology" ? "topology" : sectionTitle.toLowerCase()} read pending…` }]
+    : contentLines(state, snap, Math.max(cols - explW - (fullReading ? 1 : 2), 0), motion);
+  if (!load.settled && !reduced) motion.used = true;
   const footer = state.footerOn ? snap.stream.at(-1) : undefined;
   // round-5 (guard): the tmux-style ONE-SHOT activity flash targets the
   // flashed agent's EXPLORER row — per-seat pane-output events from the
