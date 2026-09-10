@@ -38,7 +38,7 @@ export function connectionsLines(snap: FleetSnapshot, width: number, timeZone = 
     { text: "  An older daemon may not support Connections. No readiness inferred." }], width);
   lines.push(fieldLine({ label: "process", value: `PID ${c.pid} · home ${c.home ?? "unreported"}` }),
     fieldLine({ label: "observed", value: displayTime(c.observedAt, timeZone) }),
-    sectionRule("Instance settings · resolved now", width));
+    sectionRule("Instance settings · resolved values", width));
   lines.push(fieldLine({ label: "settings", value: c.settingsSource ?? "source unavailable" }));
   for (const s of c.settings) lines.push(fieldLine({ label: s.key === "host.name" ? "display name" : s.key === "workspace.root" ? "workspace" : "operator", value: `${s.value ?? "unavailable"} (${s.source})` }));
   lines.push({ text: "  env overrides file overrides default. These are current settings, not proof of runtime adoption." },
