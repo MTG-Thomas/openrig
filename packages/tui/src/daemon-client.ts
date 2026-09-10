@@ -1,3 +1,4 @@
+import type { ProjectSelection } from "./types.js";
 // The TUI's ONLY daemon surface — thin typed fetch wrappers over the §4.A
 // endpoint table, ONE module by design: the R7 no-new-data source-check is a
 // one-file read (every route below is an EXISTING, web-consumed daemon read).
@@ -191,17 +192,23 @@ export class DaemonClient {
 
   // --- Needs-You (§4.A rows 5–6): composeNeedsYou legs + host/rig-down beside ---
   /** SCOPES view (d64d2f5c): the store-direct one-read hydrate. */
-  scopesDetailed() {
-    return this.get("/api/scopes?detail=1");
+  projects() { return this.get("/api/scopes/projects"); }
+  private projectQuery(project?: ProjectSelection | null): string {
+    return project ? `&project=${encodeURIComponent(project.id)}&projectRoot=${encodeURIComponent(project.root)}` : "";
+  }
+  scopesDetailed(project?: ProjectSelection | null) {
+    return this.get(`/api/scopes?detail=1${this.projectQuery(project)}`);
   }
 
   /** EXECUTION view via the shipped generic view route; no new endpoint. */
-  execution(mission?: string) {
-    return this.get(`/api/views/execution${mission ? `?mission=${encodeURIComponent(mission)}` : ""}`);
+  execution(mission?: string, project?: ProjectSelection | null) {
+    const query = `${mission ? `&mission=${encodeURIComponent(mission)}` : ""}${this.projectQuery(project)}`;
+    return this.get(`/api/views/execution${query ? "?" + query.slice(1) : ""}`);
   }
   /** Existing six-tab slice payload; read only for the opened slice. */
-  sliceDetail(directory: string) {
-    return this.get(`/api/slices/${encodeURIComponent(directory)}`);
+  sliceDetail(directory: string, mission?: string | null, project?: ProjectSelection | null) {
+    const query = `${mission ? `&mission=${encodeURIComponent(mission)}` : ""}${this.projectQuery(project)}`;
+    return this.get(`/api/slices/${encodeURIComponent(directory)}${query ? "?" + query.slice(1) : ""}`);
   }
 
   /** One bounded typed queue chronology for the current topology scope. */

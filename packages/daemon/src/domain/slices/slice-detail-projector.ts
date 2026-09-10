@@ -223,6 +223,10 @@ export class SliceDetailProjector {
     this.workflowSpecCache = opts.workflowSpecCache;
   }
 
+  withIndexer(indexer: SliceIndexer): SliceDetailProjector {
+    return new SliceDetailProjector({ db: this.db, indexer, workflowSpecCache: this.workflowSpecCache });
+  }
+
   project(slice: SliceRecord): SliceDetailPayload {
     // v1: resolve workflow_instance binding once; the bound spec drives
     // four downstream dimensions (story phase tags, spec graph, current

@@ -683,7 +683,7 @@ function instanceContentLines(
 function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: number, motion: MotionCtx): ContentLine[] {
   if (state.file) {
     const read = JSON.stringify(snap.fileRead?.target) === JSON.stringify(state.file) ? snap.fileRead?.result : null;
-    return fileLines(read, state.file, contentWidth);
+    return [...(state.project ? wrapDetailLines([{ text: `Project ${state.project.id} · ${state.project.root}` }], contentWidth) : []), ...fileLines(read, state.file, contentWidth)];
   }
   if (state.externalUrl) return externalLines(state.externalUrl, contentWidth);
   const contentWidthForGraph = contentWidth;
@@ -1111,16 +1111,21 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     return lines;
   }
   if (state.section === "scopes") {
-    if (!state.scopesMission && snap.execution) {
-      const selected = snap.execution;
-      const instances = selected.lifecycle_instances;
-      return wrapDetailLines([
-        { text: "SCOPES · choose a mission in the explorer" },
-        listItem(`Default mission · ${selected.mission}`, { type: "scopes-mission-open", mission: selected.mission }),
-        { text: `  Workflows: ${instances ? instances.map((instance) => String(instance.status ?? "unknown")).join(", ") || "none bound" : "projection unavailable"}` },
-        { text: `  Execution snapshot: ${displayTime(selected.derived_at, state.timeZone)}. Other missions load when selected.` },
-      ], contentWidth);
-    }
+    const catalog = snap.projects;
+    if (!state.project && catalog !== undefined) return wrapDetailLines([
+      { text: "PROJECTS · select a project" },
+      { text: catalog ? `Catalog: ${catalog.catalogPath}` : "Project catalog unavailable or loading" },
+      ...(snap.readErrors ?? []).map(text => ({ text })),
+      ...(catalog?.projects ?? []).flatMap(p => [listItem(`${p.name} · ${p.id}`, { type: "project-select", id: p.id }), { text: p.root }, ...(p.error ? [{ text: `Unavailable: ${p.error}` }] : [])]),
+      ...(catalog?.projects.length === 0 ? [{ text: "No projects declared in this catalog." }] : []),
+    ], contentWidth);
+    const identity = state.project ? wrapDetailLines([{ text: `PROJECT ${state.project.id}` }, { text: state.project.root }], contentWidth) : [];
+    if (state.project && (snap.projectRead?.id !== state.project.id || snap.projectRead?.root !== state.project.root)) return [...identity, { text: "Reading selected project…" }];
+    const entry = catalog?.projects.find(p => p.id === state.project!.id && p.root === state.project!.root);
+    const errors = (snap.readErrors ?? []).map(text => ({ text: `Unavailable: ${text}` }));
+    const projectHeader = state.project ? [...identity, listItem("Read current source", { type: "project-source" }), ...wrapDetailLines(errors, contentWidth)] : [];
+    if (state.project && (!entry || entry.error)) return [...projectHeader, { text: "Choose a project again or go Back." }];
+    if (state.project && !state.scopesMission) return [...projectHeader, { text: "Choose a mission" }, ...(snap.scopes ?? []).map(m => listItem(m.mission, { type: "scopes-mission-open", mission: m.mission })), ...(!snap.scopes?.length && !errors.length ? [{ text: "No missions found in this project." }] : [])];
     // SCOPES owns both levels. Both mission-graph and Explorer slice routes land
     // on the same execution-backed canonical detail; store-direct content is
     // composed into that page instead of surviving as a competing destination.
@@ -1131,27 +1136,27 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       ? (snap.scopes ?? []).find((m) => m.mission === sel.mission)?.slices.find((sl) => sl.dirName === sel.slice) ?? null
       : null;
     if (state.executionOpen && execution) {
-      return executionContentLines(execution, snap.scopes, snap.readErrors, state.executionOpen, contentWidth, false, snap.sliceDetail, {
+      return [...projectHeader, ...executionContentLines(execution, snap.scopes, snap.readErrors, state.executionOpen, contentWidth, false, snap.sliceDetail, {
         collapseReqs: state.scopesCollapseReqs,
         narrative: state.scopesNarrative,
-      }, state.timeZone);
+      }, state.timeZone)];
     }
     if (detail && execution) {
-      return executionContentLines(execution, snap.scopes, snap.readErrors, `slice:${detail.id ?? detail.dirName}`, contentWidth, false, snap.sliceDetail, {
+      return [...projectHeader, ...executionContentLines(execution, snap.scopes, snap.readErrors, `slice:${detail.id ?? detail.dirName}`, contentWidth, false, snap.sliceDetail, {
         collapseReqs: state.scopesCollapseReqs,
         narrative: state.scopesNarrative,
-      }, state.timeZone);
+      }, state.timeZone)];
     }
     if (!detail && missionName) {
       const lines = executionContentLines(execution, snap.scopes, snap.readErrors, state.executionOpen, contentWidth, !snap.hydratedAt || snap.executionMission !== missionName, undefined, undefined, state.timeZone);
-      return execution ? lines : [{ text: `  ${missionName} EXECUTION` }, ...lines];
+      return [...projectHeader, ...(execution ? lines : [{ text: `  ${missionName} EXECUTION` }, ...lines])];
     }
-    return scopesContentLines(detail, missionName, {
+    return [...projectHeader, ...scopesContentLines(detail, missionName, {
       collapseReqs: state.scopesCollapseReqs,
       narrative: state.scopesNarrative,
       width: contentWidth,
       executionStrip: detail ? executionSliceStripLines(null, detail.id ?? detail.dirName, detail.dirName, contentWidth, detail.status) : undefined,
-    });
+    })];
   }
   return [{ text: `(${state.section})` }];
 }
@@ -1663,7 +1668,7 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
       lines.push(pad(`${mark} ${label}${alias}  ${tail}`, cols));
     }
   }
-  const sectionTitle = { topology: "TOPOLOGY", specs: "SPECS", needs: "NEEDS-YOU" }[state.section] ?? state.section.toUpperCase();
+  const sectionTitle = { topology: "TOPOLOGY", specs: "SPECS", scopes: "PROJECTS", needs: "NEEDS-YOU" }[state.section] ?? state.section.toUpperCase();
   // active-pane emphasis (k9s-class chrome): the focused pane's title is bracketed
   const explorerTitle = state.focusedPane === "explorer" ? "{ EXPLORER }" : "EXPLORER";
   const contentTitle = state.focusedPane === "content" ? `{ ${sectionTitle} }` : sectionTitle;

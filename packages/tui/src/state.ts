@@ -1,3 +1,4 @@
+import { fileTargetForPath } from "./reading.js";
 import { CONFIG_CATEGORIES } from "./config/config-model.js";
 import { availableTabs } from "./commands/registry.js";
 import { DEFAULT_TIME_ZONE, resolveTimeZone } from "./time.js";
@@ -73,6 +74,7 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
     notice: null,
     lastError: null,
     palette: null,
+    project: null,
     scopesMission: null,
     scopesSelected: null,
     scopesCollapseReqs: false,
@@ -84,7 +86,7 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 
   function dispatch(action: Action): ViewState {
     const previous = state;
-    if (["jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, file: null, externalUrl: null, recentOpen: null, timeZoneHelp: false };
+    if (["project-select", "jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, file: null, externalUrl: null, recentOpen: null, timeZoneHelp: false };
     state = reduce(state, action, getSnapshot());
     // Connections is a side trip from work, including explorer/palette entry.
     if (action.type === "jump" && !["connections", "config"].includes(action.section) && !["connections", "config"].includes(previous.section)) state.history = [];
@@ -140,6 +142,7 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
       return resetContent({ ...next, section: "config", drill: [], viewTab: "table", configKey: action.key, healthOpen: null });
     case "jump": {
       // scopes: jumping anywhere (incl. back to :scopes) closes the opened slice.
+      if (action.section === "scopes") next.project = null;
       next.scopesMission = null;
       next.scopesSelected = null;
       next.executionOpen = null;
@@ -153,7 +156,22 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
         snap,
       );
     }
+    case "project-select": {
+      const project = snap.projects?.projects.find(p => p.id === action.id);
+      if (!project) return { ...next, lastError: `Project ${action.id} is not in the current catalog` };
+      return syncSelection(resetContent({ ...next, section: "scopes", project: { id: project.id, root: project.root }, drill: [], scopesMission: null, scopesSelected: null, executionOpen: null, scopesNarrative: false, filter: "", expanded: [], viewTab: "table" }), snap);
+    }
+    case "project-source": {
+      if (!state.project || snap.projectRead?.id !== state.project.id || snap.projectRead?.root !== state.project.root) return { ...next, lastError: "Selected project read is pending" };
+      const entry = snap.projects?.projects.find(p => p.id === state.project!.id && p.root === state.project!.root);
+      const missionSource = state.scopesMission ? snap.projectSources?.[state.scopesMission] : null;
+      const sliceDir = state.scopesSelected?.slice ?? snap.sliceDetailName;
+      const source = sliceDir && state.scopesMission ? snap.scopes?.find(m => m.mission === state.scopesMission)?.slices.find(s => s.dirName === sliceDir)?.sourcePath : missionSource ?? entry?.sourcePath;
+      if (!source) return { ...next, lastError: "Selected source is unavailable" };
+      return reduce(next, { type: "file-open", target: fileTargetForPath(source, snap.fileRoots ?? []) ?? { root: "", path: source } }, snap);
+    }
     case "scopes-mission-open": {
+      if (snap.projects !== undefined && !state.project) return { ...next, lastError: "Choose a project first" };
       const key = `scopes-mission:${action.mission}`;
       const expanded = state.expanded.includes(key) ? state.expanded : [...state.expanded, key];
       return syncSelection(resetContent({ ...next, section: "scopes", drill: [], runningOf: null, viewTab: "table", filter: "", scopesMission: action.mission, scopesSelected: null, executionOpen: null, healthOpen: null, expanded }), snap);
@@ -276,12 +294,12 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
 }
 
 function location(s: ViewState): string {
-  return JSON.stringify([s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey, s.file, s.externalUrl]);
+  return JSON.stringify([s.project, s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey, s.file, s.externalUrl]);
 }
 
 function navigationFrame(s: ViewState): NavigationFrame {
-  const { file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
-  return { file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
+  const { project, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
+  return { project, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
 }
 
 function clearScopeCoordinatesOnSectionChange(previous: ViewState, next: ViewState): ViewState {
@@ -529,7 +547,7 @@ export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): Expl
           ? "SPECS"
           : section.name === "needs"
             ? "NEEDS-YOU"
-            : section.name.toUpperCase();
+            : section.name === "scopes" ? "PROJECTS" : section.name.toUpperCase();
     // A section changes view but has no independent collapse state. Do not draw
     // a disclosure glyph that cannot be toggled.
     rows.push({ label, action: { type: "jump", section: section.name }, key: `section:${section.name}` });
@@ -540,8 +558,13 @@ export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): Expl
       continue;
     }
     if (section.name === "scopes") {
-      const expanded = new Set(state.expanded);
-      rows.push(...scopesExplorerRows(snap.scopes, expanded, "  "));
+      if (snap.projects === undefined) rows.push(...scopesExplorerRows(snap.scopes, new Set(state.expanded), "  "));
+      for (const project of snap.projects?.projects ?? []) {
+        rows.push({ label: `  ${state.project?.id === project.id ? "●" : "○"} ${project.id}${project.error ? " !" : ""}`, key: `project:${project.id}`, action: { type: "project-select", id: project.id } });
+        if (state.project?.id === project.id && state.project.root === project.root && snap.projectRead?.id === project.id && snap.projectRead.root === project.root)
+          rows.push(...scopesExplorerRows(snap.scopes, new Set(state.expanded), "    "));
+      }
+      if (state.history?.length) rows.push({ label: "  Back", key: "project:back", action: { type: "back" } });
       continue;
     }
     if (section.name === "topology") {

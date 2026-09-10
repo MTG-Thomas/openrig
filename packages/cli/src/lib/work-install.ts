@@ -1,3 +1,4 @@
+import { selectCatalogProject, ProjectReadError } from "@openrig/daemon/project-catalog";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -217,41 +218,12 @@ export function resolveWorkPosition(opts: {
   const catalogPath = resolve(opts.catalogPath ?? join(workspaceRoot, "workspace.yaml"));
   let projectId: string | null = null;
   let projectRoot = workspaceRoot;
-  if (existsSync(catalogPath)) {
-    const parsed = readYaml(catalogPath);
-    if (!parsed.value) return failure("workspace_catalog_invalid", parsed.error!);
-    const rawProjects = parsed.value["projects"];
-    if (!Array.isArray(rawProjects)) {
-      return failure("workspace_catalog_invalid", `${catalogPath} must declare projects: [...]`);
-    }
-    const projects = rawProjects.map((entry) => {
-      if (!isRecord(entry) || typeof entry["id"] !== "string" || typeof entry["root"] !== "string") return null;
-      return { id: entry["id"], root: entry["root"] };
-    });
-    if (projects.some((entry) => entry === null)) {
-      return failure("workspace_catalog_invalid", `${catalogPath} projects must each declare string id and root values`);
-    }
-    const declared = projects as Array<{ id: string; root: string }>;
-    const candidates = declared.map((entry) => entry.id);
-    const duplicateId = candidates.find((id, index) => candidates.indexOf(id) !== index);
-    if (duplicateId) {
-      return failure("project_identity_ambiguous", `project id '${duplicateId}' names multiple roots in ${catalogPath}`);
-    }
-    const selectedId = opts.project ?? (declared.length === 1 ? declared[0]!.id : undefined);
-    if (!selectedId) {
-      return failure("project_required", "multiple projects are declared; select one with --project", candidates);
-    }
-    const selected = declared.find((entry) => entry.id === selectedId);
-    if (!selected) {
-      return failure("project_not_found", `project '${selectedId}' is not declared in ${catalogPath}`, candidates);
-    }
-    const nominalRoot = isAbsolute(selected.root) ? resolve(selected.root) : resolve(dirname(catalogPath), selected.root);
-    const canonicalRoot = canonicalExisting(nominalRoot);
-    if (!canonicalRoot) {
-      return failure("project_root_missing", `project '${selectedId}' root does not exist: ${nominalRoot}`);
-    }
-    projectId = selectedId;
-    projectRoot = canonicalRoot;
+  try {
+    const selected = selectCatalogProject(catalogPath, opts.project);
+    if (selected) { projectId = selected.id; projectRoot = selected.root; }
+  } catch (err) {
+    if (err instanceof ProjectReadError) return failure(err.code, err.message, err.candidates);
+    throw err;
   }
 
   const projectManifestPath = join(projectRoot, "project.yaml");

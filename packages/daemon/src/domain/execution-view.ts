@@ -1,3 +1,4 @@
+import { belongsToProject } from "./workspace/project-catalog.js";
 import { inspectGraph } from "./workflow-reconciliation.js";
 import { readMissionReadiness, readProjectReadiness } from "./proof/judgments.js";
 import { lifecycleObligations, requiredLifecycleSteps } from "./lifecycle-obligations.js";
@@ -303,7 +304,7 @@ function lifecycleProjectAction(input: {
  * lifecycle_binding_json carries identity/provenance only. Older databases
  * have no migration-079 columns and therefore return an honest empty list.
  */
-function readLifecycleExecutions(db: Database.Database, mission: string): Array<Record<string, unknown>> {
+function readLifecycleExecutions(db: Database.Database, mission: string, project?: string): Array<Record<string, unknown>> {
   if (!hasColumn(db, "workflow_instances", "lifecycle_binding_json")) return [];
   const rows = db.prepare(
     `SELECT wi.*, ws.spec_json
@@ -320,7 +321,7 @@ function readLifecycleExecutions(db: Database.Database, mission: string): Array<
   for (const row of rows) {
     const binding = parseJsonRecord(row["lifecycle_binding_json"]);
     const identity = isRecord(binding["identity"]) ? binding["identity"] as Record<string, unknown> : {};
-    if (identity["mission"] !== mission) continue;
+    if (identity["mission"] !== mission || (project && identity["project"] !== project)) continue;
     const instanceId = String(row["instance_id"]);
     const frontier = parseJsonStringList(row["current_frontier_json"]);
     const specRoot = parseJsonRecord(row["spec_json"]);
@@ -535,24 +536,25 @@ function readArrangement(missionsRoot: string, mission: string, slices: SliceFac
   }
 }
 
-function readWaveMap(db: Database.Database, missions: string[]): WaveMapData {
+function readWaveMap(db: Database.Database, missions: string[], project?: string): WaveMapData {
   const missionWhere = missions.map(() => "tags LIKE ?").join(" OR ");
   const row = db
     .prepare(
-      `SELECT qitem_id, body FROM queue_items
+      `SELECT qitem_id, body, tags FROM queue_items
         WHERE tags LIKE '%format:wave-map-v1%' AND (${missionWhere})
-        ORDER BY ts_created DESC LIMIT 1`,
+        ORDER BY ts_created DESC`,
     )
-    .get(...missions.map((mission) => `%mission:${mission}%`)) as { qitem_id: string; body: string | null } | undefined;
-  if (!row?.body) return { rowId: INDETERMINATE, waves: [] };
-  const block = row.body.match(WAVE_MAP_BLOCK);
+    .all(...missions.map((mission) => `%mission:${mission}%`)) as Array<{ qitem_id: string; body: string | null; tags: string | null }>;
+  const selectedRow = row.find(r => !project || belongsToProject(r.tags, project));
+  if (!selectedRow?.body) return { rowId: INDETERMINATE, waves: [] };
+  const block = selectedRow.body.match(WAVE_MAP_BLOCK);
   if (!block) return { rowId: INDETERMINATE, waves: [] };
   try {
     const parsed = JSON.parse(block[1] ?? "");
     if (parsed?.format !== "wave-map-v1" || !Array.isArray(parsed.waves)) {
       return { rowId: INDETERMINATE, waves: [] };
     }
-    return { rowId: row.qitem_id, waves: parsed.waves };
+    return { rowId: selectedRow.qitem_id, waves: parsed.waves };
   } catch {
     return { rowId: INDETERMINATE, waves: [] };
   }
@@ -631,7 +633,7 @@ function gitAncestor(exec: ExecutionViewDeps["exec"], repoCtx: string, sha: stri
   }
 }
 
-export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: string; rig?: string }): Record<string, unknown> {
+export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: string; rig?: string; project?: string }): Record<string, unknown> {
   const now = deps.now ?? (() => new Date());
   const exec = deps.exec ?? defaultExec;
   const buildInfo = deps.buildInfo ?? BUILD_INFO;
@@ -655,6 +657,7 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
       .prepare(`SELECT tags, body FROM queue_items WHERE state = 'in-progress' ORDER BY ts_updated DESC`)
       .all() as Array<{ tags: string | null; body: string | null }>;
     for (const row of active) {
+      if (opts?.project && !belongsToProject(row.tags, opts.project)) continue;
       const tag = parseTags(row.tags).find((value) => value.startsWith("mission:"));
       // Canonical tags win; the conventional handoff line keeps older/body-only batons visible.
       const bodyMissions = [...new Set(
@@ -687,7 +690,7 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
     ? ["%"]
     : missionReferences(missionsRoot, mission).map((reference) => `%${reference}%`);
   const missionWhere = missionLikes.map(() => "(tags LIKE ? OR body LIKE ?)").join(" OR ");
-  const rows = deps.db
+  const candidateRows = deps.db
     .prepare(
       `SELECT qitem_id, source_session, destination_session, state, tags, body, claimed_at,
               last_heartbeat, blocked_on, ts_created, ts_updated,
@@ -699,6 +702,8 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
         WHERE (${missionWhere})`,
     )
     .all(...missionLikes.flatMap((like) => [like, like])) as QueueRowLite[];
+
+  const rows = candidateRows.filter(row => !opts?.project || belongsToProject(row.tags, opts.project));
 
   const sliceOfRow = (r: QueueRowLite): string | null => {
     for (const t of parseTags(r.tags)) {
@@ -794,11 +799,11 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
   // ---- arrangement authority: mission/slice YAML, with legacy EC-2 fallback ----
   const waveMap = mission === INDETERMINATE
     ? { rowId: INDETERMINATE as Indeterminate, waves: [] }
-    : readWaveMap(deps.db, missionReferences(missionsRoot, mission));
+    : readWaveMap(deps.db, missionReferences(missionsRoot, mission), opts?.project);
   const arrangement = missionsRoot && mission !== INDETERMINATE
     ? readArrangement(missionsRoot, mission, slices)
     : null;
-  const lifecycleExecutions = mission === INDETERMINATE ? [] : readLifecycleExecutions(deps.db, mission);
+  const lifecycleExecutions = mission === INDETERMINATE ? [] : readLifecycleExecutions(deps.db, mission, opts?.project);
   const arrangementSlice = (id: string, dir?: string): ArrangementSlice | null => {
     if (arrangement?.state !== "valid") return null;
     return arrangement.byId.get(id) ?? (dir ? arrangement.byDir.get(dir) : undefined) ?? null;
@@ -868,10 +873,10 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
     // tags, full shas, annotated fields) join by RESOLVED commit; malformed,
     // ambiguous, or non-resolving inputs are excluded with the reason carried —
     // they neither clear nor poison.
-    const artifacts = scanReviewArtifacts(rigsRoot, [facts.dir, ...(typeof facts.id === "string" ? [facts.id] : [])]);
+    const artifacts = opts?.project ? INDETERMINATE : scanReviewArtifacts(rigsRoot, [facts.dir, ...(typeof facts.id === "string" ? [facts.id] : [])]);
     let reviewed: Record<string, unknown>;
     if (artifacts === INDETERMINATE) {
-      reviewed = { value: INDETERMINATE, basis: `review-artifact root unreadable (${rigsRoot})`, legs: [] };
+      reviewed = { value: INDETERMINATE, basis: opts?.project ? "Global review artifacts have no project identity binding" : `review-artifact root unreadable (${rigsRoot})`, legs: [] };
     } else if (!candidateSha || !builtToken) {
       reviewed = { value: INDETERMINATE, basis: "no built candidate token to scope review legs to", legs: [] };
     } else if (!builtResolved) {
@@ -1130,6 +1135,7 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
   };
 
   return {
+    ...(opts?.project ? { project: opts.project, membership: "exact project:<id> queue tags and lifecycle identity; unscoped rows excluded" } : {}),
     view: "execution",
     readiness,
     project_readiness: missionsRoot ? readProjectReadiness(missionsRoot) : null,

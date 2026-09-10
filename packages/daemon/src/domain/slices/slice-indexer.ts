@@ -1,3 +1,4 @@
+import { belongsToProject } from "../workspace/project-catalog.js";
 // Slice Story View v0 — slice indexer.
 //
 // Reads slice folders from a configured filesystem root. The default
@@ -110,6 +111,8 @@ export interface SliceListEntry {
 }
 
 export interface SliceIndexerOpts {
+  projectId?: string;
+  missionId?: string;
   /** Root directory containing slice folders. */
   slicesRoot: string;
   /** Additional compatible roots to scan after the primary root. */
@@ -255,6 +258,8 @@ const STATUS_TO_BUCKET: Record<string, SliceStatus> = {
 };
 
 export class SliceIndexer {
+  readonly projectId?: string;
+  readonly missionId?: string;
   readonly slicesRoot: string;
   readonly additionalSliceRoots: string[];
   readonly dogfoodEvidenceRoot: string | null;
@@ -279,6 +284,8 @@ export class SliceIndexer {
   } | null = null;
 
   constructor(opts: SliceIndexerOpts) {
+    this.projectId = opts.projectId;
+    this.missionId = opts.missionId;
     this.slicesRoot = opts.slicesRoot;
     this.additionalSliceRoots = opts.additionalSliceRoots ?? [];
     this.dogfoodEvidenceRoot = opts.dogfoodEvidenceRoot;
@@ -510,7 +517,7 @@ export class SliceIndexer {
         });
       }
     }
-    return locations.sort((a, b) => a.name.localeCompare(b.name));
+    return locations.filter(location => !this.missionId || location.missionId === this.missionId).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   private findSliceLocation(name: string): SliceLocation | null {
@@ -860,6 +867,7 @@ export class SliceIndexer {
         `SELECT qitem_id, tags FROM queue_items WHERE tags LIKE '%slice:%' ORDER BY ts_created DESC, qitem_id DESC`,
       );
       for (const r of stmt.iterate() as Iterable<{ qitem_id: string; tags: string | null }>) {
+        if (this.projectId && !belongsToProject(r.tags, this.projectId)) continue;
         for (const tagged of parseScopeTags(r.tags).slices) {
           const bucket = typedBySlice.get(tagged);
           if (!bucket) typedBySlice.set(tagged, [r.qitem_id]);
@@ -931,6 +939,7 @@ export class SliceIndexer {
         ? this.db.prepare(`SELECT qitem_id, body, tags FROM queue_items`)
         : this.db.prepare(`SELECT qitem_id, body FROM queue_items`);
       for (const r of scan.iterate() as Iterable<{ qitem_id: string; body: string; tags?: string | null }>) {
+        if (this.projectId && !belongsToProject(r.tags, this.projectId)) continue;
         const hayBody = asciiFold(sqliteVisiblePrefix(r.body));
         const hayTags = r.tags != null ? asciiFold(sqliteVisiblePrefix(r.tags)) : null;
         if (!prefilter.test(hayBody) && !(hayTags !== null && prefilter.test(hayTags))) continue;

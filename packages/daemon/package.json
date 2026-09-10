@@ -5,6 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
+    "./project-catalog": { "types": "./dist/project-catalog-surface.d.ts", "import": "./dist/project-catalog-surface.js" },
     "./daemon-shutdown": {
       "types": "./dist/daemon-shutdown.d.ts",
       "import": "./dist/daemon-shutdown.js"

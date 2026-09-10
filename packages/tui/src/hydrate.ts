@@ -344,7 +344,7 @@ function agentSpecTruth(raw?: string): { runtime?: string; skills: string[] } {
  * avoids re-reading every spec every refresh; the key rolls when the library
  * entry's updatedAt changes. Owned by the caller (instance-scoped, no module state). */
 export type SpecReviewCache = Map<string, SpecLibraryReviewRead>;
-export type HydrateViewContext = Pick<ViewState, "section" | "viewTab" | "drill" | "file" | "externalUrl">;
+export type HydrateViewContext = Pick<ViewState, "project" | "section" | "viewTab" | "drill" | "file" | "externalUrl">;
 
 export async function hydrateSnapshot(
   client: DaemonClient,
@@ -374,6 +374,23 @@ export async function hydrateSnapshot(
     return { ...emptySnapshot(), fileRead: { target, result, readAt: new Date().toISOString() }, fileRoots: roots?.roots ?? [], readErrors, hydratedAt: new Date().toISOString() };
   }
   if (viewContext?.externalUrl) return { ...emptySnapshot(), hydratedAt: new Date().toISOString() };
+
+  // Project reads never fall back to the daemon's default workspace or fleet queue.
+  if (viewContext?.section === "scopes") {
+    const projects = await safe<NonNullable<FleetSnapshot["projects"]>>("projects", () => client.projects());
+    const selected = viewContext.project;
+    const project = selected && projects?.projects.find(p => p.id === selected.id && p.root === selected.root);
+    if (selected && (!project || project.error)) readErrors.push(`project ${selected.id}: ${project?.error ?? "selection changed or unavailable; choose the project again"}`);
+    const readable = !!project && !project.error;
+    const [scopes, execution, detail, roots] = await Promise.all([
+      readable ? safe<{ missions: FleetSnapshot["scopes"]; sources?: Record<string, string>; readErrors?: string[] }>("scopes", () => client.scopesDetailed(selected)) : null,
+      readable && executionMission ? safe<{ rows: NonNullable<FleetSnapshot["execution"]>[] }>("execution", () => client.execution(executionMission, selected)) : null,
+      readable && executionMission && sliceDetailName ? safe<SliceDetailSnap>("slice-detail", () => client.sliceDetail(sliceDetailName, executionMission, selected)) : null,
+      safe<Awaited<ReturnType<DaemonClient["fileRoots"]>>>("file-roots", () => client.fileRoots()),
+    ]);
+    readErrors.push(...(scopes?.readErrors ?? []));
+    return { ...emptySnapshot(), projects, projectRead: selected, projectSources: scopes?.sources, scopes: scopes?.missions ?? [], execution: execution?.rows[0] ?? null, executionMission, sliceDetail: detail, sliceDetailName, fileRoots: roots?.roots ?? [], readErrors, hydratedAt: new Date().toISOString() };
+  }
 
   // CONFIG never invokes fleet aggregation, host probes, queue enrichment or provider checks.
   // Failures replace earlier values with an explicit unavailable state.

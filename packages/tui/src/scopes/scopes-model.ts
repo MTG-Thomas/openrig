@@ -20,6 +20,7 @@ export interface ReadinessSnap {
   } | null }>;
 }
 export interface SliceScopeSnap {
+  sourcePath?: string;
   readiness?: ReadinessSnap;
   dirName: string;
   id: string | null;

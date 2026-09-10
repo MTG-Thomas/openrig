@@ -324,7 +324,13 @@ export interface HealthSnapshot {
   records: HealthRecord[];
 }
 
+export interface ProjectSelection { id: string; root: string }
+export interface ProjectEntry extends ProjectSelection { name: string; sourcePath: string | null; missionsRoot: string; error?: string }
 export interface FleetSnapshot {
+  projects?: { catalogPath: string; projects: ProjectEntry[] } | null;
+  projectRead?: ProjectSelection | null;
+  projectSources?: Record<string, string>;
+
   fileRead?: { target: import("./reading.js").FileTarget; result: import("./reading.js").FileReadResult; readAt: string };
   fileRoots?: import("./reading.js").FileRoot[];
   specsLoaded?: boolean;
@@ -438,6 +444,8 @@ export type Action =
   | { type: "style"; name: string }
   /** REGISTRY I3 — the command palette (open/query/move/close ride dispatch like all state). */
   /** SCOPES view: m collapse + n narrative toggles (dispatch-riding). */
+  | { type: "project-select"; id: string }
+  | { type: "project-source" }
   | { type: "scopes-mission-open"; mission: string }
   | { type: "scopes-open"; mission: string; slice: string }
   | { type: "scopes-reqs" }
@@ -479,6 +487,7 @@ export interface ViewState {
   /** Canonical health finding opened from any instance/rig/seat surface. */
   healthOpen: string | null;
   /** SCOPES view: the mission whose execution story is open (null = selector only). */
+  project?: ProjectSelection | null;
   scopesMission: string | null;
   /** SCOPES view: the opened slice (null = tree only). */
   scopesSelected: { mission: string; slice: string } | null;
@@ -515,7 +524,7 @@ export interface ViewState {
   lastError: string | null;
 }
 
-export type NavigationFrame = Pick<ViewState, "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
+export type NavigationFrame = Pick<ViewState, "project" | "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
 
 export interface ViewStateStore {
   instanceId: string;

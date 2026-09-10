@@ -73,6 +73,29 @@ ownership receipt. A later seat start with no project-world input preserves it;
 an explicit install whose `install.skills` is empty clears it. This keeps
 "project not supplied" distinct from "project deliberately selects no skills."
 
+## TUI project selection
+
+Open **PROJECTS** (or enter `projects`) to choose an ID and root from the
+configured workspace catalog. `project <id>` selects an exact catalog entry;
+`mission <directory>` then opens that project's execution view. The historical
+`scopes` machine section ID remains valid. Project selection and its canonical
+root travel through mission, slice, source-file and Back navigation. Changing a
+catalog root requires selecting it again. Missing or malformed sources remain
+unavailable; another project's matching work ID is never a fallback.
+
+`source` opens the current project, mission or slice's actual source through the
+existing file-reader allowlist. Catalog membership does not grant file-read or
+execution permission. These views only read; they do not select a lifecycle
+operation or activate a mission. Execution and slice queue membership require
+an exact `project:<id>` tag; lifecycle instances use their authored project
+identity. Unscoped historical queue rows and global review artifacts without
+project binding are excluded from project-specific claims.
+
+The read API adds `GET /api/scopes/projects` and optional `project` and
+`projectRoot` parameters to scopes, execution and slice-detail reads. Slice
+detail also requires the selected mission directory. Existing reads without a
+project parameter keep their legacy contract.
+
 ## UI Mapping
 
 - `workspace.root` maps to the Project workspace.

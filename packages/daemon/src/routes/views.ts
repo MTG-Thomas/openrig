@@ -1,3 +1,4 @@
+import { selectedProject, projectMission, projectReadResponse } from "../domain/workspace/project-read.js";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { EventBus } from "../domain/event-bus.js";
@@ -116,7 +117,12 @@ export function viewsRoutes(): Hono {
     // in the module; --mission widens/narrows).
     const mission = c.req.query("mission") || undefined;
     try {
-      const result = getProjector(c).show(viewName, { rig, limit, mission });
+      let project;
+      try {
+        project = viewName === "execution" ? selectedProject(c) : null;
+        if (project && mission) projectMission(project, mission);
+      } catch (err) { return projectReadResponse(err); }
+      const result = getProjector(c).show(viewName, { rig, limit, mission, project });
       return c.json(result);
     } catch (err) {
       return errorResponse(c, err);

@@ -1,3 +1,4 @@
+import { selectedProject, projectMission, workSource, projectReadResponse } from "../domain/workspace/project-read.js";
 // Slice Story View v0 — HTTP routes.
 //
 // Endpoints:
@@ -18,8 +19,8 @@ import { Hono } from "hono";
 import { readSliceReadiness, readProjectReadiness } from "../domain/proof/judgments.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { SliceIndexer, SliceListEntry, SliceStatus } from "../domain/slices/slice-indexer.js";
-import type { SliceDetailProjector } from "../domain/slices/slice-detail-projector.js";
+import { SliceIndexer, SliceListEntry, SliceStatus } from "../domain/slices/slice-indexer.js";
+import { SliceDetailProjector } from "../domain/slices/slice-detail-projector.js";
 import { findSliceWorkflowBinding } from "../domain/workflow/slice-workflow-binding.js";
 
 export interface SlicesRoutesDeps {
@@ -173,9 +174,20 @@ export function slicesRoutes(): Hono {
 
   // 4) Dynamic `/:name` LAST so the literal routes above are not shadowed.
   app.get("/:name", (c) => {
-    const deps = getDeps(c);
+    let deps = getDeps(c);
     if (!deps) return c.json({ error: "slices_indexer_unavailable" }, 503);
     const name = c.req.param("name");
+    try {
+      const project = selectedProject(c);
+      if (project) {
+        const mission = c.req.query("mission");
+        if (!mission || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) return c.json({ error: "exact_mission_and_slice_required" }, 400);
+        const dir = projectMission(project, mission);
+        workSource(project.root, path.join(dir, "slices", name));
+        const indexer = new SliceIndexer({ db: deps.indexer.db, slicesRoot: project.missionsRoot, dogfoodEvidenceRoot: null, projectId: project.id, missionId: mission });
+        deps = { indexer, projector: deps.projector.withIndexer(indexer) };
+      }
+    } catch (err) { return projectReadResponse(err); }
     const slice = deps.indexer.get(name);
     if (!slice) return c.json({ error: "slice_not_found", name }, 404);
     const payload = deps.projector.project(slice);
