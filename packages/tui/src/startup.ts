@@ -30,7 +30,7 @@ export interface StartupDeps {
   onHelp?: () => void;
   readLocal?: (request: LocalRequest) => Promise<LocalResult>;
   onNative?: (seat: StartupSeat) => Promise<void>;
-  onWork: (rig?: StartupRig, seat?: StartupSeat) => void;
+  onWork: (rig?: Pick<StartupRig, "rigId" | "rigName">, seat?: StartupSeat) => void;
 }
 
 export class StartupController {
@@ -91,10 +91,11 @@ export class StartupController {
       this.state.notice = "Daemon connected. Choose what to bring back.";
       // The served fold is running only for a nonempty rig whose nodes are all
       // observed running. Missing, stopped, degraded and unverified are not proof.
-      if (this.automaticEntry && this.state.open && rigs.some(r => r.lifecycleState === "running")) {
+      const running = rigs.find(r => r.lifecycleState === "running");
+      if (this.automaticEntry && this.state.open && running) {
         this.automaticEntry = false;
         this.state.open = false;
-        this.deps.onWork();
+        this.deps.onWork({ rigId: running.id, rigName: running.name });
       }
     });
   }

@@ -9,11 +9,11 @@ describe("S01 entry and page reads", () => {
   it("enters ordinary views on a positive running observation without any launch", async () => {
     const onWork = vi.fn();
     const startDaemon = vi.fn();
-    const client = new DaemonClient({ fetchImpl: vi.fn(async () => new Response(JSON.stringify([{ id: "r", name: "active", lifecycleState: "running" }]))) });
+    const client = new DaemonClient({ fetchImpl: vi.fn(async () => new Response(JSON.stringify([{ id: "stopped", name: "first", lifecycleState: "stopped" }, { id: "r", name: "active", lifecycleState: "running" }]))) });
     const startup = new StartupController({ client, home: "/fixture", probe: async () => '{"state":"up"}', startDaemon, onWork, onChange: () => {} });
     await startup.refresh();
     expect(startup.state.open).toBe(false);
-    expect(onWork).toHaveBeenCalledOnce();
+    expect(onWork).toHaveBeenCalledWith({ rigId: "r", rigName: "active" });
     expect(startDaemon).not.toHaveBeenCalled();
   });
   it("marks a terminal source failure stale", async () => {
