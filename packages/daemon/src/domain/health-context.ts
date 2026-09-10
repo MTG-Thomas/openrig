@@ -7,6 +7,7 @@ import type { HealthRecord } from "./health-projection.js";
 import { healthEpisodeId } from "./health-projection.js";
 import type { AuthorityReference } from "./health-diagnosis.js";
 import type { HealthCheckpointSource } from "./health-checkpoints.js";
+import { parseAddress, resolveAddress } from "./markdown-address.js";
 import { loadHumanRegistry } from "./gateway/human-registry.js";
 import { loadConfig } from "./gateway/slack/config.js";
 import { resolveSecret } from "./gateway/slack/secrets.js";
@@ -37,7 +38,57 @@ function readAuthorityFile(workspace: string, path: string): AuthorityReference 
   } catch { return { path, state: "unavailable" }; }
 }
 
+/** Reuse authored context selections, including project planning before a mission exists.
+ * No filename guesses, recursive link following, or executable workflow adoption. */
+export function healthSelectedContext(workspace: string, missionRoot?: string): AuthorityReference[] {
+  const result: AuthorityReference[] = [];
+  let remaining = 131072;
+  let count = 0;
+  const add = (refs: unknown, source: string, root: string) => {
+    if (refs === undefined) return;
+    if (!Array.isArray(refs) || refs.some(r => typeof r !== "string" || !r.trim()) || (count += refs.length) > 32) {
+      result.push({ path: source, state: "unavailable", role: "selected context", reason: "Context selection must contain at most 32 non-empty addresses in total." });
+      return;
+    }
+    for (const address of refs as string[]) {
+      const base = { path: address, role: "selected context", selectedBy: source };
+      try {
+        const { ref, headerPath } = parseAddress(address);
+        // Only explicitly selected local project files; unsupported transports stay visible.
+        if (/^(?:[a-z]+:|\$)/i.test(ref)) throw Error("Unsupported local context address");
+        const path = resolve(root, ref);
+        const file = readAuthorityFile(workspace, path);
+        if (!file.content) throw Error("Selected file unavailable, aliased, outside project, or larger than 64 KiB");
+        const content = headerPath.length ? resolveAddress(file.content, headerPath).text : file.content;
+        if (Buffer.byteLength(content) > remaining) throw Error("Selected context exceeds 128 KiB total read budget");
+        remaining -= Buffer.byteLength(content);
+        result.push({ ...base, path: path + (headerPath.length ? "#" + headerPath.join("/") : ""), state: "available", content,
+          sha256: createHash("sha256").update(content).digest("hex") });
+      } catch (error) { result.push({ ...base, state: "unavailable", reason: String(error) }); }
+    }
+  };
+  for (const [root, name] of [[workspace, "project.yaml"], ...(missionRoot ? [[missionRoot, "mission.yaml"]] : [])] as Array<[string, string]>) {
+    const path = join(root, name);
+    try {
+      const file = readAuthorityFile(workspace, path);
+      if (!file.content) throw Error("Selection manifest unavailable");
+      const doc = parseYaml(file.content);
+      if (!doc || typeof doc !== "object" || Array.isArray(doc)) throw Error("Invalid selection manifest");
+      if (name === "project.yaml") {
+        add(doc.install?.context, path + "#install.context", root);
+        if (doc.lifecycle?.profiles !== undefined) {
+          const profile = doc.lifecycle.profiles[doc.lifecycle.profile];
+          if (!profile) throw Error("Selected lifecycle profile unavailable");
+          add(profile.workflow?.context_refs, path + "#lifecycle.profiles." + doc.lifecycle.profile + ".workflow.context_refs", root);
+        }
+      } else add(doc.lifecycle?.workflow?.context_refs, path + "#lifecycle.workflow.context_refs", root);
+    } catch (error) { result.push({ path, state: "unavailable", role: "context selection", reason: String(error) }); }
+  }
+  return result;
+}
+
 export function healthAuthority(workspace: string, checkpoints: HealthCheckpointSource, record: HealthRecord): AuthorityReference[] {
+  if (record.operatingPosture?.posture === "unknown") return [{ path: "operatingPosture", state: "unavailable", role: "scope", reason: record.operatingPosture.reason }];
   // The shared reader has already resolved the declared project catalog and real paths.
   const paths = record.operatingPosture?.context?.paths;
   workspace = paths?.project ?? workspace;
@@ -64,11 +115,12 @@ export function healthAuthority(workspace: string, checkpoints: HealthCheckpoint
     const identity = parseYaml(frontmatter) as { id?: unknown; mission?: unknown } | null;
     return identity?.id === scope.sliceId && (identity.mission === undefined || identity.mission === mission);
   };
-  return (Object.keys(groups) as AuthorityLevel[]).flatMap((level) => [...new Set(groups[level])].map((path) => {
+  const authority = (Object.keys(groups) as AuthorityLevel[]).flatMap((level) => [...new Set(groups[level])].map((path) => {
     try {
       return { ...(belongs(level, path) ? readAuthorityFile(workspace, path) : { path, state: "unavailable" as const }), level };
     } catch { return { path, state: "unavailable" as const, level }; }
   }));
+  return [...authority, ...healthSelectedContext(workspace, missionDir ?? undefined)];
 }
 
 /** Connector-specific readiness lives behind the transport-neutral diagnosis port.

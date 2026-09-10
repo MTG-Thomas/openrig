@@ -145,6 +145,16 @@ async function diagnosisSetup() {
   return { ...t, observations, policy, projection, diagnosis, tick: () => { now = "2026-09-09T22:02:00Z"; } };
 }
 
+it("does not select one project's authority for a mixed finding even when both postures match", async () => {
+  const t = await diagnosisSetup();
+  const records = t.projection.records();
+  const alpha = records.find(r => r.evidence.some(e => e.type === "queue-transition" && e.qitemId === "alpha"))!;
+  const beta = records.find(r => r.evidence.some(e => e.type === "queue-transition" && e.qitemId === "beta"))!;
+  const mixed = t.service.forHealth({ ...alpha, evidence: [...alpha.evidence, ...beta.evidence] });
+  expect(mixed).toMatchObject({ posture: "unknown", context: null, reason: expect.stringContaining("different work contexts") });
+  expect(mixed.members?.map(m => m.posture)).toEqual(["human-led", "human-led"]);
+});
+
 it("presents only unrelated delegated planning, keeps human-led and unknown findings inspectable, then quiets an existing occurrence without canceling it", async () => {
   const t = await diagnosisSetup();
   await t.put("delegated", "mission", "beta/release");

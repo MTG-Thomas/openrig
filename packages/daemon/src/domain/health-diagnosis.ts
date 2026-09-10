@@ -8,12 +8,18 @@ export interface HealthDisposition {
   verdict: typeof DIAGNOSIS_VERDICTS[number]; causalStart: string | null;
   steering: string; uncertainty: string; evidenceRefs: string[];
   progress?: CeremonyProgressAssessment;
+  correction?: {
+    applicability: string; causalJudgment: string;
+    action: { state: "proposed" | "taken"; summary: string; evidenceRefs: string[] };
+    effect: { state: "unobserved" | "observed"; summary: string; evidenceRefs: string[] };
+  };
 }
-export interface AuthorityReference { level?: "project" | "mission" | "slice"; path: string; state: "available" | "unavailable"; sha256?: string; content?: string; }
+export interface AuthorityReference { level?: "project" | "mission" | "slice"; path: string; state: "available" | "unavailable"; sha256?: string; content?: string; role?: string; selectedBy?: string; reason?: string; }
 interface Packet { schema: "openrig.health-diagnosis/v0alpha1"; finding: HealthRecord; policyVersion: string; authority: AuthorityReference[]; presentedAt: string; instructions: string; }
-interface Receipt { kind: "health-diagnosis"; at: string; action: "presented" | "observed" | "disposition" | "notification-readiness"; finding?: HealthRecord; disposition?: HealthDisposition; authority?: AuthorityReference[]; episodeCleared?: boolean; progressEvidence?: AuthorityReference[]; notificationReadiness?: { ready: boolean; reason: string }; }
+interface Receipt { kind: "health-diagnosis"; at: string; action: "presented" | "observed" | "disposition" | "notification-readiness"; finding?: HealthRecord; disposition?: HealthDisposition; authority?: AuthorityReference[]; episodeCleared?: boolean; progressEvidence?: AuthorityReference[]; correctionEvidence?: AuthorityReference[]; actor?: string; transitionId?: number; notificationReadiness?: { ready: boolean; reason: string }; }
 interface DiagnosisAction { qitemId: string; findingId: string; action: "create" | "represent" | "observe" | "retained" | "deferred" | "notify" | "notification-deferred"; reason?: string; operatingPosture?: HealthRecord["operatingPosture"]; }
 const instructions = "This packet is a shortcut, not the whole story. Start with the exact evidence and current project/mission/slice authority below; read those sources again before acting. You may extend the investigation. The deterministic signal is not a psychological or epistemic diagnosis. Self-scout is supported: trace the earliest causal point, examine your own contribution, distinguish another seat or stale control-plane source, and request a second agent only when useful. Record one bounded disposition with causal start (or unknown), smallest corrective steering, evidence and remaining uncertainty. Advice is not authorization to cancel work, change scope/rigor/ownership/lifecycle, restart agents, or relax safety. Human escalation requires explicit policy and verified delivery readiness.";
+const correctionGuidance = "Inspect current selected context and its provenance, including project planning before any successor mission exists. An authorized restriction can still have a disproved premise or be disproportionate; uncertainty about a complete workflow outcome census does not justify retaining that restriction. Apply current corrections within their authority and preserve unrelated valid boundaries, including publication. Normal interactive planning is not itself pathology. Separate automatic wake/receipt bookkeeping from useful owner work; assess the relevance and interruption cost of investigating. Use one bounded correction when useful, not a recurring self-audit or universal reviewer. In an optional correction, record applicability and attributed causalJudgment separately from action {state: proposed|taken, summary, evidenceRefs} and later effect {state: unobserved|observed, summary, evidenceRefs}. A disposition, queue closure, prompt edit or numerical clearance is not observed behavioral improvement. If no later natural opportunity occurs, leave effect unobserved; retained-case replay proves mechanics only. Never infer another seat's context or re-enable live diagnosis from this advice.";
 
 export class HealthDiagnosisService {
   private pending: Promise<unknown> = Promise.resolve();
@@ -61,23 +67,31 @@ export class HealthDiagnosisService {
       || typeof packet.presentedAt !== "string" || !Number.isFinite(Date.parse(packet.presentedAt))) throw invalid();
     const human = this.deps.queue.getById(`qitem-health-human-${packet.finding.id}`);
     const receipts: Receipt[] = this.deps.queue.listTransitions(qitemId).flatMap((t) => {
-      try { const value = JSON.parse(t.transitionNote ?? "null") as Receipt | null; return value?.kind === "health-diagnosis" ? [value] : []; } catch { return []; }
+      try { const value = JSON.parse(t.transitionNote ?? "null") as Receipt | null; return value?.kind === "health-diagnosis" ? [{ ...value, actor: t.actorSession, transitionId: t.transitionId }] : []; } catch { return []; }
     });
+    const finding = refresh && (packet.finding.ceremony || packet.finding.category === "process")
+      ? this.deps.projection.get(packet.finding.id) ?? this.missingCurrent(receipts.filter((r) => r.finding).at(-1)?.finding ?? packet.finding)
+      : receipts.filter((r) => r.finding).at(-1)?.finding ?? packet.finding;
+    const last = receipts.filter((r) => r.disposition).at(-1);
     return { row, packet, receipts, notificationReadiness: receipts.filter((r) => r.notificationReadiness).at(-1)?.notificationReadiness ?? null, humanDelivery: human ? { qitemId: human.qitemId, outcome: human.deliveryOutcome ?? "pending" } : null,
-      finding: refresh && (packet.finding.ceremony || packet.finding.category === "process")
-        ? this.deps.projection.get(packet.finding.id) ?? this.missingCurrent(receipts.filter((r) => r.finding).at(-1)?.finding ?? packet.finding)
-        : receipts.filter((r) => r.finding).at(-1)?.finding ?? packet.finding,
-      authority: receipts.filter((r) => r.authority).at(-1)?.authority ?? packet.authority,
-      disposition: receipts.filter((r) => r.disposition).at(-1)?.disposition ?? null };
+      finding, authority: refresh ? this.deps.authority(finding) : receipts.filter((r) => r.authority).at(-1)?.authority ?? packet.authority,
+      authorityReadAt: refresh ? this.now() : null, guidance: correctionGuidance,
+      disposition: last?.disposition ?? null,
+      assessment: last ? { actor: last.actor, at: last.at, transitionId: last.transitionId } : null,
+      correctionEvidence: last?.correctionEvidence ?? [],
+      behavioralEffect: last?.disposition?.correction?.effect.state ?? "unobserved" };
   }
   list(refresh = true) {
     // Refuse a truncated ownership census rather than treating a hidden occurrence as absent.
     const rows = this.deps.queue.list({ tag: "health-diagnosis", limit: 10000 });
     if (rows.length === 10000) throw new Error("health_diagnosis_census_truncated");
     const occurrences = rows.filter((r) => this.owns(r)).map((r) => this.show(r.qitemId, false));
-    if (!refresh || !occurrences.some((o) => o.packet.finding.ceremony || o.packet.finding.category === "process")) return occurrences;
+    if (!refresh) return occurrences;
     const current = new Map(this.deps.projection.records().map((finding) => [finding.id, finding]));
-    return occurrences.map((o) => ({ ...o, finding: current.get(o.finding.id) ?? this.missingCurrent(o.finding) }));
+    return occurrences.map((o) => {
+      const finding = current.get(o.finding.id) ?? this.missingCurrent(o.finding);
+      return { ...o, finding, authority: this.deps.authority(finding), authorityReadAt: this.now() };
+    });
   }
   evaluate(actor: string, apply: boolean): Promise<{ policyVersion: string; enabled: boolean; actions: DiagnosisAction[] }> {
     const work = this.pending.then(() => this.evaluateOnce(actor, apply));
@@ -143,7 +157,7 @@ export class HealthDiagnosisService {
         await this.deps.queue.maybeNudge(qitemId, old.row.destinationSession, true, actor);
       } else {
         const packet: Packet = { schema: "openrig.health-diagnosis/v0alpha1", finding, policyVersion: effective.version,
-          authority: this.deps.authority(finding), presentedAt: this.now(), instructions: `${instructions}${finding.ceremony ? " This is provisional suspicion, not a confirmed warning. Resolve product progress from normal scope/proof/workflow evidence and the selected SDLC boundary; do not count approvals, C1 pairing, proof files, commits, tests or generic closures as outcomes. In the existing disposition, include progress: {basis, conclusion: established|false-positive|indeterminate, outcomes: [{id, observedAt, evidenceRefs}], boundedAuthority: boolean|null, boundary, evidenceRefs, missingFacts}. Bind basis to the CURRENT finding.ceremony.basis from diagnosis show; establish a complete outcome census for the exact transition window or return indeterminate with the missing fact. Outcome and bounded-authority semantics are your attributed judgment. An empty outcomes list means you affirm no outcomes, never that you could not find them. No separate checkpoint is needed." : ""} Read current context and disposition with rig health diagnosis show ${qitemId} --full --json (complete retained evidence; may be large).` };
+          authority: this.deps.authority(finding), presentedAt: this.now(), instructions: `${instructions} ${correctionGuidance}${finding.ceremony ? " This is provisional suspicion, not a confirmed warning. Resolve product progress from normal scope/proof/workflow evidence and the selected SDLC boundary; do not count approvals, C1 pairing, proof files, commits, tests or generic closures as outcomes. In the existing disposition, optionally include progress: {basis, conclusion: established|false-positive|indeterminate, outcomes: [{id, observedAt, evidenceRefs}], boundedAuthority: boolean|null, boundary, evidenceRefs, missingFacts}. Bind basis to the CURRENT finding.ceremony.basis from diagnosis show; establish a complete outcome census for the exact transition window or return indeterminate with the missing fact. This census assesses that window, not whether a specific challenged rule remains useful; it is not a prerequisite to recording a correction. Outcome and bounded-authority semantics are your attributed judgment. An empty outcomes list means you affirm no outcomes, never that you could not find them. No separate checkpoint is needed." : ""} Read current context and disposition with rig health diagnosis show ${qitemId} --full --json (complete retained evidence; may be large).` };
         await this.deps.queue.create({ qitemId, sourceSession: actor, destinationSession: policy.owner, body: JSON.stringify(packet, null, 2),
           tags: ["health-diagnosis", finding.id, `policy:${effective.version}`, ...(finding.ceremony ? [`health-lineage:${finding.ceremony.lineageId}`] : [])], summary: `System Health: inspect ${finding.detector}`, evidenceRef: finding.id });
       }
@@ -157,19 +171,38 @@ export class HealthDiagnosisService {
   }
   dispose(qitemId: string, actor: string, value: unknown, identityProvenance: string | null = null) {
     const diagnosis = this.requireOwner(qitemId, actor);
-    const d = object(value, ["verdict", "causalStart", "steering", "uncertainty", "evidenceRefs", ...(Object.hasOwn(value ?? {}, "progress") ? ["progress"] : [])]);
+    const d = object(value, ["verdict", "causalStart", "steering", "uncertainty", "evidenceRefs", ...["progress", "correction"].filter(k => Object.hasOwn(value ?? {}, k))]);
     if (!DIAGNOSIS_VERDICTS.includes(d.verdict as HealthDisposition["verdict"]) || (d.causalStart !== null && typeof d.causalStart !== "string")
       || typeof d.steering !== "string" || !d.steering.trim() || typeof d.uncertainty !== "string" || !d.uncertainty.trim()
       || !Array.isArray(d.evidenceRefs) || !d.evidenceRefs.length || d.evidenceRefs.some((r) => typeof r !== "string" || !r.trim())) throw new Error("Invalid or incomplete health disposition");
     if (healthHash(this.show(qitemId).disposition) === healthHash(d)) return this.show(qitemId);
     const progressEvidence = d.progress === undefined ? undefined : this.validateProgress(d.progress, diagnosis.finding);
+    const correctionEvidence = d.correction === undefined ? undefined : this.validateCorrection(d.correction, diagnosis.finding);
     const progress = d.progress as CeremonyProgressAssessment | undefined;
     const episodeCleared = progress && progress.missingFacts.length === 0 && (progress.conclusion === "false-positive" || (progress.conclusion === "established"
       && (progress.boundedAuthority === true || diagnosis.finding.ceremony!.transitionIds.length / Math.max(progress.outcomes.length, 1) < this.deps.policy.read().policy.thresholds.ceremonyRatio)));
     if (progress?.conclusion === "established" && !episodeCleared && ["false positive", "insufficient evidence", "resolved"].includes(String(d.verdict))) throw new Error("health_progress_contradicts_disposition");
     this.receipt(qitemId, actor, { action: "disposition", disposition: d as unknown as HealthDisposition,
+      ...(correctionEvidence ? { correctionEvidence } : {}),
       ...(progressEvidence ? { progressEvidence, finding: diagnosis.finding, episodeCleared } : {}) }, identityProvenance);
     return this.show(qitemId);
+  }
+  private validateCorrection(value: unknown, finding: HealthRecord): AuthorityReference[] {
+    const c = object(value, ["applicability", "causalJudgment", "action", "effect"]);
+    const text = (v: unknown): v is string => typeof v === "string" && !!v.trim() && v.length <= 4096;
+    if (!text(c.applicability) || !text(c.causalJudgment)) throw Error("Correction needs applicability and attributed causal judgment");
+    const refs: string[] = [];
+    for (const [key, states, evidenced] of [["action", ["proposed", "taken"], "taken"], ["effect", ["unobserved", "observed"], "observed"]] as const) {
+      const claim = object(c[key], ["state", "summary", "evidenceRefs"]);
+      if (!(states as readonly unknown[]).includes(claim.state) || !text(claim.summary) || !Array.isArray(claim.evidenceRefs)
+        || claim.evidenceRefs.length > 32 || !claim.evidenceRefs.every(text)
+        || (claim.state === evidenced && !claim.evidenceRefs.length)) throw Error("Invalid correction " + key + "; taken/observed claims require evidence");
+      refs.push(...claim.evidenceRefs as string[]);
+    }
+    const evidence = [...new Set(refs)].map(path => this.deps.resolveEvidence?.(path, finding) ?? { path, state: "unavailable" as const });
+    if (evidence.some(e => e.state !== "available")) throw Error("health_correction_evidence_unavailable");
+    // Evidence existence and attribution are checkable; causal truth remains the owner's judgment.
+    return evidence;
   }
   private validateProgress(value: unknown, finding: HealthRecord): AuthorityReference[] {
     const p = object(value, ["basis", "conclusion", "outcomes", "boundedAuthority", "boundary", "evidenceRefs", "missingFacts"]);

@@ -4,7 +4,7 @@ import { parse as parseYaml } from "yaml";
 import type { QueueRepository } from "./queue-repository.js";
 import type { HealthCheckpointSource } from "./health-checkpoints.js";
 import type { OperatingPostureService } from "./rig-mode/operating-posture.js";
-import { readHealthArtifact } from "./health-context.js";
+import { readHealthArtifact, healthSelectedContext } from "./health-context.js";
 import { validateMissionComposition } from "./lifecycle-manifest.js";
 import { healthHash, type HealthPolicyStore } from "./health-policy.js";
 import type { HealthDetectorObservation, HealthObservationSource } from "./health-detectors.js";
@@ -84,6 +84,7 @@ export class PassiveCeremonySource implements HealthObservationSource {
       let scope: HealthScope;
       const slices = tagged(tags, "slice:");
       if (this.posture) {
+        if (resolved?.posture !== "unknown" && selected?.paths) workspace = selected.paths.project;
         if (resolved?.posture !== "unknown" && selected?.projectId && selected.missionId && selected.paths) {
           workspace = selected.paths.project; missionRoot = selected.paths.mission; missionId = selected.missionId;
           const sliceId = selected.workstreamId?.split("/").at(-1);
@@ -117,10 +118,12 @@ export class PassiveCeremonySource implements HealthObservationSource {
         const episodeStartedAt = resumed ? segmentFirst.ts : first.ts;
         const episodeKey = resumed ? `${lineageId}:${segmentFirst.transitionId}` : lineageId;
         const measuredEnd = boundaries.find((b) => b.transitionId === segment.at(-1)!.transitionId)?.endedAt ?? now;
-        const scopeKey = healthHash(scope);
+        const scopeKey = healthHash({ scope, workspace });
         if (!contexts.has(scopeKey)) contexts.set(scopeKey, scope.type === "mission" || scope.type === "slice"
           ? this.context(scope, workspace, missionRoot)
-          : [{ path: this.workspace, state: "unavailable", role: "Scope identity unresolved; inspect operatingPosture.reason" }]);
+          : selected?.paths && resolved?.posture !== "unknown"
+            ? this.projectContext(workspace)
+            : [{ path: this.workspace, state: "unavailable", role: "Scope identity unresolved; inspect operatingPosture.reason" }]);
         const context = contexts.get(scopeKey)!;
         const memberIds = [...new Set(segment.map((t) => t.qitemId))];
         const trails = this.queue.db.prepare(`SELECT trail_id, instance_id, step_id, prior_qitem_id, closure_reason, actor_session, closed_at, closure_evidence_json FROM workflow_step_trails WHERE prior_qitem_id IN (${memberIds.map(() => "?").join(",")}) AND closed_at >= ? AND closed_at <= ? ORDER BY trail_id LIMIT 201`)
@@ -186,10 +189,16 @@ export class PassiveCeremonySource implements HealthObservationSource {
     return undefined;
   }
 
+  private projectContext(workspace: string, missionRoot?: string): PassiveCeremony["context"] {
+    return [
+      ...["SPEC.md", "project.yaml"].map(path => ({ ...readHealthArtifact(workspace, join(workspace, path), 65536), role: "project authority / selected SDLC" })),
+      ...healthSelectedContext(workspace, missionRoot).map(({ content: _content, ...ref }) => ({ ...ref, role: ref.role ?? "selected context" })),
+    ];
+  }
+
   private context(scope: Extract<HealthScope, { type: "mission" | "slice" }>, workspace = this.workspace, missionRoot = join(workspace, "missions", scope.missionId)): PassiveCeremony["context"] {
-    const result: PassiveCeremony["context"] = [];
+    const result = this.projectContext(workspace, missionRoot);
     const add = (path: string, role: string) => { const r = readHealthArtifact(workspace, join(workspace, path), 65536); result.push({ ...r, role }); };
-    ["SPEC.md", "project.yaml"].forEach((path) => add(path, "project authority / selected SDLC"));
     const missionDir = relative(workspace, missionRoot);
     ["SPEC.md", "mission.yaml", "PROGRESS.md"].forEach((name) => add(join(missionDir, name), "mission authority / selected SDLC / progress"));
     const manifestPath = join(missionDir, "mission.yaml");
