@@ -30,12 +30,15 @@ export interface StartupDeps {
   onHelp?: () => void;
   readLocal?: (request: LocalRequest) => Promise<LocalResult>;
   onNative?: (seat: StartupSeat) => Promise<void>;
-  onWork: (rig?: StartupRig, seat?: StartupSeat) => void;
+  onWork: (rig?: Pick<StartupRig, "rigId" | "rigName">, seat?: StartupSeat) => void;
 }
 
 export class StartupController {
   readonly state: StartupState;
   private local?: LocalReadingController;
+  private automaticEntry = true;
+  /** Any user input, including Help and a control-socket command, owns navigation. */
+  interacted(): void { this.automaticEntry = false; }
   constructor(private readonly deps: StartupDeps) {
     this.state = { connection: "probing", open: true, busy: false, page: "probe", target: deps.client.baseUrl,
       home: deps.home, notice: "Reading startup state…", detail: "", expanded: false,
@@ -56,6 +59,7 @@ export class StartupController {
     } finally { this.state.busy = false; this.changed(); }
   }
   async open() {
+    this.interacted();
     this.local?.close(); this.local = undefined; this.state.local = undefined;
     this.state.open = true; this.state.consent = undefined;
     this.changed(); await this.refresh();
@@ -84,7 +88,15 @@ export class StartupController {
       this.state.rigs = rigs.sort((a, b) => Number(b.name === "kernel") - Number(a.name === "kernel") || a.name.localeCompare(b.name));
       if (this.state.rig && this.state.rigs.some((r) => r.id === this.state.rig!.rigId)) await this.readRig(this.state.rig.rigId);
       else { this.state.page = "rigs"; this.state.selected = 0; }
-      this.state.notice = "Daemon connected. Kernel is recommended first; choose what to bring back.";
+      this.state.notice = "Daemon connected. Choose what to bring back.";
+      // The served fold is running only for a nonempty rig whose nodes are all
+      // observed running. Missing, stopped, degraded and unverified are not proof.
+      const running = rigs.find(r => r.lifecycleState === "running");
+      if (this.automaticEntry && this.state.open && running) {
+        this.automaticEntry = false;
+        this.state.open = false;
+        this.deps.onWork({ rigId: running.id, rigName: running.name });
+      }
     });
   }
   private async readRig(id: string) {
@@ -98,6 +110,7 @@ export class StartupController {
     this.state.freshBlocked = undefined;
   }
   async key(key: string) {
+    this.interacted();
     const s = this.state;
     // Read navigation is independent of the serialized effect/probe lane.
     if (key === "?") { this.deps.onHelp?.(); return; }
@@ -221,6 +234,7 @@ export function startupLines(s: StartupState): Array<{ text: string; action?: Ac
   ];
   lines.push(button("?  Help", "?"), button("w  Skip startup · ordinary views", "w"));
   lines.push(button("L  Local reading · Specs and intent", "L"));
+  if (s.page === "down" || s.page === "unavailable") lines.push({ text: "In your terminal: rig doctor · rig doctor --help" });
   if (s.local) return localLines(s.local);
   if (s.busy) return [...lines, { text: "Working… repeated input will not start another operation." }, { text: "Esc Back / skip · q Quit; an accepted operation continues." }];
   if (s.page === "down") lines.push(button("Enter / s  Start daemon; choose seats next", "s"));

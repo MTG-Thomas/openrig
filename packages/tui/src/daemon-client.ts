@@ -1,3 +1,4 @@
+import type { PageRead } from "./page-read.js";
 import type { ProjectSelection } from "./types.js";
 // The TUI's ONLY daemon surface — thin typed fetch wrappers over the §4.A
 // endpoint table, ONE module by design: the R7 no-new-data source-check is a
@@ -62,6 +63,11 @@ export class DaemonClient {
     this.baseUrl = (options.baseUrl ?? process.env["OPENRIG_URL"] ?? "http://127.0.0.1:7433").replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.headerSource = options.headers ?? {};
+  }
+
+  forPage(page: PageRead, signal: AbortSignal): DaemonClient {
+    return new DaemonClient({ baseUrl: this.baseUrl, headers: this.headerSource,
+      fetchImpl: page.fetch(this.fetchImpl, signal) });
   }
 
   private get headers(): Record<string, string> {

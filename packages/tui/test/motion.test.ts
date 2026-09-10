@@ -89,7 +89,7 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
       renderScreen(s.get(), noGraph, { cols: 140, rows: 34, nowMs, colorMode: "truecolor", load: LOADING }).lines.find((l) => l.includes("read pending"))!;
     const f0 = at(0);
     const f1 = at(500);
-    expect(f0).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] topology graph read pending/);
+    expect(f0).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] topology read pending/);
     expect(f1).not.toBe(f0); // frame/time transition
     const screen = renderScreen(s.get(), noGraph, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING });
     expect(screen.motionActive).toBe(true); // the entry loop keeps redrawing while loading
@@ -120,7 +120,7 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
     const s = createViewState({ instanceId: "sl", getSnapshot: () => empty });
     s.dispatch({ type: "jump", section: "specs" });
     const loading = renderScreen(s.get(), empty, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING }).lines.join("\n");
-    expect(loading).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] library read pending/);
+    expect(loading).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] specs read pending/);
     const settled = renderScreen(s.get(), empty, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor" });
     expect(settled.lines.join("\n")).toMatch(/library empty — proven/);
     expect(settled.motionActive).toBeFalsy();
@@ -130,12 +130,13 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
     expect(failed.motionActive).toBeFalsy();
   });
 
-  it("Attention source absence remains unavailable during and after a refresh", () => {
+  it("Attention source absence is pending until its first read settles", () => {
     const unprobed = { ...structuredClone(snap), humanQueueProbed: false, needs: [] };
     const s = createViewState({ instanceId: "hq", getSnapshot: () => unprobed });
     s.dispatch({ type: "jump", section: "needs" });
     const loading = renderScreen(s.get(), unprobed, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING }).lines.join("\n");
-    expect(loading).toContain("Unavailable: Attention sources have not answered.");
+    expect(loading).toContain("attention read pending");
+    expect(loading).not.toContain("Unavailable:");
     expect(loading).not.toContain("No current items");
     const settled = renderScreen(s.get(), unprobed, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor" });
     const line = settled.lines.find((l) => l.includes("Unavailable: Attention"))!;
@@ -147,26 +148,25 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
   it("16-color in-flight renders the LINE spinner; reduced motion renders the honest static dot and no motion-active", () => {
     const { s, noGraph } = graphTabStore();
     const line16 = renderScreen(s.get(), noGraph, { cols: 140, rows: 34, nowMs: 0, colorMode: "16", load: LOADING }).lines.find((l) => l.includes("read pending"))!;
-    expect(line16).toMatch(/[|/\-\\] topology graph read pending/);
+    expect(line16).toMatch(/[|/\-\\] topology read pending/);
     process.env["OPENRIG_REDUCED_MOTION"] = "1";
     try {
       const reduced = renderScreen(s.get(), noGraph, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING });
-      expect(reduced.lines.find((l) => l.includes("read pending"))!).toMatch(/· topology graph read pending/);
+      expect(reduced.lines.find((l) => l.includes("read pending"))!).toMatch(/· topology read pending/);
       expect(reduced.motionActive).toBeFalsy();
     } finally {
       delete process.env["OPENRIG_REDUCED_MOTION"];
     }
   });
 
-  it("Attention does not animate an old fleet pulse while its own sources are absent", () => {
+  it("Attention animates only its current read while its own sources are pending", () => {
     const probing = { ...structuredClone(snap), humanQueueProbed: false };
     const s = createViewState({ instanceId: "rd", getSnapshot: () => probing });
     s.dispatch({ type: "jump", section: "needs" });
     const screen = renderScreen(s.get(), probing, { cols: 140, rows: 34, nowMs: 0, colorMode: "truecolor", load: LOADING });
-    const unavailable = screen.lines.find((l) => l.includes("Unavailable: Attention"))!;
-    expect(unavailable).toBeDefined();
-    expect(unavailable).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⚑]/);
-    expect(screen.motionActive).toBeFalsy();
+    expect(screen.lines.join("\n")).toContain("attention read pending");
+    expect(screen.lines.join("\n")).not.toContain("Unavailable: Attention");
+    expect(screen.motionActive).toBe(true);
   });
 });
 

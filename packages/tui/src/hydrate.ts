@@ -527,6 +527,7 @@ export async function hydrateSnapshot(
       id: rig.id,
       name: rig.name,
       pods: nodes ? groupPods(nodes) : [],
+      ...(nodes === null ? { inventoryUnavailable: true } : {}),
       ...(graph ? { graph } : {}),
       ...(rig.lifecycleState ? { lifecycleState: rig.lifecycleState } : {}),
       authoredSpecName: undefined as string | undefined,

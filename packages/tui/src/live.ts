@@ -1,3 +1,4 @@
+import { PageRead } from "./page-read.js";
 // S19 ROUND-5 (guard NOT-CLEAR at b92c2a58): the refresh OWNER — the one
 // component that knows when a hydrate is actually IN FLIGHT and which seat
 // produced fresh PANE OUTPUT between refreshes. renderScreen stays pure and
@@ -25,7 +26,8 @@ export interface QuietTimerHandle {
 }
 
 export interface LiveRefreshDeps {
-  hydrate: () => Promise<FleetSnapshot>;
+  hydrate: (page: PageRead, signal: AbortSignal) => Promise<FleetSnapshot>;
+  scopeKey?: () => string;
   /** draw callback — invoked when the load lifecycle or data changes, so the
    * in-flight frame is actually DRAWN at start and cleared on settle */
   onFrame: () => void;
@@ -64,8 +66,19 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
   let invalidation = 0;
   let lastConfirmedAt: number | null = null;
   let snapshot = emptySnapshot();
-  const load: LoadState = { inFlight: false, settled: false };
+  let load: LoadState = { inFlight: false, settled: false };
   let flashes: RowFlash[] = [];
+  let scope = deps.scopeKey?.() ?? "";
+  let generation = 0;
+  let controller = new AbortController();
+  let page = new PageRead(deps.now);
+  function syncScope(): void {
+    const next = deps.scopeKey?.() ?? "";
+    if (next === scope) return;
+    scope = next; generation += 1; controller.abort(); controller = new AbortController();
+    page = new PageRead(deps.now); snapshot = emptySnapshot(); flashes = [];
+    lastConfirmedAt = null; load = { inFlight: false, settled: false };
+  }
   let quietTimer: QuietTimerHandle | null = null;
   let closed = false;
   let refresh: () => Promise<void>;
@@ -90,11 +103,20 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
 
   const runRefresh = singleFlight(async () => {
     clearQuietTimer();
+    syncScope();
+    const startedGeneration = generation;
+    const activePage = page;
+    activePage.begin();
     const startedAtInvalidation = invalidation;
     load.inFlight = true;
     deps.onFrame();
     try {
-      const next = await deps.hydrate();
+      const next = await deps.hydrate(activePage, controller.signal);
+      syncScope();
+      if (startedGeneration !== generation || closed) return;
+      activePage.end();
+      next.readErrors = [...new Set([...next.readErrors, ...activePage.errors])];
+      load.retainedAt = activePage.retainedAt;
       if (load.settled) {
         // first hydrate is a LOAD, not fresh output — no flash; null (no
         // signal) never flashes either: only a served false→true transition
@@ -105,13 +127,16 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
           if (active === true && prev.get(key) === false) flashes.push({ key, at: now });
       }
       snapshot = next;
-      load.stale = startedAtInvalidation !== invalidation || next.readErrors.some(e => /^(scopes|execution|slice-detail)/.test(e));
+      load.stale = startedAtInvalidation !== invalidation || next.readErrors.length > 0;
       if (!load.stale) lastConfirmedAt = deps.now();
+      load.lastSuccessAt = lastConfirmedAt ?? undefined;
     } catch {
+      if (startedGeneration !== generation || closed) return;
       load.stale = true;
       // rejection-release: the prior snapshot stays (nothing fabricated),
       // in-flight clears below, and the next requested refresh retries
     } finally {
+      if (startedGeneration !== generation || closed) return;
       load.inFlight = false;
       load.settled = true;
       deps.onFrame();
@@ -120,6 +145,8 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
   });
 
   refresh = () => {
+    if (closed) return Promise.resolve();
+    syncScope();
     clearQuietTimer();
     return runRefresh();
   };
@@ -133,11 +160,12 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
       else void refresh();
       deps.onFrame();
     },
-    snapshot: () => snapshot,
-    load: () => ({ ...load, ...(lastConfirmedAt !== null && deps.now() - lastConfirmedAt > 60_000 ? { stale: true } : {}) }),
+    snapshot: () => { syncScope(); return snapshot; },
+    load: () => { syncScope(); return { ...load, ...(lastConfirmedAt !== null && deps.now() - lastConfirmedAt > 60_000 ? { stale: true } : {}) }; },
     flashes: () => [...flashes],
     close: () => {
       closed = true;
+      controller.abort();
       clearQuietTimer();
     },
   };

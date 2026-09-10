@@ -191,7 +191,7 @@ function configContentLines(state: ViewState, snap: FleetSnapshot, width: number
   const heading: ContentLine[] = wrapDetailLines([
     sectionRule(category ? CONFIG_CATEGORIES.find((c) => c.id === category)?.label ?? "Settings" : "Your instance settings", width),
     { text: `${identity} · ${snap.daemonTarget ?? "target unreported"}` },
-    { text: "Read only · resolved now; application not inferred" },
+    { text: "Read only · resolved values; application not inferred" },
   ], width);
   if (!read) return [...heading, ...wrapDetailLines([
     { text: "" }, { text: "CONFIG unavailable. Refresh to try this daemon again." },

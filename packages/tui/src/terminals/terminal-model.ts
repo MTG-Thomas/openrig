@@ -30,6 +30,7 @@ export interface TerminalPreview {
 
 export interface TerminalRead {
   catalog: TerminalEntry[];
+  catalogLoaded?: boolean;
   preview: TerminalPreview | null;
   error?: string;
 }
@@ -40,6 +41,7 @@ export async function readTerminals(client: DaemonClient, view?: string | null):
     const listing = await client.terminalViews();
     if (!listing.catalog) throw new Error("This daemon does not serve terminal previews. Use a matching CLI/daemon version.");
     result.catalog = listing.catalog;
+    result.catalogLoaded = true;
     if (view) result.preview = await client.previewTerminal(view);
   } catch (error) {
     result.error = error instanceof Error ? error.message : String(error);
@@ -48,7 +50,8 @@ export async function readTerminals(client: DaemonClient, view?: string | null):
 }
 
 export function terminalExplorerRows(state: ViewState, snap: FleetSnapshot): ExplorerRow[] {
-  const entries = snap.terminals?.catalog ?? [];
+  if (!snap.terminals || (snap.terminals.error && !snap.terminals.catalogLoaded && !snap.terminals.catalog.length)) return [];
+  const entries = snap.terminals.catalog;
   const rows: ExplorerRow[] = [];
   for (const kind of ["saved", "derived"] as const) {
     rows.push({ label: `  ${kind === "saved" ? "Saved" : "Derived"} (${entries.filter(e => e.kind === kind).length})`, key: `terminals:${kind}`, action: { type: "noop" } });
@@ -62,9 +65,10 @@ export function terminalExplorerRows(state: ViewState, snap: FleetSnapshot): Exp
 export function terminalLines(state: ViewState, snap: FleetSnapshot, width: number): ContentLine[] {
   const read = snap.terminals;
   const lines: ContentLine[] = [{ text: "TERMINALS · Saved and Derived views" }];
-  if (state.terminalResult?.view === state.terminalView) lines.push({ text: `Last Open result: ${state.terminalResult!.message}` });
+  if (state.terminalResult && state.terminalResult.view === state.terminalView) lines.push({ text: `Last Open result: ${state.terminalResult!.message}` });
   if (!read) return [...lines, { text: "Reading terminal views…" }];
   if (read.error) lines.push({ text: `Unavailable: ${read.error}` });
+  if (read.error && !read.catalogLoaded && !read.catalog.length) return wrapDetailLines(lines, width);
   const preview = read.preview?.view === state.terminalView ? read.preview : null;
   if (state.terminalView && !preview) {
     lines.push({ text: "Back to terminal views", action: { type: "back" } });

@@ -14,6 +14,7 @@ export function helpScreen(palette: NonNullable<ViewState["palette"]>, context: 
     ...wrapDetailLines([
       { text: "At cmd ▸ type then Enter; Tab completes. <arg> required, [arg] optional." },
       { text: "CLI in your terminal: rig --help · rig <command> --help · rig tui commands" },
+      { text: "Recovery diagnosis in your terminal: rig doctor · rig doctor --help" },
       { text: "Startup: ? Help · w Skip · L Local · d details. Esc returns from Help." },
       { text: "After Skip: S returns to Startup; L reads locally. Down/unverified needs no recovery to read Help." },
     ], cols),
