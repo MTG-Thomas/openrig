@@ -17,16 +17,16 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import { basename, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { ATOM_TAXONOMIES, TAXONOMY_TEACHING } from "@openrig/daemon/context-pack-taxonomy";
+import { assertSafeInstallRef, assertTreeHasNoSymlinks, assertDestinationNamespaceContained, validateContextPackManifestForInstall } from "../lib/context-install.js";
+import { addGitContext, inspectGitContext, updateGitContext } from "../lib/context-git.js";
 import { ConfigStore } from "../config-store.js";
 import { DaemonClient } from "../client.js";
 import { enumArg } from "../cli-error.js";
@@ -98,30 +98,7 @@ interface PreviewWire {
   missingFiles: Array<{ path: string; role: string }>;
 }
 
-// Slice-03 Atom 2 — mirror the daemon's per-segment ref contract at the
-// local install boundary. This must run before creating the context store.
 const SAFE_REF_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-
-// Slice-03 lineage repair (R2 HIGH-2): the install boundary mirrors the daemon
-// bounded, delimiter-free version token (ref-safety.SAFE_VERSION) so an unsafe
-// version is rejected BEFORE any local write — matching the per-segment ref
-// mirror above.
-const SAFE_INSTALL_VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$/;
-
-function assertSafeInstallRef(ref: string): void {
-  const safe =
-    ref.length > 0 &&
-    ref.split("/").every(
-      (segment) => segment.length > 0 && segment !== "." && segment !== ".." && SAFE_REF_SEGMENT.test(segment),
-    );
-  if (!safe) {
-    throw new Error(
-      `unsafe install ref '${ref}' — a ref must be one or more '/'-separated segments, each matching ` +
-        `[A-Za-z0-9][A-Za-z0-9._-]{0,63} (no '.'/'..', no absolute path, no empty segment, no ` +
-        `whitespace or injection), so packs stay inside the context store root.`,
-    );
-  }
-}
 
 function assertSafeTopologySegment(kind: "rig" | "seat", value: string): void {
   if (value === "." || value === ".." || !SAFE_REF_SEGMENT.test(value)) {
@@ -129,110 +106,9 @@ function assertSafeTopologySegment(kind: "rig" | "seat", value: string): void {
   }
 }
 
-function assertTreeHasNoSymlinks(root: string): void {
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const absPath = join(current, entry.name);
-      if (entry.isSymbolicLink()) {
-        throw new Error(`Context pack directories must not contain symlinks: ${absPath}`);
-      }
-      if (entry.isDirectory()) stack.push(absPath);
-    }
-  }
-}
-
-// Slice-03 lineage repair (R2 HIGH-1): a lexically-safe path-like install ref
-// can still escape the store if one of its parent namespace segments is a
-// symlink (or a non-directory). Walk every ANCESTOR segment under the store root
-// and reject before the copy — the FS-canonical containment the lexical ref
-// check alone cannot give, mirroring the daemon compose namespace walk
-// (context-pack-library-service.ts). A not-yet-created segment (ENOENT) is safe:
-// cpSync will materialize it as a real directory.
-function assertDestinationNamespaceContained(targetRoot: string, installName: string): void {
-  const segments = installName.split("/");
-  let cursor = targetRoot;
-  for (const segment of segments.slice(0, -1)) {
-    cursor = join(cursor, segment);
-    let stat: ReturnType<typeof lstatSync>;
-    try {
-      stat = lstatSync(cursor);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") break;
-      throw err;
-    }
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new Error(
-        `unsafe install ref '${installName}' — its namespace segment '${cursor}' is a symlink or non-directory, ` +
-          `so the copy would escape the context store root. Remove it or install under a different --name.`,
-      );
-    }
-  }
-}
-
-// Kept in lockstep with the daemon parser's ALLOWED_FILE_SUFFIXES (manifest-parser.ts).
-// OPR.0.5.3.7 R2 added .sh/.ts (skill helper assets, served as text); the install
-// validator must accept what the daemon will serve.
-const ALLOWED_CONTEXT_PACK_SUFFIXES = new Set([".md", ".markdown", ".yaml", ".yml", ".txt", ".sh", ".ts"]);
-
-function validateContextPackManifestForInstall(manifestPath: string): void {
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(readFileSync(manifestPath, "utf-8"));
-  } catch (err) {
-    throw new Error(`manifest at ${manifestPath} is not valid YAML: ${(err as Error).message}`);
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`manifest at ${manifestPath} must be a YAML object at the root`);
-  }
-  const obj = parsed as Record<string, unknown>;
-  if (typeof obj["name"] !== "string" || obj["name"].length === 0) {
-    throw new Error(`manifest at ${manifestPath} is missing required field 'name' (string)`);
-  }
-  if (obj["version"] === undefined || obj["version"] === null) {
-    throw new Error(`manifest at ${manifestPath} is missing required field 'version'`);
-  }
-  const versionStr = String(obj["version"]);
-  if (!SAFE_INSTALL_VERSION.test(versionStr)) {
-    throw new Error(
-      `manifest at ${manifestPath} has an invalid version '${versionStr}' — a version must be a single bounded ` +
-        `token [A-Za-z0-9][A-Za-z0-9._+-]{0,31} (no ':' or separator, no whitespace, ≤32 chars).`,
-    );
-  }
-  // OPR.0.5.6.10 — teach the classification refusal at ADD time, not first
-  // daemon scan (desk ruling T2). Enum + teaching text imported from the
-  // daemon's one definition site; never a second value list here.
-  const taxonomy = obj["taxonomy"];
-  if (taxonomy === undefined || taxonomy === null) {
-    throw new Error(`manifest at ${manifestPath} is missing required field 'taxonomy' — every context pack declares what kind of context it is. ${TAXONOMY_TEACHING}`);
-  }
-  if (typeof taxonomy !== "string" || !(ATOM_TAXONOMIES as readonly string[]).includes(taxonomy)) {
-    throw new Error(`manifest at ${manifestPath} has invalid taxonomy ${JSON.stringify(taxonomy)}. ${TAXONOMY_TEACHING}`);
-  }
-  const files = obj["files"];
-  if (!Array.isArray(files)) {
-    throw new Error(`manifest at ${manifestPath} must declare 'files: [...]'`);
-  }
-  for (let i = 0; i < files.length; i++) {
-    const entry = files[i];
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`manifest at ${manifestPath} has malformed entry at files[${i}]`);
-    }
-    const file = entry as Record<string, unknown>;
-    const relPath = file["path"];
-    if (typeof relPath !== "string" || relPath.length === 0) {
-      throw new Error(`manifest at ${manifestPath} files[${i}] missing 'path' (string)`);
-    }
-    if (relPath.includes("..") || isAbsolute(relPath) || relPath.startsWith("\\")) {
-      throw new Error(`manifest at ${manifestPath} files[${i}].path '${relPath}' must be a relative path inside the pack (no '..' segments, no leading '/')`);
-    }
-    if (!ALLOWED_CONTEXT_PACK_SUFFIXES.has(extname(relPath))) {
-      throw new Error(`manifest at ${manifestPath} files[${i}].path '${relPath}' has an unsupported suffix; allowed: ${Array.from(ALLOWED_CONTEXT_PACK_SUFFIXES).join(", ")}`);
-    }
-    if (typeof file["role"] !== "string" || file["role"].length === 0) {
-      throw new Error(`manifest at ${manifestPath} files[${i}] missing 'role' (string)`);
-    }
+function assertLocalGitClient(client: DaemonClient): void {
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(new URL(client.baseUrl).hostname)) {
+    throw new Error("Run Git source selection/inspection/update on the daemon host through its loopback URL; these commands use local Git and filesystem paths.");
   }
 }
 
@@ -909,17 +785,26 @@ Examples:
     });
 
   cmd.command("add")
-    .argument("<source>", "Local directory OR http(s):// URL of a context pack (manifest.yaml + files)")
-    .description("Install a context pack from a local directory or a URL into the configured context library")
+    .argument("<source>", "Pack directory/manifest URL, or Git repository path/URL with --git")
+    .description("Install a pack; --git discovers a pack in a Git repository and retains its update relationship")
     .option("--name <name>", "Override the install name (defaults to the manifest name / source basename)")
+    .option("--git", "Clone a Git repository path/URL with existing Git credentials; select a pack snapshot")
+    .option("--checkout", "With --git, select an existing checkout instead of cloning; updates may merge in it")
+    .option("--pack <path>", "With --git, select a repository-relative pack; default discovers manifest.yaml or .openrig/context-packs")
     .option("--json", "JSON output")
-    .action(async (source: string, opts: { name?: string; json?: boolean }) => {
+    .action(async (source: string, opts: { name?: string; json?: boolean; git?: boolean; checkout?: boolean; pack?: string }) => {
       try {
         // OPR.0.5.9.5 Wave B — config-resolved context library,
         // never a hardcoded ~/.openrig literal; the daemon resolves the same key.
         const targetRoot = new ConfigStore().resolve().context.root;
         let targetDir: string;
-        if (isHttpUrl(source)) {
+        let gitSelection: ReturnType<typeof addGitContext>["selected"] | undefined;
+        if ((opts.pack || opts.checkout) && !opts.git) throw new Error("--pack and --checkout require --git.");
+        if (opts.git) {
+          const gitClient = await getClient();
+          assertLocalGitClient(gitClient);
+          ({ installedAt: targetDir, selected: gitSelection } = addGitContext(source, opts, targetRoot));
+        } else if (isHttpUrl(source)) {
           // R4 — URL install: fetch → validate → atomic stage+rename (no partial pack).
           ({ targetDir } = await installPackFromUrl(source, opts.name, targetRoot));
         } else {
@@ -972,16 +857,55 @@ Examples:
         if (syncError) {
           throw new Error(`Installed at ${targetDir}, but daemon rejected the pack during sync: ${syncError.error}`);
         }
+        if (gitSelection && !syncRes.data.entries.some((entry) => resolve(entry.sourcePath) === resolve(targetDir))) {
+          throw new Error(`Git selection retained at ${targetDir}, but this daemon does not serve it. Check context.root and workspace ref precedence before using it.`);
+        }
         if (opts.json) {
-          console.log(JSON.stringify({ installedAt: targetDir, count: syncRes.data.count }, null, 2));
+          console.log(JSON.stringify({ installedAt: targetDir, count: syncRes.data.count, ...(gitSelection ? { gitSource: gitSelection } : {}) }, null, 2));
         } else {
           console.log(`Installed at ${targetDir}. Library now has ${syncRes.data.count} context pack(s).`);
+          if (gitSelection) console.log(`Git ${gitSelection.revision} from ${gitSelection.checkout}; inspect/update with rig context source.`);
         }
       } catch (err) {
         console.error((err as Error).message);
         process.exitCode = 1;
       }
     });
+
+  const source = cmd.command("source")
+    .description("Inspect Git checkout vs served context, or explicitly fetch/merge and select an update")
+    .addHelpText("after", "\nStart: rig context add <repository-path-or-URL> --git [--pack path]\nEdit/commit in the reported checkout with ordinary Git. Updates never push or reset.\nConflicts retain the old selection; resolve/commit or abort in the checkout before retrying.\nSelection does not prove agent consumption; use context get and check the actual consumer.\n");
+  for (const operation of ["inspect", "update"] as const) {
+    source.command(operation)
+      .argument("<ref>", "Selected Git-backed context pack ref")
+      .description(operation === "inspect"
+        ? "Read local revision, edits, conflicts and selection; no fetch or consumption claim"
+        : "Explicitly fetch/merge the upstream, then select the clean pack; refuse local selection edits")
+      .option("--json", "JSON output")
+      .action(async (ref: string, opts: { json?: boolean }) => {
+        try {
+          const client = await getClient();
+          assertLocalGitClient(client);
+          const entry = await resolvePack(client, ref);
+          const localRoot = new ConfigStore().resolve().context.root;
+          if (resolve(entry.sourcePath) !== resolve(localRoot, entry.relativePath)) throw new Error("This pack is not in the locally configured context library. Run Git source commands on its owning instance.");
+          if (entry.sourceType === "builtin") throw new Error("Builtin context is not a writable Git selection.");
+          const result = operation === "inspect" ? inspectGitContext(entry.sourcePath) : updateGitContext(entry.sourcePath);
+          if (operation === "update") {
+            const sync = await client.post<{ errors?: Array<{ source: string; error: string }>; entries: ContextPackEntryWire[] }>("/api/context-packs/library/sync");
+            if (sync.status !== 200) throw new Error(`Selection updated, but library sync failed (HTTP ${sync.status}); run rig context sync.`);
+            if (!sync.data.entries.some((candidate) => resolve(candidate.sourcePath) === resolve(entry.sourcePath))) throw new Error(`Selection retained, but the daemon cannot serve it: ${sync.data.errors?.map((error) => error.error).join("; ") || "check context root and ref precedence"}`);
+          }
+          // Structured output keeps checkout/selected bytes/consumption distinct
+          // in both terminal and machine use, without a second status renderer.
+          console.log(JSON.stringify(result, null, 2));
+        } catch (err) {
+          const message = (err as Error).message;
+          console.error(opts.json ? JSON.stringify({ error: message }) : message);
+          process.exitCode = 1;
+        }
+      });
+  }
 
   cmd.command("rm")
     .argument("<ref>", "Path-like ref of the context pack to remove (e.g. packs/compaction-restore)")

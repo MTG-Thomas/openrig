@@ -1693,7 +1693,9 @@ Subcommands:
 - `preview <name-or-ref> [options]` — show the assembled bundle without delivering it.
 - `compose --out <ref> --from <files...>` — compose ordered files into a durable context ref without delivering it.
 - `sync [options]` — re-walk discovery roots and refresh the library index.
-- `add <source-dir> [options]` — install a context pack from a local directory into the configured context store.
+- `add <source> [--git] [--checkout] [--pack <relative-path>] [--name <ref>] [--json]` — install a directory/manifest URL, or clone a Git repository with `--git`. Git discovery checks the repository-root manifest and `.openrig/context-packs`; multiple packs require an explicit `--pack`. `--checkout` selects an existing local checkout whose branch may be merged by an update.
+- `source inspect <ref> [--json]` — distinguish the selected revision/digest, current served edits, checkout branch/revision/status/conflicts, and locally known upstream divergence. It does not fetch or prove consumption.
+- `source update <ref> [--json]` — explicitly fetch and merge the selected checkout branch’s upstream, then publish its clean declared pack inputs. Dirty checkouts or edited served selections stop before update. Conflicts/unavailable upstream retain the old served selection and both Git sides.
 - `rm <ref> [options]` — remove a context pack by its path-like ref.
 
 Notes:
@@ -1702,6 +1704,34 @@ Notes:
 - For example, `rig context profile world-public --situation fresh --runtime claude-code` and `rig context work-install --runtime claude-code` use the same runtime spelling. Profile atoms that read seat context still require both `--rig` and `--seat`.
 - `preview` is the canonical read-only way to inspect the assembled content.
 - This command family is delivery-free; context-window inspection is not part of this noun.
+
+Git source example (use the intended instance and existing Git credentials):
+
+```bash
+rig context add <repository-path-or-URL> --git --name team-world
+rig context source inspect team-world --json
+# Edit/commit in the reported checkout with ordinary Git.
+rig context source update team-world --json
+rig context get team-world
+```
+
+Git selections copy only `manifest.yaml` and its declared files into the existing
+context library; `.openrig-git-source.json` records the retained checkout, pack,
+revision, selection time and digest. The checkout and previous selections live
+beside the configured library under `<context.root>-git-checkouts` and
+`<context.root>-git-history`. They are retained when a selected pack is removed.
+Local-only inspection compares against cached upstream refs; only explicit update
+contacts the remote. Git uses existing credentials, with terminal prompting disabled
+and a 60-second command timeout; a failure retains the checkout for native Git diagnosis.
+
+Commit local improvements in the checkout before updating. If someone edited the
+served copy directly, preserve those edits in the checkout and commit them; restore
+the served copy to its recorded selection explicitly before retrying. No automatic
+stash, reset, rebase, push or conflict strategy runs. A merge conflict remains in the
+checkout for an owning author to resolve/commit or abort with Git. Only then retry
+update. Selected bytes, successful `context get`, and a consumer demonstrably using
+them are separate facts. This command does not automatically adopt context in other
+instances or prove that an agent consumed it.
 
 ### `rig workspace`
 
