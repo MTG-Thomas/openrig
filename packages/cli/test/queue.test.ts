@@ -142,6 +142,18 @@ describe("rig queue CLI", () => {
   });
 
   // Slice-03 Atom 6b — --body-context snapshot + provenance rule.
+  it("create preserves explicit human intent and authored supplemental file bytes", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "queue-human-detail-"));
+    const file = path.join(directory, "detail.txt");
+    const detail = "Supporting context.\nEmoji: 😀; symbols: < & >.\n";
+    fs.writeFileSync(file, detail);
+    try {
+      const { deps, calls } = makeDeps();
+      await createProgram({ queueDeps: deps }).parseAsync(["node", "rig", "queue", "create", "--destination", "human-founder@external", "--body", "No action needed.", "--human-intent", "update", "--human-detail-file", file, "--json"]);
+      expect(calls.find((c) => c.path === "/api/queue/create")?.body).toMatchObject({ humanIntent: "update", humanDetail: detail, body: "No action needed." });
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+
   it("create --body-context snapshots the RESOLVED content as the body + a provenance tag", async () => {
     const { deps, calls } = makeDeps({
       routes: {

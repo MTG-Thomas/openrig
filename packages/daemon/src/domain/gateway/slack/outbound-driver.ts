@@ -28,6 +28,8 @@ export interface OutboundPostPayload {
   notificationKey?: string | null;
   ownerNotificationKind?: string | null;
   ownerNotificationLevel?: import("../../queue-transition-log.js").OwnerNotificationLevel | null;
+  humanIntent?: "decision" | "update" | null;
+  humanDetail?: string | null;
   summary?: string | null;
   body?: string | null;
   destinationSession?: string | null;
@@ -129,6 +131,8 @@ function toPayload(q: QueueItem): OutboundPostPayload {
     notificationKey: q.notificationKey,
     ownerNotificationKind: q.ownerNotificationKind,
     ownerNotificationLevel: q.ownerNotificationLevel,
+    humanIntent: q.humanIntent,
+    humanDetail: q.humanDetail,
     summary: q.summary,
     body: q.body,
     destinationSession: q.destinationSession,

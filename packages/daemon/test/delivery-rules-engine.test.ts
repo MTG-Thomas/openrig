@@ -417,13 +417,14 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
     rmSync(home, { recursive: true, force: true });
   });
 
+  let parkNumber = 0;
   async function nParks(n: number): Promise<QueueItem[]> {
     const rows: QueueItem[] = [];
     for (let i = 0; i < n; i++) {
       const row = await repo.create({
         sourceSession: `seat-${i}@r`,
         destinationSession: "orch-lead@v-openrig-build",
-        body: `decision ${i}`,
+        body: `decision ${parkNumber++}`,
         nudge: false,
       });
       repo.update({
@@ -485,7 +486,7 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
     });
   }
 
-  it("LOSSLESS + EXACTLY-ONCE (v3): N recorded digest decisions flush as ONE post through the REAL wire; receipts land only AFTER transport truth; a second flush dispatches nothing new (RED at base: no flush machinery exists)", async () => {
+  it("LOSSLESS + EXACTLY-ONCE (v3): N recorded digest decisions flush as independent complete posts through the REAL wire; receipts land only AFTER transport truth; a second flush dispatches nothing new (RED at base: no flush machinery exists)", async () => {
     const mod = await digestFlushModule();
     expect(mod, "policies/delivery-digest-flush must exist (RED at base: absent)").not.toBeNull();
     const rows = await nParks(3);
@@ -504,21 +505,21 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
       const first = await flushViaWire(mod!, wire);
       expect(first.members).toBe(3);
       await new Promise((resolve) => setTimeout(resolve, 40));
-      expect(posts.length, "ONE digest post through the real transport").toBe(1);
-      const body = JSON.stringify(posts[0]);
-      for (const row of rows) expect(body).toContain(row.qitemId);
+      expect(posts.length, "one complete root per request through the real transport").toBe(3);
+      const body = JSON.stringify(posts);
+      for (const row of rows) expect(body).toContain(row.body);
       expect(body, "the digest is notify-class: no mention").not.toContain("<@UFOUNDER>");
       // receipts landed AFTER the post (transport truth), digest-tokened, per member
       for (const { qid, key } of keys) {
         const receipts = repo.listTransitions(qid).filter((t) => t.transitionNote?.startsWith("slack-owner-notification-posted "));
         expect(receipts.length, `receipt on ${qid}`).toBe(1);
         expect(receipts[0]!.transitionNote).toContain(`notification_key=${key}`);
-        expect(receipts[0]!.transitionNote).toContain("digest=");
+        expect(receipts[0]!.transitionNote).toContain("message_ts=");
       }
       const second = await flushViaWire(mod!, wire);
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(second.members, "exactly-once: nothing left to flush").toBe(0);
-      expect(posts.length).toBe(1);
+      expect(posts.length).toBe(3);
     } finally {
       wire.stop();
     }
@@ -549,8 +550,8 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
       });
       expect(result.members, "recorded decisions survive later prefs drift").toBe(2);
       await new Promise((resolve) => setTimeout(resolve, 40));
-      expect(posts.length).toBe(1);
-      for (const row of rows) expect(JSON.stringify(posts[0])).toContain(row.qitemId);
+      expect(posts.length).toBe(2);
+      for (const row of rows) expect(JSON.stringify(posts)).toContain(row.body);
     } finally {
       wire.stop();
     }
@@ -590,7 +591,7 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
     try {
       healthy.startServices?.();
       await new Promise((resolve) => setTimeout(resolve, 60));
-      expect(posts.length, "one eventual post after reconstruction").toBe(1);
+      expect(posts.length, "one eventual complete post per request after reconstruction").toBe(2);
       for (const { qid, key } of keys) {
         const receipts = repo.listTransitions(qid).filter((t) => t.transitionNote?.startsWith("slack-owner-notification-posted "));
         expect(receipts.length, `receipt on ${qid} after redrive`).toBe(1);
@@ -600,7 +601,7 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
       const after = await flushViaWire(mod!, healthy);
       expect(after.members).toBe(0);
       await new Promise((resolve) => setTimeout(resolve, 30));
-      expect(posts.length).toBe(1);
+      expect(posts.length).toBe(2);
     } finally {
       healthy.stop();
     }
@@ -638,10 +639,13 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
       const pending = new DispatchBuffer(home).pending().filter((d) => d.decisionId.startsWith("digest:"));
       const seen = new Map<string, number>();
       for (const d of pending) {
+        const key = (d.payload as { notificationKey?: string }).notificationKey;
+        if (key) seen.set(key, (seen.get(key) ?? 0) + 1);
         for (const m of ((d.payload as { memberReceipts?: Array<{ notificationKey: string }> }).memberReceipts ?? [])) {
           seen.set(m.notificationKey, (seen.get(m.notificationKey) ?? 0) + 1);
         }
       }
+      expect(seen.size).toBe(3);
       for (const [key, count] of seen) {
         expect(count, `member ${key} rides exactly one pending decision — overlap is the double-delivery`).toBe(1);
       }
@@ -664,7 +668,7 @@ describe("OPR.0.5.6.1 §4 — the C/D digest flush (v3: transport truth first, r
       for (const post of posts) {
         const text = JSON.stringify(post);
         for (const row of tracked) {
-          if (text.includes(row.qitemId)) memberAppearances.set(row.qitemId, (memberAppearances.get(row.qitemId) ?? 0) + 1);
+          if (text.includes(row.body)) memberAppearances.set(row.qitemId, (memberAppearances.get(row.qitemId) ?? 0) + 1);
         }
       }
       for (const row of tracked) {

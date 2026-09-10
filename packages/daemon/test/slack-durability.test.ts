@@ -134,12 +134,12 @@ describe("H1 — induced timeout → reconcile-by-marker, never a blind repost",
 });
 
 describe("R2 round-3 — reconciliation identity is STRUCTURAL: guaranteed in the scanned surface, scoped to the target message (ordinary data only)", () => {
-  it("EFFECT A: a valid LONG routine summary (5000 chars) + timeout-that-landed → exactly ONE landed copy, zero repost (the identity survives the clamp)", async () => {
+  it("EFFECT A: a valid LONG routine summary (2900 units) + timeout-that-landed → exactly ONE landed copy, zero repost (the identity fits the complete fallback)", async () => {
     const slack = slackDouble({ timeoutFirstPost: true, timeoutLanded: true });
     const { deliver } = harness(slack.fetchImpl);
     const longRow: OutboundDecision = {
       kind: "outbound_decision", decisionId: "d-long-summary", op: OUTBOUND_OP, entityBindingRef: "mike#slack",
-      payload: { ...payload, qitemId: "qitem-routine-long-summary", summary: "s".repeat(5000), body: "ordinary body" },
+      payload: { ...payload, qitemId: "qitem-routine-long-summary", summary: "s".repeat(2900), body: "ordinary body" },
     };
     const first = await deliver(longRow);
     expect(first.ok).toBe(false); // ambiguous timeout → retained
@@ -181,7 +181,7 @@ describe("R2 round-3 — reconciliation identity is STRUCTURAL: guaranteed in th
     const { deliver } = harness(slack.fetchImpl);
     const scoped: OutboundDecision = {
       kind: "outbound_decision", decisionId: "d-scope-check", op: OUTBOUND_OP, entityBindingRef: "mike#slack",
-      payload: { ...payload, qitemId: "qitem-routine-scope", summary: "x".repeat(6000), body: "y".repeat(2000) },
+      payload: { ...payload, qitemId: "qitem-routine-scope", summary: "x".repeat(900), body: "y".repeat(2900) },
     };
     await deliver(scoped);
     const retry = await deliver(scoped);
@@ -189,7 +189,7 @@ describe("R2 round-3 — reconciliation identity is STRUCTURAL: guaranteed in th
     expect(slack.posted).toHaveLength(1); // posted despite both decoys (no false-ack)
     // and the posted max-length text still carries the reconcile identity within the cap:
     expect(slack.posted[0]!.length).toBeLessThanOrEqual(3900);
-    expect(slack.posted[0]).toContain("d-scope-check"); // the decision-scoped token survived the clamp
+    expect(slack.posted[0]).toContain("d-scope-check"); // the decision-scoped token remains in the complete fallback
   });
 });
 
@@ -233,6 +233,6 @@ describe("H2 — crash between persist and dispatch → replay delivers EXACTLY 
     await flush();
     // The delivered-store re-acks decisionId d-dur-1 without a second post.
     expect(slack.posted).toHaveLength(1);
-    expect(slack.posted.filter((t) => t.includes("qitem-dur-1"))).toHaveLength(1);
+    expect(slack.posted.filter((t) => t.includes("(or-mark:d-dur-1)"))).toHaveLength(1);
   });
 });

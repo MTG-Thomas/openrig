@@ -18,6 +18,8 @@ export interface QueueItem {
   tags?: string[] | null;
   state?: string | null;
   tier?: string | null;
+  humanIntent?: "decision" | "update" | null;
+  humanDetail?: string | null;
   summary?: string | null;
   body?: string | null;
   evidenceRef?: string | null;
@@ -83,6 +85,8 @@ function project(q: RepoQueueItem, transition: QueueTransition, entities: readon
     tags: (r.tags as string[] | null) ?? null,
     state: (r.state as string | null) ?? null,
     tier: (r.tier as string | null) ?? null,
+    humanIntent: q.humanIntent,
+    humanDetail: q.humanDetail,
     summary: (r.summary as string | null) ?? null,
     body: (r.body as string | null) ?? null,
     evidenceRef: (r.evidenceRef as string | null) ?? null,

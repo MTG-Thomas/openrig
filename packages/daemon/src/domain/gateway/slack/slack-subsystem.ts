@@ -77,6 +77,7 @@ export function makeHumanReplyResolver(
   contract: HumanReplyActionPort | undefined,
 ): NonNullable<SlackWireOpts["resolveHumanReply"]> {
   return async (input) => {
+    if (queueRepo.getById(input.qitemId)?.humanIntent === "update") return "not-applicable";
     if (!contract) return "not-applicable";
     try {
       await contract.act({ verb: "resolve", ...input });
@@ -233,7 +234,7 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
     if (!human) return null;
     return decideDelivery({
       level: p.ownerNotificationLevel ?? null,
-      escalation: isEscalationClass(p.tags),
+      escalation: p.humanIntent !== "update" && isEscalationClass(p.tags),
       human: {
         entityId: human.entityId,
         deliveryClass: human.prefs.deliveryClass,
@@ -277,6 +278,7 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
           )?.threadTs,
         // S14: posting and interruption are separate threshold dials over one vocabulary.
         resolveMentionUserId: (p) => {
+          if (p.humanIntent === "update") return undefined;
           // OPR.0.5.6.1: the engine's decided loudness is the mention rule for
           // registered humans; the dial pair remains only for the null degrade.
           if ((p as { deliveryDigestPost?: boolean }).deliveryDigestPost) return undefined; // notify-class aggregate, never a mention
@@ -362,9 +364,12 @@ export function buildSlackGatewayWire(opts: SlackWireOpts): GatewayWire {
           }
           const key = p.notificationKey ?? p.qitemId;
           if (opts.queueRepo.transitionLog.hasOwnerNotificationReceipt(p.qitemId, key)) return;
+          // One atomic queue transition records complete delivery and closes ONLY
+          // an informational delivery obligation. This is never a human decision.
           opts.queueRepo.update({
             qitemId: p.qitemId,
             actorSession: "daemon@kernel",
+            ...(p.humanIntent === "update" ? { state: "done" as const, closureReason: "no-follow-on" } : {}),
             transitionNote: [
               "slack-owner-notification-posted",
               `notification_key=${key}`,

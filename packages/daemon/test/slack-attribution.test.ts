@@ -42,19 +42,18 @@ describe("attributionFromSession — the stamped triple parses into the four fie
 describe("buildOutboundMessage — attribution header + loudness rule", () => {
   const q = { qitemId: "q1", summary: "Decide X", body: "b", destinationSession: "mike@external" };
 
-  it("the attribution header is the LEADING context block and carries all four fields", () => {
+  it("the subject leads and one sender attribution preserves the full source identity", () => {
     const m = buildOutboundMessage(q, {
       sourceLabel: "vm",
       attribution: { seat: "dev-driver@v-openrig-build", rig: "v-openrig-build", host: "host-84c37990", session: "dev-driver@v-openrig-build@host-84c37990" },
     });
-    const first = m.blocks[0] as { type: string; elements: { text: string }[] };
+    expect((m.blocks[0] as { type: string }).type).toBe("section");
+    const first = m.blocks.at(-1) as { type: string; elements: { text: string }[] };
     expect(first.type).toBe("context");
     const line = first.elements[0]!.text;
     expect(line).toContain("dev-driver@v-openrig-build");
-    expect(line).toContain("rig v-openrig-build");
-    expect(line).toContain("host host-84c37990");
-    expect(line).toContain("session dev-driver@v-openrig-build@host-84c37990");
-    expect(m.text).toContain("from *dev-driver@v-openrig-build*"); // notification fallback carries it too
+    expect(line).toBe("from dev-driver@v-openrig-build@host-84c37990");
+    expect(m.text).toContain("from dev-driver@v-openrig-build@host-84c37990"); // notification fallback carries it too
   });
 
   it("ESCALATION mentions the human by USER ID; routine stays quiet", () => {

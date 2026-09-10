@@ -59,12 +59,14 @@ export async function runDeliveryDigestFlush(input: RunDeliveryDigestFlushInput)
   try {
     for (const d of new DispatchBuffer(input.home).pending()) {
       if (!d.decisionId.startsWith("digest:")) continue;
+      const ownKey = (d.payload as { notificationKey?: string } | null)?.notificationKey;
+      if (ownKey) inFlight.add(ownKey);
       const mrs = (d.payload as { memberReceipts?: Array<{ notificationKey?: string }> } | null)?.memberReceipts ?? [];
       for (const m of mrs) if (m.notificationKey) inFlight.add(m.notificationKey);
     }
   } catch { /* unreadable buffer: fail open to selection; the dispatcher's stable-id idempotence still guards the same-set case */ }
 
-  const members = alerts.filter((alert) => {
+  const selected = alerts.filter((alert) => {
     const key = alert.notificationKey ?? alert.qitemId;
     if (inFlight.has(key)) return false;
     return input.queueRepo.listTransitions(alert.qitemId).some((t) =>
@@ -72,7 +74,22 @@ export async function runDeliveryDigestFlush(input: RunDeliveryDigestFlushInput)
         && t.transitionNote.includes(`notification_key=${key}`)
         && t.transitionNote.includes(`window=${input.window}`));
   });
-  if (members.length === 0) return { dispatched: 0, members: 0 };
+  if (selected.length === 0) return { dispatched: 0, members: 0 };
+  // The selected timing remains the existing digest policy. At that time a
+  // human request/update needs its OWN complete brief and reply identity, not a
+  // summary-only member receipt. Ordinary system notices retain aggregation.
+  let completeDispatched = 0;
+  const members = [] as typeof selected;
+  for (const item of selected) {
+    if (item.ownerNotificationKind !== "human-required" && item.ownerNotificationKind !== "human-update" && !item.humanDetail) {
+      members.push(item);
+      continue;
+    }
+    const id = createHash("sha256").update(input.window + "|" + (item.notificationKey ?? item.qitemId)).digest("hex").slice(0, 32);
+    const result = input.dispatch(OUTBOUND_OP, item.destinationSession!, { ...item, deliveryDigestPost: true }, { decisionId: `digest:complete:${id}` });
+    if (result.ok) completeDispatched++;
+  }
+  if (!members.length) return { dispatched: completeDispatched, members: selected.length };
 
   const memberReceipts = members.map((m) => ({
     qitemId: m.qitemId,
@@ -96,7 +113,7 @@ export async function runDeliveryDigestFlush(input: RunDeliveryDigestFlushInput)
     memberReceipts,
   };
   const res = input.dispatch(OUTBOUND_OP, human.address, payload, { decisionId: `digest:${digestId}` });
-  return { dispatched: res.ok ? 1 : 0, members: members.length };
+  return { dispatched: completeDispatched + (res.ok ? 1 : 0), members: selected.length };
 }
 
 /** Watchdog-engine policy wrapper — the repeating window flush (digests recur;
