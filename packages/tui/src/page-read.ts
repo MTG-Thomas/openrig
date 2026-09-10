@@ -1,4 +1,5 @@
 import type { ViewState } from "./types.js";
+import { retainAttentionSources } from "./attention/source-continuity.js";
 
 /** One active page's successful HTTP reads. Discarded on navigation, never shared
  * between TUIs or used for effects. Each source can fail without erasing siblings. */
@@ -26,10 +27,23 @@ export class PageRead {
           this.errors.push(`${new URL(key).pathname}: HTTP ${response.status}`);
           return response;
         }
-        const body = await response.text();
-        JSON.parse(body); // all page reads are JSON; a broken body is a failed read
+        let body = await response.text();
+        const decoded = JSON.parse(body); // all page reads are JSON; a broken body is a failed read
         signal.throwIfAborted();
-        const value = { body, status: response.status, headers: response.headers, at: this.now() };
+        let at = this.now();
+        // Attention declares independent source outages inside HTTP 200. Keep
+        // those contributions in this same page/URL cache, alongside fresh siblings.
+        if (new URL(key).pathname === "/api/attention") {
+          const prior = this.values.get(key);
+          const merged = retainAttentionSources(decoded, prior && JSON.parse(prior.body));
+          body = JSON.stringify(merged.read);
+          this.errors.push(...merged.errors);
+          if (merged.retained && prior) {
+            at = prior.at; // conservative time basis until the whole read succeeds
+            this.retainedAt = Math.min(this.retainedAt ?? at, at);
+          }
+        }
+        const value = { body, status: response.status, headers: response.headers, at };
         this.values.set(key, value);
         return new Response(body, value);
       } catch (error) {
