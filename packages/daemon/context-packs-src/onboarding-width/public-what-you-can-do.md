@@ -11,8 +11,9 @@ not know exists.** So the point of what follows is not skill. It is recognition:
 lands, something rhymes, and you go check instead of building.
 
 Eighty-one-plus top-level verbs ship (capability canon refreshed through
-`capability-delta-v0.5.12`). Read this once for shape, and let it make you suspicious that a thing
-already exists. Model-divergence proclamations are live product (trust them; pins use canonical
+`capability-delta-v0.5.13`). This marker describes the pack's teaching, not publication or live
+adoption. Read this once for shape, and let it make you suspicious that a thing already exists.
+Model-divergence proclamations are live product (trust them; pins use canonical
 model IDs).
 
 ---
@@ -54,6 +55,13 @@ one command away. Your memory of the fleet is a claim about the past.
   freshness, rule, evidence, confidence, and next inspection. Use the TUI's HEALTH tab for the
   same records when a human also needs to see them. Empty output is never a healthy assertion,
   list/explain never mutate, and diagnostic presentation remains explicit opt-in policy.
+  INFO is a severity; Unknown and stale describe assessment or freshness, not a healthy result.
+- **`rig health diagnosis show <qitem-id>`** — inspect a retained diagnosis alongside current
+  selected guidance before carrying an old restriction forward; `--full --json` expands the
+  evidence. `docs/reference/health-diagnosis.md#current-selected-context-and-correction` explains
+  the authored selection and correction record. Authority, current applicability, an assessment,
+  an action taken and a later observed effect are separate facts. Recording a correction or
+  replaying a case does not establish improved behavior or authorize unrelated work.
 
 ## Reaching another agent
 
@@ -92,6 +100,9 @@ unseen — which makes messages the one delivery channel that never gets skipped
   someone lists the stream before starting.
 - **`rig terminal open <view>`** — bring every live agent in a rig, mission or slice up as real
   typeable tiles at once.
+  In the TUI, **TERMINALS** lists Saved and Derived views. Select a view to inspect its members,
+  layout and pages; preview is passive. **Open in Herder** deliberately opens the inspected plan
+  and reports opened, absent or degraded members. Help or a side trip returns to the same preview.
 - **`rig walk <seat> --through <files> --pace <n>`** — deliver context pieces through
   file-backed terminal paste. When the current native generation record resolves, the complete
   piece and its matching Claude/Codex turn closure must arrive before pacing onward, including
@@ -284,6 +295,11 @@ because someone lost work once.
 - **`rig doctor`** — is the *installation* wired up correctly, or are you chasing a bug that is
   really a broken install. **`rig preflight`** asks whether this machine can run OpenRig at all.
 - **Bare `rig`** — the same TUI for first setup, daemon-down startup and ordinary work.
+  **?** Help, **w** Skip and **L** Local reading remain usable during slow probes or loading,
+  and when the daemon is down or unverified. Local reading shows selected disk intent with
+  provenance and read errors; it does not substitute for live queue, execution or topology data.
+  These reading controls do not start a daemon or resume seats; skipping an already accepted
+  operation does not cancel it.
   Enter starts only the selected daemon; then choose rigs and individual seats, with kernel
   recommended first. Previously occupied seats default to their authoritative conversation.
   Missing history, ambiguous identity and unavailable authentication have distinct explanations;
@@ -343,8 +359,13 @@ scheme, and nothing downstream can see it.
 
 - **`rig scope mission ls` / `show` / `create`** — what work exists, what a mission is for, and how
   to open one so it gets a stable dot-ID rather than being a bare folder nothing can address. In
-  `rig tui`, SCOPES → select a mission shows the same story as DONE / NOW / NEXT / ATTENTION, with
-  row drill-in and Escape back.
+  `rig tui`, **PROJECTS** → choose a project → mission → slice shows the work story with row
+  drill-in, current source and Escape back. Project IDs and roots distinguish equal display
+  names; an unavailable project read does not substitute another project's work.
+- **TUI ATTENTION** — inspect **Action required** separately from **Updates**. Requests and
+  explicit human blockers show what decision is needed and what work it unblocks; outcome and
+  health updates retain their source and history. Open detail and evidence, then Back. Reading
+  does not approve or deliver a request, and queue closure alone does not accept an outcome.
 - **`rig scope slice ls` / `show` / `create`** — the same at the altitude where work is actually
   buildable. `show` gives you intent, frontmatter and children without guessing which of five files
   to open.
@@ -389,6 +410,15 @@ scheme, and nothing downstream can see it.
   every other command's runtime vocabulary.
 - **`rig context show` / `sync` / `rm`** — what is inside a context pack before you prime a seat
   with it, and how to make the library catch up when you edit one.
+- **`rig context add <repository-path-or-URL> --git`** — select a pack while retaining its Git
+  source and checkout; `--pack <path>` chooses a repository-relative pack. Inspect that relationship
+  with **`rig context source inspect <ref>`**; it does not fetch or prove agent consumption.
+  **`rig context source update <ref>`** explicitly fetches and merges, preserving committed local
+  authorship before selecting clean content. Dirty work, conflicts, unavailable upstreams and
+  edits to the served selection refuse without a reset or push. Resolve and commit, or abort,
+  in the retained checkout before retrying; conflicts leave the prior served selection available.
+  Read the selected bytes with `context get` and check the actual consumer separately. This is
+  explicit update, not automatic synchronization of libraries or running agents.
 - **`rig context get <name-or-ref>`** — pull exact context by address instead of reading files:
   `<pack-ref>/<file>#<H2-slug>[/<H3-slug>]` serves the exact span bytes of one section, and **the
   `/<file>` component is required even in a one-file pack**. A bogus slug fails loud and lists the
@@ -491,6 +521,14 @@ your circumstances is configuration, and the ones that are not, another agent ca
   loudly to report, whether to batch permission questions or block on them. **This declares a
   posture; it does not grant or deny permissions** — the harness's own settings are the control
   surface for that.
+- **`rig mode effective --rig <id> --json`** — inspect scoped human-led/delegated posture, phase
+  and source; project, mission and qitem selectors are also available in help. Resolved unset
+  scopes default to human-led; missing or ambiguous identity stays unknown. To deliberately
+  change a mission, `rig mode set delegated --scope mission --qualifier <project>/<mission>
+  --evidence "<decision>"` proposes it without writing; add `--confirm` to apply an authorized
+  choice, or select `human-led` to return to interactive work. Posture grants no authority.
+  Human-led process diagnosis is quiet; operational health and ordinary reminders remain.
+  See `docs/reference/scoped-operating-posture.md` for precedence and other scopes.
 - **Project World declares the human authority boundary.** Read the current project and mission
   policy for actions requiring approval; the system mechanics do not impose a universal list.
   A script's explicit-path authoring guard (for example `OPENRIG_SKILL_CANON_ROOT`) asks for a
@@ -530,6 +568,7 @@ your circumstances is configuration, and the ones that are not, another agent ca
   daemon/CLI identity and the client timezone separately. Resolved settings do not prove runtime
   adoption. The legacy `connections` command still inspects gateway services and human routes;
   dated verification does not prove delivery. `timezone` gives persistent local-time guidance.
+  **?** opens full-screen Help with command grammar and examples; Escape returns to the caller.
   **`rig tui commands`** lists everything it can do without launching it. **`rig ui open`** is
   unmaintained, best-effort, and replaced by the TUI, so never diagnose product behaviour from
   the web UI. The TUI plus Slack are the human surface; the CLI plus terminal are the agent surface.
