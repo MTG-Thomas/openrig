@@ -17,6 +17,7 @@ import { ContextUsageStore } from "../src/domain/context-usage-store.js";
 import { UsageSamplesStore } from "../src/domain/usage-samples-store.js";
 import { HealthDiagnosisService } from "../src/domain/health-diagnosis.js";
 import { healthAuthority } from "../src/domain/health-context.js";
+import { delegatedPostureFixture } from "./helpers/delegated-posture.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => cleanups.splice(0).reverse().forEach((f) => f()));
@@ -117,7 +118,7 @@ it("bounds recursive traversal even when the handoff family exceeds the admitted
   expect(() => t.queue.transitionLog.listForHandoffWindow(t.cp.lineageQitemId, t.cp.startedAt, t.cp.observedAt, 10001)).toThrow("health_checkpoint_lineage_limit");
 });
 
-it("100 live-source context seats remain quiet below 95, clear naturally, and never compete with ceremony admission", async () => {
+it("100 live-source context seats remain quiet below 95, clear naturally, and never compete with delegated ceremony admission", async () => {
   const t = await setup(); const rigs = new RigRepository(t.db); const sessions = new SessionRegistry(t.db);
   const rig = rigs.createRig("context-scale"); const samples = new UsageSamplesStore(t.db);
   const base = Date.now() - 60000;
@@ -137,7 +138,7 @@ it("100 live-source context seats remain quiet below 95, clear naturally, and ne
     }
   })();
   const context = new LiveContextHealthSource({ db: t.db, rigRepo: rigs, sessionRegistry: sessions, contextUsageStore: new ContextUsageStore(t.db, { stateDir: t.home }) });
-  const projection = new HealthProjectionService({ read: () => [...context.read(), ...t.source.read()] }, () => t.policy.read());
+  const projection = new HealthProjectionService({ read: () => [...context.read(), ...t.source.read()] }, () => t.policy.read(), delegatedPostureFixture);
   write(94, 0); expect(projection.list({ limit: 200 }).total).toBe(0);
   write(95, 10000); const ids = projection.list({ limit: 200 }).records.map((r) => r.id);
   expect(ids).toHaveLength(100);

@@ -82,7 +82,8 @@ describe("OPR.0.4.3.12 — isFixtureScopedHome (path-only predicate)", () => {
   it("false for an openrig-qa-named path OUTSIDE any temp root (no marker)", async () => {
     const { isFixtureScopedHome } = await import("../src/openrig-compat.js");
     // Name alone is not enough — must be under a temp root OR carry the marker.
-    expect(isFixtureScopedHome(join(homedir(), "openrig-qa-not-a-fixture"))).toBe(false);
+    // HOME may itself be an isolated temp directory; this negative path must not be.
+    expect(isFixtureScopedHome("/home/test-user/openrig-qa-not-a-fixture")).toBe(false);
   });
 
   it("false for an empty string", async () => {
