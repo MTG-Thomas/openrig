@@ -329,6 +329,7 @@ export function locationKey(state: ViewState): string {
   if (state.section === "config" && state.configCategory) return `config:${state.configCategory}`;
   if (state.section === "scopes" && state.scopesSelected) return `scopes-slice:${state.scopesSelected.mission}/${state.scopesSelected.slice}`;
   if (state.section === "scopes" && state.scopesMission) return `scopes-mission:${state.scopesMission}`;
+  if (state.section === "scopes" && state.project) return `project:${state.project.id}`;
   const names = new Map(state.drill.map((seg) => [seg.kind, seg.name]));
   const leaf = state.drill.at(-1);
   if (!leaf || state.runningOf) return `section:${state.section}`;

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { DaemonClient } from "../src/daemon-client.js";
 import { hydrateSnapshot } from "../src/hydrate.js";
-import { createViewState, emptySnapshot } from "../src/state.js";
+import { createViewState, emptySnapshot, computeExplorerRows } from "../src/state.js";
 import { renderScreen } from "../src/render.js";
 import { parseCommand } from "../src/grammar.js";
 import { demoSnapshot } from "../src/demo-data.js";
@@ -40,6 +40,7 @@ it.each([[140, 42], [80, 24]])("retains exact project through equal-ID work, fil
   view.dispatch(parseCommand("project b"));
   expect(text()).toContain("Reading selected project"); expect(text()).not.toContain("a unique intent");
   await refresh(); expect(text()).toContain("PROJECT b"); expect(view.get().scopesMission).toBeNull();
+  expect(computeExplorerRows(view.get(), snap)[view.get().selection]?.key).toBe("project:b");
   view.dispatch({ type: "back" }); await refresh(); expect(view.get().project?.id).toBe("a"); expect(view.get().scopesSelected?.slice).toBe("01-story");
   unavailable = true; await refresh(); expect(text()).toContain("SPEC unavailable"); expect(text()).not.toContain("a unique intent");
   expect(requests.every(r => r.startsWith("GET "))).toBe(true);
