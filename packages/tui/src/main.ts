@@ -8,7 +8,7 @@ import { resolveTimeZone } from "./time.js";
 // keystrokes ARE the keyboard adapter.
 //
 //   openrig-tui [--instance <id>] [--socket <path>] [--url <daemon>] [--demo]
-import { createViewState, computeExplorerRows, emptySnapshot } from "./state.js";
+import { createViewState, computeExplorerRows, emptySnapshot, locationKey } from "./state.js";
 import { parseCommand } from "./grammar.js";
 import { filterPalette, paletteExecuteLine } from "./commands/palette.js";
 import { COMMAND_REGISTRY, currentCommandContext } from "./commands/registry.js";
@@ -127,6 +127,7 @@ async function run(): Promise<void> {
   let inputRevision = 0;
   let drawnScope = pageReadKey(view.get());
   let drawnSnapshot = snapshot;
+  let drawnSettled = false;
   let activityEvents: ReturnType<typeof subscribeActivityEvents> | null = null;
   function enableLive(): boolean {
     if (!live || !client || startup?.state.connection !== "up") return false;
@@ -146,14 +147,16 @@ async function run(): Promise<void> {
     if (live) {
       const next = live.snapshot();
       const scope = pageReadKey(view.get());
-      if (next !== drawnSnapshot && scope === drawnScope && live.load().settled) {
-        const oldKey = computeExplorerRows(view.get(), snapshot)[view.get().selection]?.key;
+      if (next !== drawnSnapshot && live.load().settled) {
+        const oldKey = scope === drawnScope && drawnSettled
+          ? computeExplorerRows(view.get(), snapshot)[view.get().selection]?.key
+          : locationKey(view.get());
         const rows = computeExplorerRows(view.get(), next);
         const index = oldKey ? rows.findIndex(row => row.key === oldKey) : -1;
         const selection = index >= 0 ? index : Math.min(view.get().selection, Math.max(0, rows.length - 1));
         if (selection !== view.get().selection) view.dispatch({ type: "select", index: selection, rowCount: rows.length });
       }
-      drawnScope = scope; drawnSnapshot = next;
+      drawnScope = scope; drawnSnapshot = next; drawnSettled = live.load().settled;
     }
     if (live) snapshot = { ...live.snapshot(),
       ...(!liveEnabled ? { readErrors: [`Live data not loaded · connection ${startup?.state.connection ?? "probing"} · L Local reading · S Startup`] } : {}),
