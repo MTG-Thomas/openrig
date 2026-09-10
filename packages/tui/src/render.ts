@@ -1,3 +1,4 @@
+import { attentionLines } from "./attention/attention-model.js";
 import { fileLines, externalLines, fileTargetForPath, referenceLines, referenceAction } from "./reading.js";
 import { DEFAULT_TIME_ZONE, displayTime } from "./time.js";
 import { startupLines, type StartupState } from "./startup.js";
@@ -1073,43 +1074,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     return wrapDetailLines(lines, contentWidth);
   }
 
-  if (state.section === "needs") {
-    lines.push({ text: "NEEDS-YOU" });
-    for (const item of snap.needs) {
-      // open/navigate is the ONLY in-TUI action (B3): the click target joins
-      // the item's session back to topology; unresolvable targets never
-      // advertise a control that can only fail.
-      lines.push(needsLine(item.source === "agent" ? "  ☐ " : "  ⚑ ", item, snap));
-    }
-    if (snap.needs.length === 0 && snap.humanQueueProbed) lines.push({ text: "  (no fleet attention items right now)" });
-    if (snap.hostsDown.length > 0) {
-      // composed BESIDE the items (a separate shipped read), never into the item shape
-      lines.push({ text: "" });
-      lines.push({ text: "  hosts/rigs down:" });
-      // NB: glyphs here must be single-cell — U+26D4 ⛔ is emoji-width (2 cells)
-      // and wraps a full-width padded line, shearing every row below it.
-      for (const h of snap.hostsDown)
-        lines.push({ text: `  ✖ ${alignedRow([[h.hostId, 28], [h.status, 26]])} ${h.error ?? ""}`.trimEnd() });
-    }
-    lines.push({ text: "" });
-    if (!snap.humanQueueProbed) {
-      if (motion.loading) {
-        // region discipline (max ONE persistent animation): while a derived ⚑
-        // item pulses on this page, the pending spinner degrades to the honest
-        // static dot instead of animating beside it
-        const pulseVisible = snap.needs.some((item) => item.source === "derived") && !motion.reduced;
-        const spin = pulseVisible ? "·" : motion.frame;
-        if (!pulseVisible && !motion.reduced) motion.used = true;
-        lines.push({ text: `  ${spin} human-queue: not yet known (read pending)` });
-      } else {
-        // round-5 (guard): settled-unprobed is a static truth (hosts down or
-        // registry unavailable) — "(read pending)" would be a false claim
-        lines.push({ text: "  human-queue: not yet known (hosts unreachable or registry unavailable)" });
-      }
-    } else if (!snap.needs.some((item) => item.source === "agent"))
-      lines.push({ text: "  human-queue: no items (proven empty — surfacing adoption pending)" });
-    return lines;
-  }
+  if (state.section === "needs") return attentionLines(state, snap, contentWidth);
   if (state.section === "scopes") {
     const catalog = snap.projects;
     if (!state.project && catalog !== undefined) return wrapDetailLines([
@@ -1668,7 +1633,7 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
       lines.push(pad(`${mark} ${label}${alias}  ${tail}`, cols));
     }
   }
-  const sectionTitle = { topology: "TOPOLOGY", specs: "SPECS", scopes: "PROJECTS", needs: "NEEDS-YOU" }[state.section] ?? state.section.toUpperCase();
+  const sectionTitle = { topology: "TOPOLOGY", specs: "SPECS", scopes: "PROJECTS", needs: "ATTENTION" }[state.section] ?? state.section.toUpperCase();
   // active-pane emphasis (k9s-class chrome): the focused pane's title is bracketed
   const explorerTitle = state.focusedPane === "explorer" ? "{ EXPLORER }" : "EXPLORER";
   const contentTitle = state.focusedPane === "content" ? `{ ${sectionTitle} }` : sectionTitle;

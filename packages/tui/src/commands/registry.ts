@@ -84,6 +84,7 @@ function drillEntry(resource: ResourceKind): CommandEntry {
 }
 
 export const COMMAND_REGISTRY: readonly CommandEntry[] = [
+  { name: "attention", aliases: ["needs"], args: "", description: "inspect human requests and outcome/health updates", context: "standard", sample: "attention", build: () => ({ type: "jump", section: "needs" }) },
   { name: "read", aliases: [], args: "<root>/<path>[#heading]", description: "read a current file within an explicitly configured root", context: "standard", sample: "read workspace/README.md", complete: ({ snapshot }) => (snapshot.fileRoots ?? []).map((root) => `${root.name}/`), build: (value) => {
     const slash = value.indexOf("/");
     if (slash < 1 || slash === value.length - 1) return { type: "error", message: "read needs <root>/<path>[#heading] from the configured readable roots" };
