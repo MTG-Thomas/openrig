@@ -32,8 +32,8 @@ export interface TerminalOpenResult {
   provider: string;
   ok: boolean;
   opened: string[];
-  absent: unknown[];
-  degraded: unknown[];
+  absent: Array<{ seat: string; reason: string }>;
+  degraded: Array<{ seat: string; reason: string }>;
   pages: number;
   error?: string;
   code?: string;
@@ -277,10 +277,16 @@ export class DaemonClient {
 
   // --- drive-structure writes (BR-8: EXISTING contracts only; the ONLY two) ---
   /** the web's TerminalLauncher contract: POST /api/terminal/open {view} */
-  async openTerminal(view: string): Promise<TerminalOpenResult> {
-    const result = (await this.post(`/api/terminal/open`, { view })) as TerminalOpenResult;
+  async terminalViews(): Promise<{ catalog?: import("./terminals/terminal-model.js").TerminalEntry[] }> {
+    return await this.get("/api/terminal/views?detail=1") as { catalog?: import("./terminals/terminal-model.js").TerminalEntry[] };
+  }
+  async previewTerminal(view: string): Promise<import("./terminals/terminal-model.js").TerminalPreview> {
+    return await this.get(`/api/terminal/preview?view=${encodeURIComponent(view)}`) as import("./terminals/terminal-model.js").TerminalPreview;
+  }
+  async openTerminal(view: string, expectedPlan?: string): Promise<TerminalOpenResult> {
+    const result = (await this.post(`/api/terminal/open`, { view, ...(expectedPlan !== undefined ? { expectedPlan } : {}) })) as TerminalOpenResult;
     if (!Array.isArray(result.opened) || result.opened.length === 0) {
-      throw new Error(`terminal open failed: ${result.error ?? result.code ?? "no tiles opened"}`);
+      throw new Error(`terminal open failed: ${result.error ?? result.code ?? ([...new Set(result.degraded?.map(m => m.reason))].join("; ") || "no tiles opened")}`);
     }
     return result;
   }

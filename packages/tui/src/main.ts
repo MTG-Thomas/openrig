@@ -360,16 +360,18 @@ async function run(): Promise<void> {
     }
     try {
       if (action.act === "open-terminal") {
-        const result = await client.openTerminal(action.view);
+        const result = await client.openTerminal(action.view, action.expectedPlan);
         view.dispatch({
-          type: "notice",
-          message: `terminal opened: ${action.view} (${result.opened.length} opened, ${result.absent.length} absent, ${result.degraded.length} degraded)`,
+          type: "terminal-result", view: action.view,
+          message: `${result.absent.length || result.degraded.length ? "Partial Open" : "Opened"}: ${result.opened.length} opened, ${result.absent.length} absent, ${result.degraded.length} degraded · ${action.view}${result.error ? ` · ${result.error}` : ""}${result.degraded.map(m => ` · ${m.seat}: ${m.reason}`).join("")}`,
         });
+        if (action.expectedPlan === undefined) view.dispatch({ type: "notice", message: `${result.opened.length} terminals opened; ${result.absent.length} absent; ${result.degraded.length} degraded` });
       } else {
         const result = await client.launchNode(action.rigId, action.agent);
         view.dispatch({ type: "notice", message: launchNodeNotice(action.agent, result) });
       }
     } catch (err) {
+      if (action.act === "open-terminal") view.dispatch({ type: "terminal-result", view: action.view, message: err instanceof Error ? err.message : String(err) });
       view.dispatch({ type: "notice", message: err instanceof Error ? err.message : String(err) });
     }
     draw();

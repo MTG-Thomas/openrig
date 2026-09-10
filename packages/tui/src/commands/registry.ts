@@ -84,6 +84,8 @@ function drillEntry(resource: ResourceKind): CommandEntry {
 }
 
 export const COMMAND_REGISTRY: readonly CommandEntry[] = [
+  { name: "terminals", aliases: [], args: "", description: "browse Saved and Derived terminal views; preview before explicit Open", context: "standard", sample: "terminals", build: () => ({ type: "jump", section: "terminals" }) },
+  { name: "terminal-preview", aliases: [], args: "<view>", description: "passively preview a saved:id or rig:name terminal view", context: "standard", sample: "terminal-preview rig:example", build: view => view ? ({ type: "terminal-preview", view }) : ({ type: "error", message: "terminal-preview needs a view" }) },
   { name: "read", aliases: [], args: "<root>/<path>[#heading]", description: "read a current file within an explicitly configured root", context: "standard", sample: "read workspace/README.md", complete: ({ snapshot }) => (snapshot.fileRoots ?? []).map((root) => `${root.name}/`), build: (value) => {
     const slash = value.indexOf("/");
     if (slash < 1 || slash === value.length - 1) return { type: "error", message: "read needs <root>/<path>[#heading] from the configured readable roots" };
