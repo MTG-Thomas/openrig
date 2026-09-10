@@ -505,21 +505,23 @@ describe("S19 MR4 — detail pane shows the full absolute working directory", ()
   });
 });
 
-describe("S19 MR5 — chrome: blinking cursor + guide contrast", () => {
-  it("the command bar's blinking insertion cell is visible for EMPTY and non-empty input (guard MR5a: pre-typing discoverability)", () => {
+describe("Command focus + guide contrast", () => {
+  it("the command bar's insertion cell is visible for EMPTY and non-empty input (guard MR5a: pre-typing discoverability)", () => {
     const snap = graphSnap();
     const s = makeStore(snap);
     // EMPTY buffer: the cursor shows the bar is ready BEFORE the first key
     const empty = renderScreen(s.get(), snap, { cols: 120, rows: 30 }, "");
     expect(empty.lines[0]).toContain("cmd ▸ ▊");
     const styledE = stylizeLines(empty, createStyle("truecolor"));
-    expect(styledE[0]!, "blink on the empty-buffer insertion cell").toMatch(/\x1b\[[0-9;]*5;?[0-9;]*m▊/);
+    expect(styledE[0]).toContain("▊");
+    expect(empty.commandMotionActive).toBe(true);
     styledE.forEach((l, i) => expect(stripAnsi(l)).toBe(empty.lines[i]));
     // NON-EMPTY: the cursor rides the end of the text
     const composing = renderScreen(s.get(), snap, { cols: 120, rows: 30 }, "rig ope");
     expect(composing.lines[0]).toContain("rig ope▊");
     const styledC = stylizeLines(composing, createStyle("truecolor"));
-    expect(styledC[0]!, "SGR blink (5) on the cursor cell").toMatch(/\x1b\[[0-9;]*5;?[0-9;]*m▊/);
+    expect(styledC[0]).toContain("▊");
+    expect(composing.commandMotionActive).toBe(false);
     styledC.forEach((l, i) => expect(stripAnsi(l)).toBe(composing.lines[i]));
   });
 

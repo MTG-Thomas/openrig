@@ -1,3 +1,5 @@
+import { helpScreen } from "./commands/help.js";
+import { commandFocusVisible } from "./motion.js";
 import { fileLines, externalLines, fileTargetForPath, referenceLines, referenceAction } from "./reading.js";
 import { DEFAULT_TIME_ZONE, displayTime } from "./time.js";
 import { startupLines, type StartupState } from "./startup.js";
@@ -10,10 +12,8 @@ import { connectionsLines } from "./connections/connections-model.js";
 // SAME semantic actions commands produce (PIN 1). Isolated seam: a substrate
 // swap touches only this module (spike verdict revisit trigger).
 import { computeExplorerRows, findAgent, findSpec, findAgentBySession, agentsRunningSpec, agentsRunningSpecTargets, specDetailArrowsScroll } from "./state.js";
-import { filterPalette } from "./commands/palette.js";
 import { scopesContentLines } from "./scopes/scopes-model.js";
 import { executionContentLines, executionSliceStripLines } from "./execution/execution-model.js";
-import { COMMAND_REGISTRY } from "./commands/registry.js";
 import { navigatorDisplay } from "./navigator.js";
 import { renderGraphStyle } from "./topology/render-graph.js";
 import { buildPulseModel } from "./pulse/pulse-model.js";
@@ -1337,21 +1337,7 @@ function renderPulseScreen(state: ViewState, snap: FleetSnapshot, options: Rende
     for (const candidate of options.completion.candidates.slice(0, 4)) lines.push(pad(`  ${candidate}`, cols));
     if (options.completion.candidates.length > 4) lines.push(pad("  … keep typing to narrow matches", cols));
   }
-  // REGISTRY I3 — the palette overlay: fuzzy rows over the ONE registry; unavailable
-  // entries render DIMMED-WITH-REASON, never hidden (PM pin); bounded height.
-  if (state.palette) {
-    const rows = filterPalette(state.palette.query, COMMAND_REGISTRY, options.commandContext ?? "standard");
-    const sel = Math.min(state.palette.selection, Math.max(0, rows.length - 1));
-    lines.push(pad(`? ${state.palette.query}▊  (${rows.length} commands · ↑↓ · ⏎ run · esc close)`, cols));
-    for (let i = 0; i < Math.min(rows.length, 8); i += 1) {
-      const r = rows[i]!;
-      const mark = i === sel ? "▸" : " ";
-      const label = `${r.entry.name}${r.entry.args ? " " + r.entry.args : ""}`;
-      const alias = r.entry.aliases.length ? ` (${r.entry.aliases.join(",")})` : "";
-      const tail = r.available ? r.entry.description : `${r.entry.description} — unavailable: ${r.reason}`;
-      lines.push(pad(`${mark} ${label}${alias}  ${tail}`, cols));
-    }
-  }
+
   const explorerTitle = state.focusedPane === "explorer" ? "{ EXPLORER }" : "EXPLORER";
   const contentTitle = state.focusedPane === "content" ? "{ PULSE }" : "PULSE";
   lines.push(paneRule(cols, explW, "top", explorerTitle, contentTitle));
@@ -1562,6 +1548,21 @@ function crashCartShell(
 }
 
 export function renderScreen(state: ViewState, snap: FleetSnapshot, options: RenderOptions = {}, inputLine = ""): Screen {
+  if (state.palette) return helpScreen(state.palette, options.commandContext ?? "standard", options.cols ?? 120, options.rows ?? 32);
+  const screen = renderBody(state, snap, options, inputLine);
+  const commandReady = !options.startup?.open && !options.restore && !options.unavailable && (!options.daemonState || options.daemonState === "up");
+  if (commandReady) {
+    const reduced = reducedMotion();
+    if (!commandFocusVisible(options.nowMs ?? 0, inputLine.length > 0, reduced)) {
+      const line = screen.lines[0]!;
+      screen.lines[0] = line.slice(0, 6) + " " + line.slice(7);
+    }
+    screen.commandMotionActive = !reduced && inputLine.length === 0;
+  }
+  return screen;
+}
+
+function renderBody(state: ViewState, snap: FleetSnapshot, options: RenderOptions = {}, inputLine = ""): Screen {
   const { cols = 120, rows = 32, nowMs = 0 } = options;
   const fullReading = !options.startup?.open && (!!state.file || !!state.externalUrl || (cols <= 90 && state.section === "specs" && state.drill.length > 0));
   const explW = fullReading ? 0 : explorerWidth(cols);
@@ -1648,28 +1649,14 @@ export function renderScreen(state: ViewState, snap: FleetSnapshot, options: Ren
   // current insertion point for EMPTY and non-empty buffers alike — the
   // shell accepts typing from the empty state, so the honest readiness
   // affordance must show BEFORE the first key (no new focus state; stylize
-  // gives the cell SGR blink; zero effect on hit geometry).
+  // paints the cell; the shared motion clock controls its visibility).
   lines.push(pad(`cmd ▸ ${inputLine}▊${inputLine ? "" : "  Tab complete · ? help · timezone"}`, cols));
   if (options.completion) {
     lines.push(pad(options.completion.message, cols));
     for (const candidate of options.completion.candidates.slice(0, 4)) lines.push(pad(`  ${candidate}`, cols));
     if (options.completion.candidates.length > 4) lines.push(pad("  … keep typing to narrow matches", cols));
   }
-  // REGISTRY I3 — the palette overlay: fuzzy rows over the ONE registry; unavailable
-  // entries render DIMMED-WITH-REASON, never hidden (PM pin); bounded height.
-  if (state.palette) {
-    const rows = filterPalette(state.palette.query, COMMAND_REGISTRY, options.commandContext ?? "standard");
-    const sel = Math.min(state.palette.selection, Math.max(0, rows.length - 1));
-    lines.push(pad(`? ${state.palette.query}▊  (${rows.length} commands · ↑↓ · ⏎ run · esc close)`, cols));
-    for (let i = 0; i < Math.min(rows.length, 8); i += 1) {
-      const r = rows[i]!;
-      const mark = i === sel ? "▸" : " ";
-      const label = `${r.entry.name}${r.entry.args ? " " + r.entry.args : ""}`;
-      const alias = r.entry.aliases.length ? ` (${r.entry.aliases.join(",")})` : "";
-      const tail = r.available ? r.entry.description : `${r.entry.description} — unavailable: ${r.reason}`;
-      lines.push(pad(`${mark} ${label}${alias}  ${tail}`, cols));
-    }
-  }
+
   const sectionTitle = { topology: "TOPOLOGY", specs: "SPECS", scopes: "PROJECTS", needs: "NEEDS-YOU" }[state.section] ?? state.section.toUpperCase();
   // active-pane emphasis (k9s-class chrome): the focused pane's title is bracketed
   const explorerTitle = state.focusedPane === "explorer" ? "{ EXPLORER }" : "EXPLORER";

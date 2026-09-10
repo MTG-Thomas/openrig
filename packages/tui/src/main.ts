@@ -146,7 +146,7 @@ async function run(): Promise<void> {
     lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     if (startup?.state.local) startup.state.local.scroll = Math.min(startup.state.local.scroll, lastScreen.contentMaxOffset);
     // Startup has its own selection/scroll; keep the underlying reader bookmark intact.
-    if (!startup?.state.open && (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length)) {
+    if (!startup?.state.open && !view.get().palette && (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length)) {
       view.dispatch({ type: "layout", contentMaxOffset: lastScreen.contentMaxOffset, contentTargetCount: lastScreen.contentTargets.length });
       lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
     }
@@ -156,7 +156,7 @@ async function run(): Promise<void> {
     // padded row and scroll the entire frame; restore normal wrapping after paint.
     process.stdout.write("\x1b[?7l\x1b[H" + stylizeLines(lastScreen, style).map((l) => "\x1b[2K" + l).join("\r\n") + "\x1b[?7h");
     if (motionTimer) clearTimeout(motionTimer);
-    motionTimer = lastScreen.motionActive ? setTimeout(draw, MOTION_FRAME_MS) : null;
+    motionTimer = lastScreen.motionActive || lastScreen.commandMotionActive ? setTimeout(draw, MOTION_FRAME_MS) : null;
   }
 
   // 5.2 crash-cart: probe the daemon-down verdict via the shipped `rig crash-cart --json` verb (its
@@ -420,10 +420,11 @@ async function run(): Promise<void> {
         continue;
       }
       if (!view.get().palette && ev.type === "char" && inputLine === "") {
+        if (ev.ch === "?") { view.dispatch({ type: "palette-open" }); continue; }
         if (ev.ch === "S") { void startup?.open(); continue; }
         if (ev.ch === "L" && startup) { startup.state.open = true; void startup.key("L"); continue; }
       }
-      if (crashCartOpts.unavailable && !crashCartOpts.restore) {
+      if (crashCartOpts.unavailable && !crashCartOpts.restore && !view.get().palette) {
         if (ev.type === "char" && ev.ch === "q") { void shutdown(); return; }
         if (ev.type === "char") {
           const action = resolveCrashCartKey(ev.ch, crashCartOpts);

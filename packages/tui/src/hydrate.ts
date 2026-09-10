@@ -401,17 +401,21 @@ export async function hydrateSnapshot(
   // CONFIG never invokes fleet aggregation, host probes, queue enrichment or provider checks.
   // Failures replace earlier values with an explicit unavailable state.
   if (viewContext?.section === "config") {
+    let configError: string | undefined;
     const passive = async <T>(label: string, read: () => Promise<unknown>): Promise<T | null> => {
       try { return await read() as T; } catch { readErrors.push(`${label}: unavailable`); return null; }
     };
     const [config, controlPlane, connections] = await Promise.all([
-      passive<ConfigRead>("CONFIG", () => client.configBrowser()),
+      passive<ConfigRead>("CONFIG", () => client.configBrowser().catch(error => {
+        configError = error instanceof Error ? error.message : "Read failed; cause not identified.";
+        throw error;
+      })),
       passive<ControlPlaneRead>("control plane", () => client.health()),
       passive<ConnectionsRead>("Slack observation", () => client.connections()),
     ]);
     let daemonTarget = "unreported";
     try { daemonTarget = new URL(client.baseUrl).origin; } catch { /* no raw invalid target */ }
-    return { ...emptySnapshot(), config, controlPlane, connections, daemonTarget, hydratedAt: new Date().toISOString(), readErrors };
+    return { ...emptySnapshot(), config, configError, controlPlane, connections, daemonTarget, hydratedAt: new Date().toISOString(), readErrors };
   }
 
   const readingOnly = viewContext?.section === "specs";

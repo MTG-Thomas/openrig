@@ -63,7 +63,14 @@ function parseText(text: string, final: boolean): { events: InputEvent[]; remain
           i += 3;
           continue;
         }
+        // A complete unsupported terminal key (Home/End/Delete, modifiers, etc.)
+        // is one event, never a bare Escape followed by command text.
+        const sequence = tail.match(/^\x1b\[[0-?]*[ -/]*[@-~]/);
+        if (sequence) { i += sequence[0].length; continue; }
+        if (!final && /^\x1b\[[0-?]*[ -/]*$/.test(tail)) break;
       }
+      if (!final && tail === "\x1bO") break;
+      if (/^\x1bO[@-~]/.test(tail)) { i += 3; continue; }
       events.push({ type: "key", key: "escape" });
       i += 1;
       continue;

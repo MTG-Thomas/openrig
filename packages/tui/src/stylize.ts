@@ -133,8 +133,15 @@ export function stylizeLines(screen: Screen, s: Style): string[] {
     if (index === 0) {
       const m = line.match(/^cmd ▸ (.*)(▊)(.*)$/);
       if (m)
-        return `${s.paint("accent", "cmd ▸", { bold: true })} ${s.paint("bright", m[1] ?? "")}${m[2] ? s.paint("accent", "▊", reducedMotion() ? {} : { blink: true }) : ""}${s.paint("dim", m[3] ?? "")}`;
+        return `${s.paint("accent", "cmd ▸", { bold: true })} ${s.paint("bright", m[1] ?? "")}${m[2] ? s.paint("accent", "▊") : ""}${s.paint("dim", m[3] ?? "")}`;
+      if (line.startsWith("cmd ▸ ")) return s.paint("accent", "cmd ▸", { bold: true }) + s.paint("dim", line.slice(5));
+      if (line.startsWith("help ▸ ")) return s.paint("accent", line, { bold: true });
       return line;
+    }
+    if (screen.explorerWidth === 0 && screen.segRows?.[index + 1]) {
+      const segs = screen.segRows[index + 1]!;
+      const text = segs.map(seg => s.paint(seg.token ?? "bright", seg.text, { bold: seg.bold, bg: seg.bg })).join("");
+      return text + line.slice(segs.reduce((length, seg) => length + seg.text.length, 0));
     }
     if (/^[─━┌┐└┘├┤┬┴┼╋]/.test(line) && /[─━]{4}/.test(line)) return paintRule(line, s);
     if (/\bq quit\b/.test(line)) {

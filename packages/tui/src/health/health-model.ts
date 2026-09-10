@@ -1,5 +1,5 @@
 import { DEFAULT_TIME_ZONE, displayTime } from "../time.js";
-import { sectionRule, type ContentLine } from "../detail.js";
+import { sectionRule, wrapDetailLines, type ContentLine } from "../detail.js";
 import type { Action, FleetSnapshot, HealthEvidenceReference, HealthRecord } from "../types.js";
 import type { Token } from "../theme.js";
 
@@ -42,9 +42,8 @@ function tokenFor(record: HealthRecord): Token {
 }
 
 function conditionLabel(record: HealthRecord): string | null {
-  if (record.status === "indeterminate") return "INDETERMINATE";
   if (record.freshness.state === "stale") return "STALE";
-  if (record.freshness.state === "unavailable" || record.freshness.state === "contradictory") return "INDETERMINATE";
+  if (record.status === "indeterminate" || record.freshness.state === "unavailable" || record.freshness.state === "contradictory") return "Unknown";
   if (record.status === "cleared") return "CLEARED";
   return null;
 }
@@ -122,15 +121,16 @@ function scopedEmptyLabel(scope: HealthDisplayScope): string {
 function unavailableLine(width: number, reason = "canonical health records could not be read"): ContentLine {
   return fitLine([
     { text: "HEALTH  ", token: "bright", bold: true },
-    { text: "UNAVAILABLE", token: "warn", bold: true },
+    { text: "Unknown", token: "warn", bold: true },
     { text: ` · ${reason}`, token: "dim" },
   ], width);
 }
 
 function unavailableReason(snap: FleetSnapshot, scope: HealthDisplayScope): string | null {
-  if (!scope.local) return "canonical findings are not served for this remote instance";
-  if (!snap.health || snap.health.availability !== "loaded") return "canonical health records could not be read";
-  if (scope.kind === "seat" && scope.seatId === null) return "stable seat identity was not served; findings cannot be scoped";
+  if (!scope.local) return "Unavailable · remote instance findings are not served";
+  if (!snap.health) return "Not assessed · health has not been loaded in this view";
+  if (snap.health.availability !== "loaded") return "Unavailable · canonical health records could not be read";
+  if (scope.kind === "seat" && scope.seatId === null) return "Unavailable · stable seat identity was not served; findings cannot be scoped";
   return null;
 }
 
@@ -165,7 +165,7 @@ export function healthSummaryLine(snap: FleetSnapshot, scope: HealthDisplayScope
     { text: `CRIT ${counts.critical}`, token: counts.critical ? "error" : "dim", bold: counts.critical > 0 },
     { text: `  WARN ${counts.warning}`, token: counts.warning ? "warn" : "dim", bold: counts.warning > 0 },
     ...(!compact ? [{ text: `  INFO ${counts.info}`, token: counts.info ? "info" as const : "dim" as const }] : []),
-    ...(indeterminate > 0 ? [{ text: compact ? ` · INDET ${indeterminate}` : ` · INDETERMINATE ${indeterminate}`, token: "warn" as const, bold: true }] : []),
+    ...(indeterminate > 0 ? [{ text: ` · Unknown ${indeterminate}`, token: "warn" as const, bold: true }] : []),
     ...(categoryText ? [{ text: compact ? ` · TYPE ${categoryText}` : ` · BY TYPE ${categoryText}`, token: "bright" as const }] : []),
     { text: ` · ${stateLabel(top)} ${top.summary}`, token: tokenFor(top) },
     ...(snap.health?.truncated ? [{ text: " · PARTIAL", token: "warn" as const, bold: true }] : []),
@@ -203,7 +203,7 @@ function healthTableRow(record: HealthRecord, snap: FleetSnapshot, width: number
 
 export function healthListLines(snap: FleetSnapshot, scope: HealthDisplayScope, width: number): ContentLine[] {
   const unavailable = unavailableReason(snap, scope);
-  if (unavailable) return [unavailableLine(width, unavailable)];
+  if (unavailable) return wrapDetailLines([{ text: `HEALTH  Unknown · ${unavailable}` }], width);
   const records = healthRecordsForScope(snap, scope);
   if (records.length === 0) return [emptyLine(scope, width)];
   const { wide, sevWidth, signalWidth, scopeWidth, ageWidth, confWidth, evidenceWidth } = healthColumnWidths(width);
@@ -243,21 +243,11 @@ function evidenceText(evidence: HealthEvidenceReference): string {
 
 function wrap(label: string, text: string, width: number, token: Token = "bright"): ContentLine[] {
   const prefix = `  ${`${label}:`.padEnd(12)} `;
-  const continuation = " ".repeat(prefix.length);
-  const room = Math.max(8, width - prefix.length);
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  const chunks: string[] = [];
-  let line = "";
-  for (const word of words) {
-    if (!line) line = word;
-    else if (line.length + word.length + 1 <= room) line += ` ${word}`;
-    else { chunks.push(line); line = word; }
-  }
-  if (line) chunks.push(line);
-  return (chunks.length ? chunks : ["—"]).map((chunk, index) => fitLine([
-    { text: index === 0 ? prefix : continuation, token: "dim" },
-    { text: chunk, token },
-  ], width));
+  return wrapDetailLines([{ text: prefix + (text.trim() || "—") }], width).map((line, index) => ({
+    ...line, segs: index === 0 && line.text.startsWith(prefix)
+      ? [{ text: prefix, token: "dim" }, { text: line.text.slice(prefix.length), token }]
+      : [{ text: line.text, token }],
+  }));
 }
 
 export function healthDetailLines(snap: FleetSnapshot, findingId: string, width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
@@ -268,6 +258,8 @@ export function healthDetailLines(snap: FleetSnapshot, findingId: string, width:
     { text: "" },
     sectionRule("SIGNAL", width),
     ...wrap("summary", record.summary, width),
+    ...wrap("assessment", record.status === "indeterminate" || record.freshness.state !== "fresh" ? "Unknown" : record.status, width),
+    ...(record.indeterminateReason ? wrap("reason", record.indeterminateReason, width, "warn") : []),
     ...wrap("finding id", record.id, width),
     ...wrap("scope", scopeName(record, snap), width),
     ...wrap("category", record.category, width),

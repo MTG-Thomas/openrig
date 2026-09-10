@@ -63,11 +63,12 @@ describe("motion wiring + region discipline", () => {
     expect(body2).not.toMatch(/— \(not yet known\)[^\n]*█/); // no fabricated bar
   });
 
-  it("max ONE persistent animation in the command-bar region: exactly the cursor blink", () => {
+  it("typing keeps command focus steady without terminal-dependent blink", () => {
     const s = createViewState({ instanceId: "m4", getSnapshot: () => snap });
     const screen = renderScreen(s.get(), snap, { cols: 140, rows: 34 }, "rig x");
     const styled = stylizeLines(screen, createStyle("truecolor"));
-    expect((styled[0]!.match(/\[[0-9;]*5;[0-9;]*m|\[5m/g) ?? []).length).toBe(1);
+    expect((styled[0]!.match(/\[[0-9;]*5;[0-9;]*m|\[5m/g) ?? []).length).toBe(0);
+    expect(screen.commandMotionActive).toBe(false);
   });
 });
 

@@ -1,4 +1,4 @@
-import { fieldLine, wrapDetailLines, type ContentLine } from "../detail.js";
+import { fieldLine, sectionRule, wrapDetailLines, type ContentLine } from "../detail.js";
 import type { FleetSnapshot, ViewState } from "../types.js";
 
 export interface ConfigEntry {
@@ -121,18 +121,26 @@ export function configListLines(entries: ConfigEntry[], width: number, selectedK
   const room = Math.max(20, width);
   const labelWidth = Math.max(8, Math.floor(room * .5) - 2);
   const valueWidth = Math.max(5, room - labelWidth - 16);
-  return entries.map((e) => ({ text: (e.key === selectedKey ? "> " : "  ")
-    + clip(configLabel(e), labelWidth).padEnd(labelWidth) + " "
-    + clip(configValue(e), valueWidth).padEnd(valueWidth) + " " + clip(e.source, 11) }));
+  return entries.map((e) => {
+    const segs: NonNullable<ContentLine["segs"]> = [
+      { text: (e.key === selectedKey ? "> " : "  ") + clip(configLabel(e), labelWidth).padEnd(labelWidth) + " ", token: "bright" },
+      { text: clip(configValue(e), valueWidth).padEnd(valueWidth), token: e.visibility === "shown" ? "accentBright" : "dim", bold: true },
+      { text: " " + clip(e.source, 11), token: "dim" },
+    ];
+    return { text: segs.map(s => s.text).join(""), segs };
+  });
 }
 export function configDetailLines(read: ConfigRead | null, key: string, width: number): ContentLine[] {
   const e = read?.entries.find((entry) => entry.key === key);
   if (!e) return wrapDetailLines([{ text: "Setting unavailable after refresh. Return to the list." }], width);
   const source = read?.sources.find((s) => s.id === e.group);
-  const lines: ContentLine[] = [{ text: configLabel(e) }, { text: "" },
+  const lines: ContentLine[] = [sectionRule(configLabel(e), width),
     fieldLine({ label: "key", value: e.key }), fieldLine({ label: "scope", value: e.scope }),
     fieldLine({ label: "value", value: configValue(e) }), fieldLine({ label: "default", value: configValue(e, true) }),
     fieldLine({ label: "source", value: e.source + (source ? " · " + source.state : "") }),
+    fieldLine({ label: "override", value: e.source === "env" ? "Environment override (above file and default)"
+      : e.source === "file" ? "File setting (above default)" : e.source === "default" ? "Default; no override reported"
+      : "Not reported by this source" }),
     fieldLine({ label: "application", value: e.application })];
   if (e.reason) lines.push(fieldLine({ label: "visibility", value: e.reason }));
   if (source) lines.push(fieldLine({ label: "source path", value: source.path ?? "Withheld / unavailable" }),
@@ -169,20 +177,23 @@ export function configLines(state: ViewState, snap: FleetSnapshot, width: number
   const name = read?.entries.find((e) => e.key === "host.name");
   const identity = snap.controlPlane?.selfHostId ?? (name ? configValue(name) : "Unreported");
   const heading: ContentLine[] = wrapDetailLines([
-    { text: category ? CONFIG_CATEGORIES.find((c) => c.id === category)?.label ?? "Settings" : "Your instance settings" },
+    sectionRule(category ? CONFIG_CATEGORIES.find((c) => c.id === category)?.label ?? "Settings" : "Your instance settings", width),
     { text: `${identity} · ${snap.daemonTarget ?? "target unreported"}` },
     { text: "Read only · resolved now; application not inferred" },
   ], width);
   if (!read) return [...heading, ...wrapDetailLines([
     { text: "" }, { text: "CONFIG unavailable. Refresh to try this daemon again." },
-    { text: "An older daemon may not support this view." },
+    { text: snap.configError ?? "The cause was not identified. Compatibility is unverified." },
     { text: "Optional diagnosis: rig status; rig --version; rig daemon logs" }, back,
   ], width)];
   if (!category) return [...heading, { text: "" }, ...[
     ["Where is my work?", "workspace.root"], ["Which context root?", "context.root"],
     ["Which timezone?", "ui.timezone"], ["How long between retries?", "queue.wake_retry_interval_seconds"],
     ["Are periodic snapshots on?", "snapshots.periodic.enabled"],
-  ].map(([label, key]) => ({ text: label!, action: { type: "config-setting" as const, key: key! } })),
+  ].flatMap(([label, key]) => {
+    const entry = read.entries.find(e => e.key === key);
+    return wrapDetailLines([{ text: `${label}  ${entry ? configValue(entry) : "Unavailable"}`, action: { type: "config-setting" as const, key: key! } }], width);
+  }),
   { text: "" }, { text: `Slack: ${snap.connections?.state ?? "unavailable"}` },
   { text: "Categories at left · / searches every setting" },
   { text: "Sources & coverage holds identity and exclusions", action: { type: "config-category", category: "sources" } }, back];
@@ -197,6 +208,7 @@ export function configLines(state: ViewState, snap: FleetSnapshot, width: number
   ], width));
   if (category === "display") lines.push(...wrapDetailLines([{ text: `Client timezone: ${state.timeZone} (selected at TUI start)` }], width));
   lines.push({ text: `${entries.length} settings${state.filter ? ` matching “${state.filter}”` : ""} · Enter opens full value/source` }, { text: "" });
+  lines.push({ text: "  SETTING / VALUE / SOURCE · env > file > default" });
   lines.push(...configListLines(entries, width).map((line, i) => ({ ...line, action: { type: "config-setting" as const, key: entries[i]!.key } })));
   if (!entries.length) lines.push({ text: "No matching settings. Escape clears search." });
   return lines;

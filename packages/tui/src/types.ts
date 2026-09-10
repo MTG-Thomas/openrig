@@ -336,6 +336,7 @@ export interface FleetSnapshot {
   fileRoots?: import("./reading.js").FileRoot[];
   specsLoaded?: boolean;
   config?: import("./config/config-model.js").ConfigRead | null;
+  configError?: string;
   connections?: import("./connections/connections-model.js").ConnectionsRead | null;
   controlPlane?: import("./connections/connections-model.js").ControlPlaneRead | null;
   daemonTarget?: string;
@@ -599,6 +600,8 @@ export interface Screen {
   /** true when this frame contains time-driven motion (spinner frame or an
    * un-expired flash) — the entry loop keeps redrawing while set */
   motionActive?: boolean;
+  /** Command readiness pulse is independent of content loading/progress. */
+  commandMotionActive?: boolean;
 }
 
 export type InputEvent =

@@ -10,6 +10,11 @@ export function reducedMotion(env: NodeJS.ProcessEnv = process.env): boolean {
   return env["OPENRIG_REDUCED_MOTION"] === "1" || env["REDUCED_MOTION"] === "1" || env["NO_MOTION"] === "1";
 }
 
+/** Quiet command focus: two seconds visible, one off; typing stays steady. */
+export function commandFocusVisible(nowMs: number, editing: boolean, reduced: boolean): boolean {
+  return editing || reduced || nowMs % 3000 < 2000;
+}
+
 const BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const LINE_FRAMES = ["|", "/", "-", "\\"];
 

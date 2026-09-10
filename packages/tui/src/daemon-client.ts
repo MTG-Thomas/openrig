@@ -106,10 +106,24 @@ export class DaemonClient {
 
   /** Running daemon identity. `selfHostId` may be absent on an older daemon. */
   async configBrowser() {
-    const data = await this.get("/api/config?view=browser") as Partial<import("./config/config-model.js").ConfigRead> | null;
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.baseUrl}/api/config?view=browser`, { headers: this.headers, signal: AbortSignal.timeout(5_000) });
+    } catch (error) {
+      const code = (error as { cause?: { code?: string } })?.cause?.code;
+      const reason = error instanceof Error && error.name === "TimeoutError" ? "Read timed out after 5 seconds."
+        : code === "ECONNREFUSED" ? "Connection refused by the displayed daemon target."
+        : code === "ENOTFOUND" ? "The displayed daemon hostname could not be resolved."
+        : "Read failed; the cause was not identified.";
+      throw new Error(reason);
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status} · ${res.status === 401 || res.status === 403 ? "Access denied by the displayed daemon."
+      : res.status === 404 ? "CONFIG browser endpoint was not found; version compatibility is unverified."
+      : "CONFIG could not be read; the cause was not identified."}`);
+    const data = await res.json().catch(() => null) as Partial<import("./config/config-model.js").ConfigRead> | null;
     // Older daemons ignore the view query and return raw settings; never render that response.
     if (!data || data.readOnly !== true || !Array.isArray(data.entries) || !Array.isArray(data.sources) || !Array.isArray(data.exclusions)) {
-      throw new Error("CONFIG browser unavailable");
+      throw new Error("Response did not contain the CONFIG browser contract; compatibility is unverified.");
     }
     return data;
   }

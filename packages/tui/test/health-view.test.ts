@@ -86,7 +86,7 @@ describe("fleet/system health TUI", () => {
 
     expect(text).toContain("ACTIVE");
     expect(text).toMatch(/CRIT\s+1\s+WARN\s+1/);
-    expect(text).toMatch(/INDET(?:ERMINATE)?\s+1/);
+    expect(text).toMatch(/Unknown\s+1/);
     expect(text).toMatch(/TYPE\s+context\s+2/i);
     expect(text.length).toBeLessThanOrEqual(width);
   });
@@ -167,7 +167,7 @@ describe("fleet/system health TUI", () => {
       [{ availability: "loaded", evaluatedAt: "2026-09-05T12:00:00.000Z", total: 0, truncated: false, records: [] }, /EMPTY.*not a healthy verdict/i],
       [{ availability: "unavailable", evaluatedAt: null, total: 0, truncated: false, records: [] }, /UNAVAILABLE/i],
       [{ availability: "loaded", evaluatedAt: "2026-09-05T12:00:00.000Z", total: 1, truncated: false, records: [record({ id: "stale", seatId: "node-guard", freshness: "stale", summary: "Stale source." })] }, /STALE/i],
-      [{ availability: "loaded", evaluatedAt: "2026-09-05T12:00:00.000Z", total: 1, truncated: false, records: [record({ id: "indeterminate", seatId: "node-guard", status: "indeterminate", summary: "Unknown source." })] }, /INDETERMINATE/i],
+      [{ availability: "loaded", evaluatedAt: "2026-09-05T12:00:00.000Z", total: 1, truncated: false, records: [record({ id: "indeterminate", seatId: "node-guard", status: "indeterminate", summary: "Unknown source." })] }, /Unknown/i],
     ] as const;
     for (const [health, expected] of cases) {
       const snap = healthSnapshot();
@@ -193,7 +193,7 @@ describe("fleet/system health TUI", () => {
     expect(stale).toContain("CRITICAL");
     expect(stale).toContain("STALE");
     expect(unknown).toContain("WARNING");
-    expect(unknown).toContain("INDETERMINATE");
+    expect(unknown).toContain("Unknown");
   });
 
   it("preserves plain geometry in color and freezes fully under reduced motion", () => {
