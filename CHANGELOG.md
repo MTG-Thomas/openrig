@@ -8,6 +8,30 @@ deprecations, and behavioral changes. Breaking changes are called out explicitly
 
 ---
 
+## [0.5.13] - 2026-09-10
+
+**Status**: release candidate, unpublished. Exact-cut substance review,
+release verification and publication remain pending; live adoption is separate.
+
+- Enter the TUI with useful Help, Skip and local intent reading even while
+  the daemon is unavailable or its state is unverified.
+- Choose a project, read its current sources and follow links, then return
+  to the same place without confusing projects that share a name.
+- Separate requests needing human action from updates in ATTENTION, and
+  inspect their source without implying approval.
+- Preview saved or derived terminal views before deliberately opening them;
+  navigate CONFIG, Help and health with readable values at narrow widths.
+- Choose scoped human-led or delegated oversight and retain current context,
+  assessment and action evidence without claiming improved behavior.
+- Update Git-backed context through an explicit merge that preserves local
+  authorship, conflicts and the distinction between selected and consumed bytes.
+
+Root, CLI, daemon and web UI are `0.5.13`; terminal TUI remains `0.1.0`.
+Migration head advances to `080_scoped_operating_posture`. Natural behavioral
+effect remains **UNOBSERVED** and human time cost **UNMEASURED**. The default
+multi-client control-socket limitation remains disclosed and unfixed.
+See [the full release notes](docs/releases/v0.5.13.md) for usage and proof limits.
+
 ## [0.5.12] - 2026-09-09
 
 **Status**: release candidate; exact-cut review, final verification and
