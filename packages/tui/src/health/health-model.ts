@@ -205,7 +205,8 @@ export function healthListLines(snap: FleetSnapshot, scope: HealthDisplayScope, 
   const unavailable = unavailableReason(snap, scope);
   if (unavailable) return wrapDetailLines([{ text: `HEALTH  Unknown · ${unavailable}` }], width);
   const records = healthRecordsForScope(snap, scope);
-  if (records.length === 0) return [emptyLine(scope, width)];
+  // Wrap the complete page explanation; compact summary callers still fit one line.
+  if (records.length === 0) return wrapDetailLines([emptyLine(scope, Infinity)], width);
   const { wide, sevWidth, signalWidth, scopeWidth, ageWidth, confWidth, evidenceWidth } = healthColumnWidths(width);
   const columns = [
     cell("SEV", sevWidth),

@@ -178,6 +178,20 @@ describe("fleet/system health TUI", () => {
     }
   });
 
+  it.each([[80, 24], [140, 42]])("keeps the complete empty-health explanation readable at %ix%i", (cols, rows) => {
+    const snap = healthSnapshot();
+    snap.health = { availability: "loaded", evaluatedAt: null, total: 0, truncated: false, records: [] };
+    for (const command of ["host vm-host", "rig openrig-build"]) {
+      const view = open(snap, command);
+      view.dispatch(parseCommand("tab health"));
+      const screen = renderScreen(view.get(), snap, { cols, rows, colorMode: "none" });
+      const content = screen.lines.slice(2, -3).map(line => line.slice(screen.explorerWidth + 2)).join(" ").replace(/\s+/g, " ");
+      expect(content).toContain("no findings served; not a healthy verdict");
+      expect(screen.lines.every(line => line.length <= cols)).toBe(true);
+      stylizeLines(screen, createStyle("truecolor")).forEach((line, index) => expect(stripAnsi(line)).toBe(screen.lines[index]));
+    }
+  });
+
   it.each([129, 89, 58])("retains severity beside stale and indeterminate truth at content width %i", (width) => {
     const snap = healthSnapshot();
     snap.health!.records = [
