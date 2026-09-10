@@ -194,7 +194,7 @@ describe("OPR.0.4.0.28 — queue list compact + scope-default", () => {
     expect(item.summary).toBeNull();
     expect(item.evidenceRef).toBeNull();
     expect(item.chainOfRecord).toBeNull();
-    expect(item.fieldsElided).toEqual(["body", "summary", "evidenceRef", "waiting"]);
+    expect(item.fieldsElided).toEqual(["body", "summary", "evidenceRef", "humanDetail", "waiting"]);
   });
 
   it("distinguishes a genuinely empty full item from an elided compact item", () => {
@@ -209,7 +209,7 @@ describe("OPR.0.4.0.28 — queue list compact + scope-default", () => {
     const compact = repo.list({ compact: true })[0]!;
     const full = repo.list({})[0]!;
 
-    expect(compact.fieldsElided).toEqual(["body", "summary", "evidenceRef", "waiting"]);
+    expect(compact.fieldsElided).toEqual(["body", "summary", "evidenceRef", "humanDetail", "waiting"]);
     expect(full.body).toBe("");
     expect(full.summary).toBeNull();
     expect(full.evidenceRef).toBeNull();

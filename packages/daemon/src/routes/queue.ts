@@ -53,31 +53,11 @@ export function crossHostProvenanceTags(existing: string[] | undefined): string[
   return [...base, ...additions];
 }
 
-/**
- * OPR.0.3.2.20 — attention-class predicate for the `/list?attention=1`
- * filter. Mirrors the mission-control read layer's semantics so the
- * For You Action-required + Approval lenses agree with the
- * single-pane view:
- *
- *   - approval class  → tier === "human-gate"
- *   - action-required → destinationSession is a human seat
- *   - parked-on-human → state === "blocked" AND blockedOn is a human
- *                       seat (OPR.0.4.4.19 FR-6, C5 leg 1 — the owner
- *                       keeps the potato; the human owes the decision)
- *
- * Human-seat matching delegates to the single-source
- * human-route-enforcer predicate (no drift with the SQL function).
- * Exported so the predicate is a discrete, testable surface. The route
- * layer composes this with the open-state default so only unresolved
- * items appear — closed/done attention items are not surfaced.
- */
-export function isAttentionItem(q: { tier: string | null; destinationSession: string; state?: string; blockedOn?: string | null }): boolean {
-  if (q.tier === "human-gate") return true;
-  // A2: consolidated onto the ONE contract predicate (isHumanSeatSessionRef) so
-  // virtual-domain refs (<local>@external) are human-CLASS and JOIN the attention
-  // union — behavior-identical for every non-@external ref (same pattern today).
-  // The enforcer's other consumers keep the narrow pattern this slice (a DOCUMENTED
-  // divergence, routed as a follow-on per dev-planner's ruling).
+/** Human requests: canonical human destination or human blocker, excluding
+ * explicit updates. Tier labels alone never create a human obligation. The same
+ * predicate runs in SQL before LIMIT in QueueRepository.listAttention. */
+export function isAttentionItem(q: { tier: string | null; destinationSession: string; state?: string; blockedOn?: string | null; humanIntent?: string | null }): boolean {
+  if (q.humanIntent === "update") return false;
   if (isHumanSeatSessionRef(q.destinationSession)) return true;
   return q.state === "blocked" && isHumanSeatSessionRef(q.blockedOn ?? "");
 }
@@ -161,6 +141,7 @@ export function queueRoutes(): Hono {
         : err.code === "unknown_destination_rig" ? 400
         : err.code === "human_registry_unavailable" ? 400
         : err.code === "human_route_fields_required" ? 400
+        : err.code === "invalid_human_notification" ? 400
         // OPR.0.5.1 slice-51-06 D2: summary/evidence_ref on a non-park transition — a client
         // input error surfaced as a structured 400 (the daemon rejects before any mutation).
         : err.code === "summary_evidence_not_persistable" ? 400
@@ -417,6 +398,8 @@ export function queueRoutes(): Hono {
       expiresAt?: string;
       chainOfRecord?: string[];
       targetRepo?: string;
+      humanIntent?: "decision" | "update" | null;
+      humanDetail?: string | null;
       summary?: string | null;
       evidenceRef?: string | null;
       nudge?: boolean;
@@ -483,6 +466,8 @@ export function queueRoutes(): Hono {
         expiresAt: body.expiresAt,
         chainOfRecord: body.chainOfRecord,
         targetRepo: body.targetRepo,
+        humanIntent: body.humanIntent,
+        humanDetail: body.humanDetail,
         summary: body.summary,
         evidenceRef: body.evidenceRef,
         nudge: (body as { nudge?: boolean }).nudge,
@@ -818,6 +803,13 @@ export function queueRoutes(): Hono {
       loadRegistry: registryLoader,
     });
     return c.json(payload);
+  });
+
+  app.get("/human-updates", (c) => {
+    const raw = Number(c.req.query("limit") ?? 20);
+    if (!Number.isInteger(raw) || raw < 1 || raw > 100) return c.json({ error: "limit must be an integer from 1 to 100" }, 400);
+    const rows = getRepo(c).listDeliveredHumanUpdates({ limit: raw + 1 });
+    return c.json({ items: rows.slice(0, raw), limit: raw, truncated: rows.length > raw });
   });
 
   app.get("/list", (c) => {

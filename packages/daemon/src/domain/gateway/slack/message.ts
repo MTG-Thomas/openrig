@@ -1,18 +1,13 @@
-// Slice-11 slack-connector — outbound message construction.
-//
-// Locked item 7 (content hygiene): a posted message carries summary + qitem id
-// + source + a BOUNDED body excerpt, and NEVER a token/secret/secret-bearing
-// path. We never add our own credentials (we only render qitem fields), and as
-// defense-in-depth we redact anything that looks like a Slack/bearer secret
-// leaking through a qitem body before it goes out.
-//
-// T1076 (don't preclude Slice-12): construction is BLOCKS/ATTACHMENTS-capable —
-// we always emit Block Kit `blocks` PLUS a plain-text fallback, and accept
-// optional extra blocks / media refs so image relay can extend this later
-// WITHOUT redefining the shape here. v1 ships text only.
-
-export const SLACK_TEXT_CAP = 3900; // Slack hard-limits ~4000; stay under.
-export const DEFAULT_BODY_EXCERPT = 800;
+// Complete, bounded human messages. No content is silently clipped.
+// Slack contracts checked 2026-09-10:
+// https://docs.slack.dev/reference/methods/chat.postMessage/ (4,000 recommended;
+// 40,000 truncation; top-level text is the screen-reader/notification fallback)
+// https://docs.slack.dev/reference/block-kit/blocks/section-block/ (3,000)
+// https://docs.slack.dev/reference/block-kit/blocks/ (50 blocks)
+export const SLACK_TEXT_CAP = 3900; // Our conservative complete-fallback budget, not Slack’s hard limit.
+export const SLACK_SECTION_CAP = 3000;
+/** @deprecated Complete rendering ignores excerpt requests. */
+export const DEFAULT_BODY_EXCERPT = SLACK_SECTION_CAP;
 
 export interface QitemLike {
   qitemId: string;
@@ -31,23 +26,21 @@ export interface SlackMediaRef {
 
 export interface OutboundMessageOpts {
   sourceLabel: string; // where the queue lives (host/box/rig), from config — never hardcoded
+  /** @deprecated Ignored: complete briefs are rendered or explicitly refused. */
   bodyExcerpt?: number;
-  /** T1076 extension point: extra Block Kit blocks (e.g. future media). v1 unused. */
+  /** @deprecated Refused without an accessible projection; use mediaRefs. */
   extraBlocks?: unknown[];
   /** M1 A5b: outbound image attachments, rendered as Block Kit `image` blocks (the wired seam). */
   mediaRefs?: SlackMediaRef[];
   /** S10 / A1.2 — the structured seat-attribution header (rig/host/seat/session), rendered as
-   *  the LEADING context block in ONE honest bot identity. Authorship lives in OUR record;
+   *  one sender context line in ONE honest bot identity. Authorship lives in OUR record;
    *  Slack's transport actor stays the app. NEVER a per-message username/icon override. */
   attribution?: SeatAttribution;
   /** S10 interim loudness rule: an escalation MENTIONS its human (`<@Uxxx>`); everything else
    *  stays quiet-threaded. The value is the Slack USER ID (mention semantics require the id,
    *  never a display name). */
   mentionUserId?: string;
-  /** S10 fix-r3 — the reconciliation token (reconcileToken(decisionId)), reserved OUTSIDE the
-   *  truncatable content budget: content clamps to CAP minus the token's exact reserve, then
-   *  the token appends, so it survives in top-level fallback text at ANY ordinary message
-   *  length — the exact surface the history scan reads. */
+  /** Stable decision/part identity. Included in the complete fallback budget. */
   reconcileMarker?: string;
 }
 
@@ -76,7 +69,7 @@ const SLACK_ALT_TEXT_CAP = 2000; // Slack image alt_text hard limit.
 
 /** M1 A5b — turn media refs into Block Kit `image` blocks. Item-7 hygiene: a secret-bearing
  *  image_url (e.g. a webhook URL smuggled as an image) is REFUSED, never forwarded. Alt text is
- *  redacted + clamped. Returns only the well-formed, secret-free image blocks. */
+ *  redacted and validated without clipping. Returns only the well-formed, secret-free image blocks. */
 export function buildImageBlocks(mediaRefs: readonly SlackMediaRef[] | undefined): unknown[] {
   if (!mediaRefs?.length) return [];
   const blocks: unknown[] = [];
@@ -88,7 +81,7 @@ export function buildImageBlocks(mediaRefs: readonly SlackMediaRef[] | undefined
       type: "image",
       image_url: url,
       // R2 B1: alt text is row-carried → the same inert pipeline (redact + neutralize).
-      alt_text: clamp(inert(String(m.altText || "attachment")), SLACK_ALT_TEXT_CAP),
+      alt_text: bounded(inert(String(m.altText || "attachment")), SLACK_ALT_TEXT_CAP, "image description"),
     });
   }
   return blocks;
@@ -152,71 +145,36 @@ export interface SlackMessagePayload {
   blocks: unknown[]; // Block Kit (T1076-extensible)
 }
 
-function clamp(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) : s;
+export class HumanMessageShapeError extends Error {
+  readonly code = "human_message_unrenderable";
 }
 
-/**
- * Build the Slack payload for a human-destined qitem. Pure + deterministic
- * (no clock, no io) so it is trivially testable and safe to snapshot.
- */
+function bounded(text: string, max: number, field: string): string {
+  // Count the escaped wire string in UTF-16 units, conservatively. Never slice
+  // an entity or surrogate pair; reject the whole request before any post.
+  if (text.length > max) {
+    throw new HumanMessageShapeError(`${field} is ${text.length} units after escaping (maximum ${max}). Shorten the human brief; put only supplemental context in --human-detail-file. Keep the action and options in the primary body.`);
+  }
+  return text;
+}
+
+/** Pure, deterministic rendering. Queue metadata stays in the durable request;
+ * the human sees one subject, complete body and one sender attribution. */
 export function buildOutboundMessage(q: QitemLike, opts: OutboundMessageOpts): SlackMessagePayload {
-  // R2 B1 boundary rule, UNIFORM (fix-r2 / R1 F-B1r): EVERY queue-controlled field — the
-  // qitemId included — goes through the structural neutralization BEFORE placement in text or
-  // mrkdwn. No exemption, no minted-only premise: the create route accepts caller-supplied
-  // ids without charset validation, so "no specials by construction" is not enforced anywhere.
-  // Control syntax arriving through a row cannot survive, and content stays honestly readable
-  // escaped. The H reconcile marker compares the SAME escaped bytes on both sides (the scan in
-  // slack-delivery searches escapeSlackText(qitemId)); for minted ids escaped == raw.
   const summary = inert(String(q.summary || "(no summary)"));
-  const bodyRaw = inert(String(q.body || ""));
-  const body = clamp(bodyRaw, opts.bodyExcerpt ?? DEFAULT_BODY_EXCERPT);
-  const dest = escapeSlackText(q.destinationSession || "(unknown destination)");
-  const footer = `qitem ${escapeSlackText(String(q.qitemId))} → ${dest} on ${opts.sourceLabel}`;
-
-  // S10 interim loudness rule: only an escalation carries a mention (the sole force-notify
-  // lever Slack offers); everything else stays quiet-threaded. Composed HERE, AFTER the
-  // untrusted fields were neutralized above — the renderer's mention is the only path to an
-  // active control sequence, and its id comes from the registry's HANDLE_PATTERN-validated
-  // binding, never from row content.
-  const mention = opts.mentionUserId ? `<@${opts.mentionUserId}> ` : "";
-  const loudness = opts.mentionUserId ? ":rotating_light: " : "";
-  const headline = `${mention}${loudness}*${summary}*`;
-  // A1.2 — the attribution header line (rig/host/seat/session), one honest bot identity.
-  // Session strings are row-carried → same inert pipeline.
-  const attr = opts.attribution
-    ? [
-        `from *${inert(opts.attribution.seat)}*`,
-        opts.attribution.rig ? `rig ${inert(opts.attribution.rig)}` : null,
-        opts.attribution.host ? `host ${inert(opts.attribution.host)}` : null,
-        `session ${inert(opts.attribution.session)}`,
-      ].filter(Boolean).join(" · ")
-    : null;
-
-  // fix-r3: the reconcile token is reserved OUTSIDE the clamp budget — ordinary content of any
-  // length clamps first, the token appends after, so the scanned surface ALWAYS carries it.
-  const tokenReserve = opts.reconcileMarker ? opts.reconcileMarker.length + 1 : 0;
-  const assemble = (content: string): string => {
-    const clamped = clamp(content, SLACK_TEXT_CAP - tokenReserve);
-    return opts.reconcileMarker ? `${clamped}\n${opts.reconcileMarker}` : clamped;
-  };
-  const text = assemble(`${headline}${attr ? `\n_${attr}_` : ""}\n${body}\n_${footer}_`);
-
-  const blocks: unknown[] = [];
-  if (attr) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: clamp(attr, 2000) }] });
-  blocks.push({ type: "section", text: { type: "mrkdwn", text: clamp(headline, 3000) } });
-  if (body.trim()) blocks.push({ type: "section", text: { type: "mrkdwn", text: clamp(body, 3000) } });
-  // M1 A5b — outbound image attachments (the wired T1076 seam). Secret-bearing URLs are dropped.
+  const body = bounded(inert(String(q.body || "")), SLACK_SECTION_CAP, "body");
+  const mention = opts.mentionUserId ? `<@${opts.mentionUserId}> :rotating_light: ` : "";
+  const headline = bounded(`${mention}*${summary}*`, SLACK_SECTION_CAP, "subject");
+  const attr = bounded(`from ${inert(opts.attribution?.session || opts.sourceLabel)}`, 2000, "sender");
   const imageBlocks = buildImageBlocks(opts.mediaRefs);
-  blocks.push(...imageBlocks);
-  blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: footer }] });
-  if (opts.extraBlocks?.length) blocks.push(...opts.extraBlocks);
-
-  // Note the attachment count in the notification fallback so a text-only client still signals
-  // it. Re-assembled through the same token-reserving path so the media note never evicts the
-  // reconcile identity from the scanned surface.
-  const textWithMedia = imageBlocks.length > 0
-    ? assemble(`${headline}${attr ? `\n_${attr}_` : ""}\n${body}\n_${footer}_\n_(${imageBlocks.length} image attachment${imageBlocks.length === 1 ? "" : "s"})_`)
-    : text;
-  return { text: textWithMedia, blocks };
+  const attachmentText = imageBlocks.map((b) => `Image: ${(b as { alt_text: string }).alt_text}`).join("\n");
+  if (opts.extraBlocks?.length) {
+    throw new HumanMessageShapeError("Extra blocks have no complete accessible fallback. Use mediaRefs for images or author supplemental human detail.");
+  }
+  const text = bounded([headline, body, attr, attachmentText, opts.reconcileMarker].filter(Boolean).join("\n"), SLACK_TEXT_CAP, "complete fallback");
+  const blocks: unknown[] = [{ type: "section", text: { type: "mrkdwn", text: headline } }];
+  if (body.trim()) blocks.push({ type: "section", text: { type: "mrkdwn", text: body } });
+  blocks.push(...imageBlocks, { type: "context", elements: [{ type: "mrkdwn", text: attr }] });
+  if (blocks.length > 50) throw new HumanMessageShapeError("Message exceeds 50 Slack blocks. Reduce attachments before sending.");
+  return { text, blocks };
 }

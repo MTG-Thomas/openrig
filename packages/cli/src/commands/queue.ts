@@ -411,7 +411,9 @@ export function queueCommand(depsOverride?: QueueDeps): Command {
     .option("--expires-at <iso>", "ISO timestamp at which the qitem expires")
     .option("--id <qitemId>", "Idempotent qitem_id (skip if not provided)")
     .option("--target-repo <name>", "PL-007: typed repo scope (must match a repo in the source rig's RigSpec.workspace.repos[])")
-    .option("--summary <text>", "OPR.0.4.1.18: short human-readable 1-2 sentence summary of the work — what it is and why this seat, skimmable by a human in the needs-you view (the agent-speak --body stays the source of truth). Warned-if-missing; pre-18 qitems exempt.")
+    .option("--summary <text>", "Short human-readable subject. For a human destination, --body-file is the complete decision brief or update; keep technical continuation in the owning agent row and evidence.")
+    .option("--human-intent <intent>", "decision (default) or update: a quiet informational delivery, never an approval request")
+    .option("--human-detail-file <path>", "One explicitly authored supplemental thread reply; keep the complete action/options in --body-file")
     .option("--evidence-ref <path>", "OPR.0.4.4.19 FR-5: pointer to the durable artifact a human judges (e.g. a PROOF.md path). Required by the daemon when the item is human-routed; optional otherwise.")
     .option("--host <id>", QUEUE_HOST_OPTION_HELP)
     .option("--no-nudge", "Suppress the default destination nudge (cold-queue)")
@@ -432,6 +434,8 @@ export function queueCommand(depsOverride?: QueueDeps): Command {
       expiresAt?: string;
       id?: string;
       targetRepo?: string;
+      humanIntent?: string;
+      humanDetailFile?: string;
       summary?: string;
       evidenceRef?: string;
       host?: string;
@@ -517,6 +521,8 @@ export function queueCommand(depsOverride?: QueueDeps): Command {
           qitemId: opts.id,
           destinationSession: hostResolved.destination,
           body: resolvedBody,
+          humanIntent: opts.humanIntent,
+          humanDetail: opts.humanDetailFile ? await resolveQueueBody({ bodyFile: opts.humanDetailFile }) : undefined,
           summary: opts.summary,
           evidenceRef: opts.evidenceRef,
           priority: opts.priority,

@@ -11,7 +11,7 @@ import { derivePickup, type PickupReceipt } from "./queue-pickup.js";
 import { lastMeaningfulTransition, readWaitingView, type WaitingView, type WaitingActivityReader } from "./queue-waiting.js";
 import { wrapPaneEnvelope } from "../lib/pane-envelope.js";
 import { getSelfHostId } from "./hosts/fanout-contract.js";
-import { parseSessionName } from "./session-name.js";
+import { parseSessionName, isHumanSeatSessionRef } from "./session-name.js";
 import { classifyDestination } from "./gateway/destination-resolver.js";
 import {
   computeClosureRequiredAt,
@@ -139,9 +139,11 @@ export interface QueueItem {
   expiresAt: string | null;
   chainOfRecord: string[] | null;
   body: string;
-  /** OPR.0.4.1.18 — optional short human-readable summary (~1–2 sentences).
-   *  NULL for pre-18 qitems + any an author omitted (the Story consumer
-   *  degrades on null). The agent-speak `body` stays the source of truth. */
+  /** Explicit human delivery intent; null/omitted preserves legacy decisions. */
+  humanIntent?: "decision" | "update" | null;
+  /** One authored supplemental thread reply; the body remains a complete brief. */
+  humanDetail?: string | null;
+  /** Short human-readable subject; null for callers that omit it. */
   summary: string | null;
   /** OPR.0.4.4.19 FR-5 — pointer to the durable artifact a human judges
    *  (convention C3). NULL for all non-human-routed items (BR-1); required
@@ -149,7 +151,7 @@ export interface QueueItem {
   evidenceRef: string | null;
   /** Present only on compact list rows so omitted content cannot be mistaken
    *  for an author-supplied empty value. Full reads never carry this marker. */
-  fieldsElided?: Array<"body" | "summary" | "evidenceRef" | "waiting">;
+  fieldsElided?: Array<"body" | "summary" | "evidenceRef" | "humanDetail" | "waiting">;
   closureReason: ClosureReason | null;
   closureTarget: string | null;
   closureRequiredAt: string | null;
@@ -181,6 +183,8 @@ interface QueueItemRow {
   expires_at: string | null;
   chain_of_record: string | null;
   body: string;
+  human_intent?: "decision" | "update" | null;
+  human_detail?: string | null;
   summary: string | null;
   evidence_ref: string | null;
   closure_reason: string | null;
@@ -232,8 +236,10 @@ export interface QueueCreateInput {
   /** PL-007 — typed repo scope for this qitem. Route validates against
    *  source rig's workspace.repos[]; unknown names rejected upstream. */
   targetRepo?: string | null;
-  /** OPR.0.4.1.18 — optional ~1–2 sentence human-readable summary. Persisted
-   *  when present; omitted → NULL → Story degrade. */
+  /** Explicit human delivery intent; omission preserves legacy decisions. */
+  humanIntent?: "decision" | "update" | null;
+  /** Explicit supplemental thread content, never an automatic split of the primary body. */
+  humanDetail?: string | null;
   summary?: string | null;
   /** OPR.0.4.4.19 FR-5 — optional durable-artifact pointer. Persisted when
    *  present; required at the domain layer only for human-routed items. */
@@ -626,6 +632,7 @@ export class QueueRepository {
    *  Production daemons always have the column (migration is in startup.ts). */
   private readonly hasTargetRepoColumn: boolean;
   private readonly hasSummaryColumn: boolean;
+  private readonly hasHumanIntentColumn: boolean;
   private readonly hasEvidenceRefColumn: boolean;
   private readonly hasMintingGenColumn: boolean;
   private readonly hasClaimedGenColumn: boolean;
@@ -683,6 +690,7 @@ export class QueueRepository {
     this.loadHumanRegistryFn = opts?.loadHumanRegistry ?? (() => loadHumanRegistry());
     this.hasTargetRepoColumn = detectQueueColumn(db, "target_repo");
     this.hasSummaryColumn = detectQueueColumn(db, "summary");
+    this.hasHumanIntentColumn = detectQueueColumn(db, "human_intent");
     this.hasEvidenceRefColumn = detectQueueColumn(db, "evidence_ref");
     this.hasQueueTransitionsTable = detectTable(db, "queue_transitions");
     const transitionColumns = this.hasQueueTransitionsTable
@@ -704,10 +712,10 @@ export class QueueRepository {
     // better-sqlite3 db.function is idempotent; safe to call once at
     // construction.
     // OPR.0.4.4.19: single-source regex — the SQL function delegates to the
-    // human-route-enforcer's exported predicate so SQL-side and TS-side
+    // session-name's canonical predicate (legacy and external) so SQL-side and TS-side
     // checks cannot drift.
     db.function("is_human_seat_session", { deterministic: true }, (value: unknown) =>
-      isHumanSeatSession(value) ? 1 : 0
+      typeof value === "string" && isHumanSeatSessionRef(value) ? 1 : 0
     );
   }
 
@@ -774,6 +782,7 @@ export class QueueRepository {
     nextState: QueueState;
     nextBlockedOn?: string | null;
     explicitKind?: QueueUpdateInput["ownerNotificationKind"];
+    humanIntent?: "decision" | "update" | null;
   }): { kind: string; level: OwnerNotificationLevel } | null {
     if (input.explicitKind === "human-decision-resolved") {
       return { kind: input.explicitKind, level: "NOTICE" };
@@ -788,7 +797,9 @@ export class QueueRepository {
 
     const destinationHuman = resolveRegisteredHumanAddress(input.destinationSession, registry.entities);
     if (input.action === "create" && destinationHuman !== null) {
-      return { kind: "human-required", level: "ALERT" };
+      return input.humanIntent === "update"
+        ? { kind: "human-update", level: "NOTICE" }
+        : { kind: "human-required", level: "ALERT" };
     }
     return null;
   }
@@ -1412,6 +1423,18 @@ export class QueueRepository {
         missingFields: humanRoute.missingFields,
       });
     }
+    if (input.humanIntent != null && input.humanIntent !== "decision" && input.humanIntent !== "update") {
+      throw new QueueRepositoryError("invalid_human_notification", "humanIntent must be decision or update; omission retains legacy decision behavior.");
+    }
+    if (input.humanDetail != null && (typeof input.humanDetail !== "string" || !input.humanDetail.trim())) {
+      throw new QueueRepositoryError("invalid_human_notification", "humanDetail must be nonempty supplemental text or omitted.");
+    }
+    if (input.humanIntent != null || input.humanDetail != null) {
+      if (!isHumanSeatSessionRef(input.destinationSession)) {
+        throw new QueueRepositoryError("invalid_human_notification", "humanIntent/humanDetail require a human destination; agent continuation belongs in its own qitem.");
+      }
+      if (!this.hasHumanIntentColumn) throw new QueueRepositoryError("invalid_human_notification", "Human notification fields require the current queue schema; they were not saved.");
+    }
     const id = input.qitemId ?? newQitemId();
     const ts = new Date().toISOString();
     const priority = input.priority ?? "routine";
@@ -1444,9 +1467,14 @@ export class QueueRepository {
     }
     this.persistSummary(id, input.summary ?? null);
     this.persistEvidenceRef(id, input.evidenceRef ?? null);
+    if (this.hasHumanIntentColumn) {
+      this.db.prepare("UPDATE queue_items SET human_intent = ?, human_detail = ? WHERE qitem_id = ?")
+        .run(input.humanIntent ?? null, input.humanDetail ?? null, id);
+    }
     this.persistMintingGeneration(id, input.sourceSession);
     const notification = this.classifyOwnerNotification({
       action: "create",
+      humanIntent: input.humanIntent,
       destinationSession: input.destinationSession,
       nextState: "pending",
     });
@@ -2367,6 +2395,12 @@ export class QueueRepository {
     // raw `update --state blocked` hit the same validator (no verb-only
     // enforcement). Blocking on another qitem requires nothing new (BR-1).
     const effectiveBlockedOn = input.blockedOn ?? qitem.blockedOn;
+    if (input.state === "blocked" && effectiveBlockedOn && this.getById(effectiveBlockedOn)?.humanIntent === "update") {
+      throw new QueueRepositoryError("invalid_human_notification", "An informational update is not an approval dependency. Create a separate decision request if a human decision is needed.");
+    }
+    if (qitem.humanIntent === "update" && input.state === "blocked" && isHumanSeatSessionRef(effectiveBlockedOn ?? "")) {
+      throw new QueueRepositoryError("invalid_human_notification", "An informational delivery cannot become a human approval park; author a separate decision request.");
+    }
     const isHumanPark = input.state === "blocked" && isHumanSeatSession(effectiveBlockedOn);
 
     // OPR.0.5.1 slice-51-06 D2 — summary/evidence_ref are persist-able ONLY at a human-seat park
@@ -2959,7 +2993,7 @@ export class QueueRepository {
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const columns = opts?.compact ? COMPACT_QUEUE_COLUMNS : "*";
+    const columns = opts?.compact ? COMPACT_QUEUE_COLUMNS + (this.hasHumanIntentColumn ? ", human_intent" : "") : "*";
     const useActiveFirst = !!(opts?.rig || opts?.asSession || opts?.activeOnly);
     const orderBy = useActiveFirst
       ? "CASE WHEN state IN ('pending', 'in-progress', 'blocked') THEN 0 ELSE 1 END, ts_created DESC"
@@ -2983,7 +3017,7 @@ export class QueueRepository {
     return opts?.compact
       ? items.map((item) => ({
           ...item,
-          fieldsElided: ["body", "summary", "evidenceRef", "waiting"],
+          fieldsElided: ["body", "summary", "evidenceRef", "humanDetail", "waiting"],
         }))
       : items;
   }
@@ -3017,6 +3051,23 @@ export class QueueRepository {
    * Default open state set: pending|in-progress|blocked. Caller may
    * override via `state`.
    */
+  /** Delivered informational records remain queryable after closure. Receipt filtering
+   * happens before LIMIT; no prose/tier classifier and no second event store. */
+  listDeliveredHumanUpdates(opts: { limit?: number } = {}): Array<QueueItem & { deliveredAt: string; deliveryReceipt: string }> {
+    if (!this.hasHumanIntentColumn) return [];
+    const limit = Number.isFinite(opts.limit) ? Math.max(1, Math.min(101, Math.floor(opts.limit!))) : 20;
+    const receipts = `SELECT qitem_id, ts, transition_note FROM queue_transitions` +
+      (detectTable(this.db, "queue_transitions_archive") ? ` UNION ALL SELECT qitem_id, ts, transition_note FROM queue_transitions_archive` : "");
+    const rows = this.db.prepare(`
+      SELECT q.*, r.ts AS delivered_at, r.transition_note AS delivery_receipt
+      FROM queue_items q JOIN (${receipts}) r ON r.qitem_id = q.qitem_id
+      WHERE q.human_intent = 'update' AND is_human_seat_session(q.destination_session) = 1
+        AND r.transition_note LIKE 'slack-owner-notification-posted %'
+      ORDER BY r.ts DESC, q.qitem_id DESC LIMIT ?
+    `).all(limit) as Array<QueueItemRow & { delivered_at: string; delivery_receipt: string }>;
+    return rows.map((row) => ({ ...this.rowToItem(row), deliveredAt: row.delivered_at, deliveryReceipt: row.delivery_receipt }));
+  }
+
   listAttention(opts?: {
     limit?: number;
     state?: QueueState | QueueState[];
@@ -3049,11 +3100,11 @@ export class QueueRepository {
     const conditions: string[] = [
       `state IN (${statePlaceholders})`,
       `(
-        tier = 'human-gate'
-        OR is_human_seat_session(destination_session) = 1
+        is_human_seat_session(destination_session) = 1
         OR (state = 'blocked' AND is_human_seat_session(blocked_on) = 1)
       )`,
     ];
+    if (this.hasHumanIntentColumn) conditions.push("COALESCE(human_intent, 'decision') <> 'update'");
     const params: unknown[] = [...states];
     if (opts?.destinationSession) {
       conditions.push("destination_session = ?");
@@ -3097,7 +3148,7 @@ export class QueueRepository {
       conditions.push("(destination_session LIKE ? ESCAPE '\\' OR source_session LIKE ? ESCAPE '\\')");
       params.push(`%@${escaped}`, `%@${escaped}`);
     }
-    const columns = opts?.compact ? COMPACT_QUEUE_COLUMNS : "*";
+    const columns = opts?.compact ? COMPACT_QUEUE_COLUMNS + (this.hasHumanIntentColumn ? ", human_intent" : "") : "*";
     let sql = `SELECT ${columns} FROM queue_items WHERE ${conditions.join(" AND ")} ORDER BY closure_required_at ASC`;
     if (opts?.limit !== undefined) {
       sql += " LIMIT ?";
@@ -3142,7 +3193,7 @@ export class QueueRepository {
       conditions.push("(destination_session LIKE ? ESCAPE '\\' OR source_session LIKE ? ESCAPE '\\')");
       params.push(`%@${escaped}`, `%@${escaped}`);
     }
-    const columns = opts?.compact ? COMPACT_QUEUE_COLUMNS : "*";
+    const columns = opts?.compact ? COMPACT_QUEUE_COLUMNS + (this.hasHumanIntentColumn ? ", human_intent" : "") : "*";
     const sql = `SELECT ${columns} FROM queue_items WHERE ${conditions.join(" AND ")} ORDER BY ts_created ASC`;
     const rows = this.db.prepare(sql).all(...params) as QueueItemRow[];
     const out: QueueItem[] = [];
@@ -3480,6 +3531,8 @@ export class QueueRepository {
       // OPR.0.4.4.19 FR-5: evidence_ref present only when migration 048 has
       // applied; legacy fixtures degrade to null.
       evidenceRef: row.evidence_ref ?? null,
+      humanIntent: row.human_intent ?? null,
+      humanDetail: row.human_detail ?? null,
       closureReason: row.closure_reason as ClosureReason | null,
       closureTarget: row.closure_target,
       closureRequiredAt: row.closure_required_at,

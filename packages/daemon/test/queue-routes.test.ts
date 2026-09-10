@@ -773,7 +773,7 @@ describe("queue routes", () => {
   //   - action-required class: destinationSession is human-*@kernel|host
   //   - open state: pending | in-progress | blocked
   describe("OPR.0.3.2.20 GET /api/queue/list?attention=1 — open attention-class items", () => {
-    it("HG-4 positive (approval class): tier='human-gate' open qitem is returned", async () => {
+    it("tier-only agent rows do not create a human approval obligation", async () => {
       await app.request("/api/queue/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-OpenRig-Session": "a@r" },
@@ -789,8 +789,7 @@ describe("queue routes", () => {
       const res = await app.request("/api/queue/list?attention=1");
       expect(res.status).toBe(200);
       const data = (await res.json()) as Array<{ tier: string | null; body: string }>;
-      expect(data).toHaveLength(1);
-      expect(data[0]!.tier).toBe("human-gate");
+      expect(data).toHaveLength(0);
     });
 
     it("HG-4 positive (action-required class): destination=human-foo@kernel open qitem is returned", async () => {
@@ -895,7 +894,7 @@ describe("queue routes", () => {
         headers: { "Content-Type": "application/json", "X-OpenRig-Session": "a@r" },
         body: JSON.stringify({
           sourceSession: "a@r",
-          destinationSession: "b@r",
+          destinationSession: "human-founder@external",
           body: "approve me",
           tier: "human-gate",
           summary: "test summary (FR-4 human-routed fixture)",
@@ -1190,7 +1189,7 @@ describe("queue routes", () => {
         headers: { "Content-Type": "application/json", "X-OpenRig-Session": "old@r" },
         body: JSON.stringify({
           sourceSession: "old@r",
-          destinationSession: "b@r",
+          destinationSession: "human-founder@external",
           body: "approve me — oldest",
           tier: "human-gate",
           summary: "test summary (FR-4 human-routed fixture)",

@@ -82,6 +82,7 @@ import { ownerNotificationLevelsSchema } from "./migrations/076_owner_notificati
 import { nodeSessionSourceSchema } from "./migrations/077_node_session_source.js";
 import { idleGateFiredConditionSchema } from "./migrations/078_idle_gate_fired_condition.js";
 import { workflowLifecycleParallelSchema } from "./migrations/079_workflow_lifecycle_parallel.js";
+import { humanNotificationIntentSchema } from "./migrations/081_human_notification_intent.js";
 import { scopedOperatingPostureSchema } from "./migrations/080_scoped_operating_posture.js";
 import type { Migration } from "./migrate.js";
 
@@ -167,4 +168,5 @@ export const ALL_MIGRATIONS: Migration[] = [
   idleGateFiredConditionSchema,
   workflowLifecycleParallelSchema,
   scopedOperatingPostureSchema,
+  humanNotificationIntentSchema,
 ];

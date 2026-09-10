@@ -16,7 +16,7 @@ const REGISTRY: HostRegistry = {
   hosts: [{ id: "vps-b", transport: "ssh", target: "b.local" }], // ssh → unsupported-transport, no network needed
 };
 
-const LOCAL_ATTENTION_ROW = { qitemId: "q-1", priority: "urgent", tier: "human-gate" };
+const LOCAL_ATTENTION_ROW = { qitemId: "q-1", priority: "urgent", tier: "human-gate", destinationSession: "human-founder@external" };
 
 function makeApp(opts: { subscriptions?: Array<{ hostId: string; enabled: boolean }>; withStore?: boolean } = {}) {
   const attentionCalls: unknown[] = [];

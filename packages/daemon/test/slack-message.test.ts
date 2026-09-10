@@ -4,14 +4,14 @@ import { buildOutboundMessage, buildImageBlocks, containsSecret, redactSecrets, 
 describe("Slice-11 outbound message — content hygiene (item 7)", () => {
   const opts = { sourceLabel: "vm-openrig-build" };
 
-  it("includes summary + qitem id + destination + source label", () => {
+  it("shows the brief and sender; internal queue identifiers stay behind the message", () => {
     const m = buildOutboundMessage(
       { qitemId: "qitem-abc", summary: "Founder needs a decision", body: "context", destinationSession: "human-founder@kernel" },
       opts,
     );
     expect(m.text).toContain("Founder needs a decision");
-    expect(m.text).toContain("qitem-abc");
-    expect(m.text).toContain("human-founder@kernel");
+    expect(m.text).not.toContain("qitem-abc");
+    expect(m.text).not.toContain("human-founder@kernel");
     expect(m.text).toContain("vm-openrig-build");
   });
 
@@ -27,26 +27,20 @@ describe("Slice-11 outbound message — content hygiene (item 7)", () => {
     for (const b of m2.blocks) expect(containsSecret(JSON.stringify(b))).toBe(false);
   });
 
-  it("caps text under the Slack limit", () => {
-    const m = buildOutboundMessage({ qitemId: "q", summary: "s", body: "x".repeat(9000), destinationSession: "human@kernel" }, opts);
+  it("refuses an oversized body with an actionable author correction", () => {
+    expect(() => buildOutboundMessage({ qitemId: "q", body: "x".repeat(9000) }, opts)).toThrow(/Shorten the human brief/);
+  });
+
+  it("keeps a complete body beyond the former 800-unit excerpt", () => {
+    const body = "y".repeat(1000) + " Approve or hold?";
+    const m = buildOutboundMessage({ qitemId: "q", summary: "s", body }, opts);
+    expect(m.text).toContain(body);
     expect(m.text.length).toBeLessThanOrEqual(SLACK_TEXT_CAP);
+    expect(JSON.stringify(m.blocks)).toContain(body);
   });
 
-  it("bounds the body excerpt (default 800)", () => {
-    const m = buildOutboundMessage({ qitemId: "q", summary: "s", body: "y".repeat(5000), destinationSession: "d" }, opts);
-    // body section is the excerpt, not the whole 5000
-    const bodyBlock = JSON.stringify(m.blocks).match(/y+/)?.[0] ?? "";
-    expect(bodyBlock.length).toBeLessThanOrEqual(800);
-  });
-
-  it("T1076: emits Block Kit blocks PLUS a text fallback, and accepts extra blocks", () => {
-    const extra = [{ type: "image", image_url: "x", alt_text: "future" }];
-    const m = buildOutboundMessage({ qitemId: "q", summary: "s", body: "b", destinationSession: "d" }, { ...opts, extraBlocks: extra });
-    expect(typeof m.text).toBe("string");
-    expect(m.text.length).toBeGreaterThan(0);
-    expect(Array.isArray(m.blocks)).toBe(true);
-    expect(m.blocks.length).toBeGreaterThanOrEqual(3); // summary + body + context
-    expect(m.blocks).toContainEqual(extra[0]); // extension point works
+  it("refuses extra blocks without a complete accessible projection", () => {
+    expect(() => buildOutboundMessage({ qitemId: "q", body: "b" }, { ...opts, extraBlocks: [{ type: "section", text: "unrepresented" }] })).toThrow(/accessible fallback/);
   });
 
   it("redactSecrets/containsSecret round-trip", () => {
@@ -60,7 +54,7 @@ describe("M1 A5b — outbound image attachments (the wired T1076 seam)", () => {
   const opts = { sourceLabel: "vm-openrig-build" };
   const imageBlocks = (m: { blocks: unknown[] }) => m.blocks.filter((b) => (b as { type?: string }).type === "image") as { type: string; image_url: string; alt_text: string }[];
 
-  it("renders a media ref as a Block Kit image block + notes the attachment count in the fallback", () => {
+  it("renders a media ref as a Block Kit image block + carries the image description in the fallback", () => {
     const m = buildOutboundMessage(
       { qitemId: "q1", summary: "chart ready", body: "see attached", destinationSession: "human-founder@kernel" },
       { ...opts, mediaRefs: [{ imageUrl: "https://example.com/shot.png", altText: "the screenshot" }] },
@@ -68,7 +62,7 @@ describe("M1 A5b — outbound image attachments (the wired T1076 seam)", () => {
     const imgs = imageBlocks(m);
     expect(imgs).toHaveLength(1);
     expect(imgs[0]).toEqual({ type: "image", image_url: "https://example.com/shot.png", alt_text: "the screenshot" });
-    expect(m.text).toContain("1 image attachment");
+    expect(m.text).toContain("Image: the screenshot");
     // text content + hygiene still present
     expect(m.text).toContain("chart ready");
   });

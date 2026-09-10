@@ -104,7 +104,7 @@ export function defaultReadLocalImage(refPath: string): { bytes: Uint8Array; fil
 }
 
 /** Build the subsystem DeliverFn. Contract mirrors the retired connector handleDecision. */
-export function subsystemSlackDeliver(opts: SubsystemSlackDeliveryOpts): SubsystemDeliverFn {
+function deliverSinglePart(opts: SubsystemSlackDeliveryOpts, markEpisode = true): SubsystemDeliverFn {
   const log = opts.log ?? (() => {});
   return async (decision: OutboundDecision): Promise<SubsystemDeliveryOutcome> => {
     // Idempotent redelivery: an already-delivered decisionId is re-acked without re-posting.
@@ -211,7 +211,7 @@ export function subsystemSlackDeliver(opts: SubsystemSlackDeliveryOpts): Subsyst
           opts.onPosted?.(q, "reconciled", threadTs);
         }
         opts.delivered.mark(decision.decisionId, "reconciled-delivered");
-        if (q.qitemId) {
+        if (markEpisode && q.qitemId) {
           const key = q.notificationKey ?? q.qitemId;
           opts.outboundSeen.mark(key, "posted");
           opts.release?.(key);
@@ -281,7 +281,7 @@ export function subsystemSlackDeliver(opts: SubsystemSlackDeliveryOpts): Subsyst
     // Delivered is complete only after the authoritative row receipt succeeds. A receipt
     // failure retains the decision; replay reconciles by marker and retries the idempotent receipt.
     opts.delivered.mark(decision.decisionId, "delivered");
-    if (q.qitemId) {
+    if (markEpisode && q.qitemId) {
       const key = q.notificationKey ?? q.qitemId;
       opts.outboundSeen.mark(key, "posted");
       opts.release?.(key);
@@ -318,5 +318,77 @@ export function subsystemSlackDeliver(opts: SubsystemSlackDeliveryOpts): Subsyst
 
     log(`delivered ${decision.decisionId}${q.qitemId ? ` (qitem ${q.qitemId})` : ""}`);
     return { ok: true };
+  };
+}
+
+/** One authored primary and, optionally, one coherent supplemental reply. The
+ * existing attempted/delivered stores and marker reconciler own each stable part.
+ * Preflight ALL parts before posting; the episode receipt is written only after
+ * every required part. A restart retries missing parts and the final receipt. */
+export function subsystemSlackDeliver(opts: SubsystemSlackDeliveryOpts): SubsystemDeliverFn {
+  return async (decision) => {
+    if (opts.delivered.load().has(decision.decisionId)) return { ok: true };
+    const q = (decision.payload ?? {}) as OutboundPostPayload & { media?: SlackMediaRef[] };
+    const parts = q.humanDetail
+      ? [
+          { ...q, humanDetail: undefined, body: `${q.body ?? ""}\n\nSupplemental detail follows in this thread.` },
+          { ...q, humanDetail: undefined, summary: `Supplemental detail: ${q.summary ?? ""}`, body: q.humanDetail, media: [], evidenceRef: null },
+        ]
+      : [q];
+    const partId = (index: number) => parts.length === 1 ? decision.decisionId : `${decision.decisionId}:part:${index + 1}`;
+    try {
+      for (const [index, part] of parts.entries()) {
+        buildOutboundMessage(part, {
+          sourceLabel: opts.sourceLabel,
+          attribution: attributionFromSession(part.sourceSession),
+          mentionUserId: index === 0 ? opts.resolveMentionUserId?.(q) : undefined,
+          reconcileMarker: reconcileToken(partId(index)),
+          mediaRefs: Array.isArray(part.media) ? part.media : part.evidenceRef ? [{ imageUrl: part.evidenceRef, altText: part.summary ?? "attachment" }] : undefined,
+        });
+      }
+    } catch (error) {
+      const detail = (error as Error).message;
+      try { opts.onTransportFailed?.(q, "human-message-unrenderable", detail); }
+      catch (receiptError) { return { ok: false, class: "receipt-failed", detail: (receiptError as Error).message }; }
+      return { ok: false, class: "human-message-unrenderable", detail };
+    }
+    if (parts.length === 1) return deliverSinglePart(opts)(decision);
+
+    const rootPrefix = `${decision.decisionId}::primary-receipt::`;
+    const retained = [...opts.attempted.load()].find((key) => key.startsWith(rootPrefix));
+    let primary: { messageTs: string; threadTs?: string } | undefined = retained
+      ? JSON.parse(Buffer.from(retained.slice(rootPrefix.length), "base64url").toString("utf8"))
+      : undefined;
+    for (const [index, part] of parts.entries()) {
+      if (index > 0 && (!primary || primary.messageTs === "reconciled")) {
+        return { ok: false, class: "receipt-failed", detail: "Supplemental delivery requires the actual primary Slack timestamp; retain for reconciliation." };
+      }
+      const outcome = await deliverSinglePart({
+        ...opts,
+        resolveMentionUserId: index === 0 ? opts.resolveMentionUserId : undefined,
+        resolveThreadTs: index === 0 ? opts.resolveThreadTs : () => primary!.threadTs ?? primary!.messageTs,
+        onPostedRoot: index === 0 ? opts.onPostedRoot : undefined,
+        onPosted: (_part, messageTs, threadTs) => {
+          if (index !== 0) return;
+          if (messageTs === "reconciled") throw new Error("Primary reconciliation has no Slack timestamp; multipart delivery remains incomplete.");
+          primary = { messageTs, threadTs };
+          opts.attempted.mark(rootPrefix + Buffer.from(JSON.stringify(primary)).toString("base64url"), "primary-receipt");
+        },
+      }, false)({ ...decision, decisionId: partId(index), payload: part });
+      if (!outcome.ok) return outcome;
+    }
+    try {
+      if (!primary) throw new Error("Primary receipt unavailable; retain multipart delivery.");
+      opts.onPosted?.(q, primary.messageTs, primary.threadTs);
+      opts.delivered.mark(decision.decisionId, "all-parts-delivered");
+      if (q.qitemId) {
+        const key = q.notificationKey ?? q.qitemId;
+        opts.outboundSeen.mark(key, "posted");
+        opts.release?.(key);
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, class: "receipt-failed", detail: (error as Error).message };
+    }
   };
 }
