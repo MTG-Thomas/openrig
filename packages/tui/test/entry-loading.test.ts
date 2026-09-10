@@ -109,3 +109,19 @@ describe("entry never takes navigation from the user", () => {
     expect(startup.state.open).toBe(true); expect(onWork).not.toHaveBeenCalled(); expect(startDaemon).not.toHaveBeenCalled();
   });
 });
+
+it("a missing-file response clears content without advancing the last successful read", async () => {
+  const { hydrateSnapshot } = await import("../src/hydrate.js");
+  let now = 1000; let missing = false;
+  const client = new DaemonClient({ fetchImpl: (async input => {
+    if (String(input).includes('/roots')) return Response.json({ roots: [{ name: 'workspace', path: '/fixture' }] });
+    return missing ? Response.json({ error: 'stat_failed', message: 'File missing' }, { status: 404 })
+      : Response.json({ root: 'workspace', path: 'SPEC.md', absolutePath: '/fixture/SPEC.md', content: 'Retain this until a refusal', mtime: '2026-09-10T00:00:00Z', contentHash: 'abc', truncated: false });
+  }) as typeof fetch });
+  const state = { ...createViewState({ instanceId: 'fixture' }).get(), file: { root: 'workspace', path: 'SPEC.md' } };
+  const live = createLiveRefresh({ now: () => now, onFrame: () => {}, hydrate: (page, signal) => hydrateSnapshot(client.forPage(page, signal), undefined, undefined, undefined, undefined, state) });
+  await live.refresh(); missing = true; now = 2000; await live.refresh();
+  expect(live.snapshot().fileRead?.result).toMatchObject({ error: 'stat_failed' });
+  expect(live.load()).toMatchObject({ stale: true, lastSuccessAt: 1000 });
+  live.close();
+});

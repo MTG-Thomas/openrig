@@ -21,7 +21,11 @@ export class PageRead {
         if (response.status >= 500) throw new Error(`HTTP ${response.status}`);
         // Absence/access refusal is a new answer; do not resurrect deleted or
         // newly forbidden content from the prior successful response.
-        if (!response.ok) { this.values.delete(key); return response; }
+        if (!response.ok) {
+          this.values.delete(key);
+          this.errors.push(`${new URL(key).pathname}: HTTP ${response.status}`);
+          return response;
+        }
         const body = await response.text();
         JSON.parse(body); // all page reads are JSON; a broken body is a failed read
         signal.throwIfAborted();
