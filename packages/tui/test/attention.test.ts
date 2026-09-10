@@ -33,6 +33,9 @@ it.each([140, 80])("keeps readable summaries, passive exact source navigation an
   view.dispatch(lines.find(l => l.action?.type === "attention-open")!.action!); await refresh();
   expect(view.get().attentionOpen).toBe(item.id);
   expect(attentionLines(view.get(), snap, width).map(l => l.text).join("\n")).toContain("Full original request");
+  const retained = { ...snap, attentionRead: { ...snap.attentionRead!, items: [] } };
+  const resolved = attentionLines(view.get(), retained, width).map(l => l.text).join("\n");
+  expect(resolved).toContain("Source record"); expect(resolved).not.toContain("Action required");
   const caller = view.get();
   view.dispatch({ type: "attention-source", path: "/books/alpha/proof.md#decision" });
   expect(view.get().file).toEqual({ root: "alpha", path: "proof.md", anchor: "decision" });

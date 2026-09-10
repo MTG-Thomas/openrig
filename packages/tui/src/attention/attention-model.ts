@@ -10,7 +10,8 @@ export function attentionLines(state: ViewState, snap: FleetSnapshot, width: num
     lines.push(listItem("Back", { type: "back" }));
     if (!d || d.item.id !== state.attentionOpen) lines.push({ text: read.detailError ?? "Selected source unavailable." });
     else {
-      lines.push({ text: `${d.item.kind === "action" ? "Action required" : "Update"} · ${d.item.urgency}` }, { text: d.item.summary });
+      const title = read.items.some(i => i.id === d.item.id) ? d.item.kind === "action" ? "Action required" : "Update" : "Source record";
+      lines.push({ text: `${title} · ${d.item.urgency}` }, { text: d.item.summary });
       if (d.item.unblocks) lines.push({ text: `Unblocks: ${d.item.unblocks}` });
       lines.push({ text: `Scope: ${d.item.scope}` }, { text: `Observed: ${d.item.at ?? "unknown"}` });
       for (const f of d.files) lines.push(listItem(f.label, { type: "attention-source", path: f.path }));
