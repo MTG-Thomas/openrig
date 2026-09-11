@@ -182,6 +182,10 @@ export function archiveAgedTerminalTransitions(
   const archiveColumns = new Set(
     (db.prepare("PRAGMA table_info(queue_transitions_archive)").all() as Array<{ name: string }>).map((row) => row.name),
   );
+  if (activeColumns.has("identity_provenance") && !archiveColumns.has("identity_provenance")) {
+    throw new Error("queue-retention: archive lacks identity_provenance; apply migrations before archiving");
+  }
+  const identityColumn = activeColumns.has("identity_provenance") ? ", identity_provenance" : "";
   const carriesOwnerNotification = ["owner_notification_kind", "owner_notification_level"]
     .every((column) => activeColumns.has(column) && archiveColumns.has(column));
   const ownerInsert = carriesOwnerNotification ? ", owner_notification_kind, owner_notification_level" : "";
@@ -189,10 +193,10 @@ export function archiveAgedTerminalTransitions(
   const selectRows = db.prepare(
     `INSERT INTO queue_transitions_archive (
        transition_id, qitem_id, ts, state, transition_note,
-       actor_session, closure_reason, closure_target${ownerInsert}, archived_at
+       actor_session, closure_reason, closure_target${identityColumn}${ownerInsert}, archived_at
      )
      SELECT transition_id, qitem_id, ts, state, transition_note,
-            actor_session, closure_reason, closure_target${ownerSelect}, ?
+            actor_session, closure_reason, closure_target${identityColumn}${ownerSelect}, ?
        FROM queue_transitions
       WHERE qitem_id = ?`,
   );

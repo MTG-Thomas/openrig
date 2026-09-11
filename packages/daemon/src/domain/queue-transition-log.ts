@@ -137,6 +137,7 @@ export class QueueTransitionLog {
    *  era-stamp column, so the writer degrades (omits it) instead of throwing. */
   private readonly hasIdentityProvenanceColumn: boolean;
   private readonly hasOwnerNotificationColumns: boolean;
+  private readonly historySource: string;
 
   constructor(db: Database.Database) {
     this.db = db;
@@ -147,6 +148,17 @@ export class QueueTransitionLog {
       (this.db.prepare("PRAGMA table_info(queue_transitions)").all() as Array<{ name: string }>).map((c) => c.name),
     );
     this.hasOwnerNotificationColumns = columns.has("owner_notification_kind") && columns.has("owner_notification_level");
+    // One explicit projection for all history readers, including old nullable schemas.
+    // SELECT * cannot union the archive's extra archived_at column with the live table.
+    const fields = ["transition_id", "qitem_id", "ts", "state", "transition_note", "actor_session",
+      "closure_reason", "closure_target", "identity_provenance", "owner_notification_kind", "owner_notification_level"];
+    const sources = ["queue_transitions", "queue_transitions_archive"].flatMap((table) => {
+      const available = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name));
+      if (available.size === 0) return [];
+      return [`SELECT ${fields.map((field) => available.has(field) ? field : `NULL AS ${field}`).join(", ")} FROM ${table}`];
+    });
+    this.historySource = `(${sources.join(" UNION ALL ")})`;
+
   }
 
   /**
@@ -188,7 +200,7 @@ export class QueueTransitionLog {
   listForQitem(qitemId: string): QueueTransition[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM queue_transitions WHERE qitem_id = ? ORDER BY transition_id ASC"
+        `SELECT * FROM ${this.historySource} WHERE qitem_id = ? ORDER BY transition_id ASC`
       )
       .all(qitemId) as QueueTransitionRow[];
     return rows.map((r) => this.rowToTransition(r));
@@ -199,7 +211,7 @@ export class QueueTransitionLog {
     if (!Number.isInteger(limit) || limit < 1 || limit > 10001) throw new Error("Invalid transition window limit");
     const start = new Date(startedAt).toISOString();
     const end = new Date(endedAt).toISOString();
-    const rows = this.db.prepare("SELECT * FROM queue_transitions WHERE qitem_id = ? AND ts >= ? AND ts <= ? ORDER BY transition_id ASC LIMIT ?")
+    const rows = this.db.prepare(`SELECT * FROM ${this.historySource} WHERE qitem_id = ? AND ts >= ? AND ts <= ? ORDER BY transition_id ASC LIMIT ?`)
       .all(qitemId, start, end, limit) as QueueTransitionRow[];
     return rows.map((row) => this.rowToTransition(row));
   }
@@ -215,7 +227,7 @@ export class QueueTransitionLog {
       WHERE q.ts_created <= ? LIMIT 1001
     ) SELECT id FROM lineage`).all(qitemId, end) as Array<{ id: string }>;
     if (family.length > 1000) throw new Error("health_checkpoint_lineage_limit");
-    const rows = this.db.prepare(`SELECT * FROM queue_transitions
+    const rows = this.db.prepare(`SELECT * FROM ${this.historySource}
       WHERE qitem_id IN (${family.map(() => "?").join(",")}) AND ts >= ? AND ts <= ?
       ORDER BY transition_id ASC LIMIT ?`).all(...family.map((r) => r.id), start, end, limit) as QueueTransitionRow[];
     return rows.map((row) => this.rowToTransition(row));
@@ -224,7 +236,7 @@ export class QueueTransitionLog {
   listForActor(actorSession: string, limit = 100): QueueTransition[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM queue_transitions WHERE actor_session = ? ORDER BY transition_id DESC LIMIT ?"
+        `SELECT * FROM ${this.historySource} WHERE actor_session = ? ORDER BY transition_id DESC LIMIT ?`
       )
       .all(actorSession, limit) as QueueTransitionRow[];
     return rows.map((r) => this.rowToTransition(r));
@@ -265,7 +277,7 @@ export class QueueTransitionLog {
             PARTITION BY t.qitem_id
             ORDER BY t.transition_id
           ) AS previous_state
-        FROM queue_transitions t
+        FROM ${this.historySource} t
         JOIN queue_items q ON q.qitem_id = t.qitem_id
         WHERE ${scopeSql}
       ), qualifying AS (
@@ -313,7 +325,7 @@ export class QueueTransitionLog {
     if (!this.hasOwnerNotificationColumns) return null;
     const row = this.db
       .prepare(
-        `SELECT * FROM queue_transitions
+        `SELECT * FROM ${this.historySource}
           WHERE qitem_id = ? AND owner_notification_level IS NOT NULL
           ORDER BY transition_id DESC LIMIT 1`,
       )
@@ -324,7 +336,7 @@ export class QueueTransitionLog {
   hasOwnerNotificationReceipt(qitemId: string, notificationKey: string): boolean {
     const rows = this.db
       .prepare(
-        `SELECT transition_note FROM queue_transitions
+        `SELECT transition_note FROM ${this.historySource}
           WHERE qitem_id = ? AND transition_note LIKE 'slack-owner-notification-posted %'`,
       )
       .all(qitemId) as Array<{ transition_note: string }>;
