@@ -25,9 +25,15 @@ before publication.
   Configuration and Connections under System, with six top-level entries.
 - Reduce repeated terminal inventory work while preserving saved-view preview
   and explicit Herdr Open; no general latency improvement is claimed.
+- Keep primary queue facts readable when optional blocker descriptions fail;
+  bound fleet reads across stages and avoid duplicate policy/receipt read work.
+- Preserve nullable identity provenance during queue-history archival. Shared
+  history, RECENT and OWNER/receipt readers now include archived records;
+  unknown historical provenance stays null rather than being reconstructed.
 
 Root, CLI, daemon and web UI are `0.5.14`; terminal TUI remains `0.1.0`.
-Migration head advances to `081_human_notification_intent`. Private installed
+Migration head advances to `082_archive_identity_provenance`, following the
+explicit human-intent fields in migration 081. Private installed
 review and controlled notification checks retain their exact candidate and
 runtime attribution. See [the release notes](docs/releases/v0.5.14.md) for
 operator guidance, pending live validation and known limits.
