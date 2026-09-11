@@ -20,7 +20,7 @@ import { wrapDetailLines, detailPage, listItem, sectionRule, type ContentLine, t
 import { scopeContractLines, scopeIdentityLines, proofProvenanceLines, type ReadinessSnap, type MissionScopesSnap, type SliceScopeSnap } from "../scopes/scopes-model.js";
 
 export interface ExecutionViewSnap {
-  readiness?: { revision: string; state: string; slices: Array<{ scope: string; readiness: import("../scopes/scopes-model.js").ReadinessSnap }> };
+  readiness?: { historicalStatus?: string | null; revision: string; state: string; slices: Array<{ scope: string; readiness: import("../scopes/scopes-model.js").ReadinessSnap }> };
   view: "execution";
   mission: string;
   derived_at?: string;
@@ -90,7 +90,7 @@ function semanticAction(parts: SemanticSeg[], action: Action, width: number): Co
 }
 
 function stateToken(word: string): Token {
-  if (word === "working" || word === "done" || word === "active") return "ok";
+  if (word === "working" || word === "done" || word === "outcome complete" || word === "active") return "ok";
   if (word === "needs input" || word === "blocked" || word === "parked") return "warn";
   if (word === "failed") return "error";
   return "dim";
@@ -151,6 +151,8 @@ interface SliceFacts {
   care: Record<string, unknown> | null;
   scope: SliceScopeSnap | null;
   lane: Record<string, unknown> | null;
+  work: Array<Record<string, unknown>>;
+  plannedOwners: Array<{ component: string; owner: string; source: string }>;
   park: Record<string, unknown> | null;
 }
 
@@ -179,13 +181,15 @@ function sliceFacts(execution: ExecutionViewSnap, scopes: readonly MissionScopes
       name: sliceName(scope, dir),
       order: seqIndex >= 0 ? seqIndex : seq.length + index,
       ladder,
-      readiness: execution.readiness?.slices.find(s => s.scope === dir)?.readiness ?? null,
+      readiness: execution.readiness?.slices.find(s => s.scope === dir)?.readiness ?? scope?.readiness ?? null,
       cells,
       rank: reachedRank(cells),
       sequencing: seqIndex >= 0 ? seq[seqIndex]! : null,
       care: care.find((item) => item["slice_id"] === id) ?? null,
       scope,
       lane,
+      work: Array.isArray(seq[seqIndex]?.["work_rows"]) ? seq[seqIndex]!["work_rows"] as Array<Record<string, unknown>> : lane ? [lane] : [],
+      plannedOwners: (seq[seqIndex]?.["planned_owners"] ?? []) as Array<{ component: string; owner: string; source: string }>,
       park: lane ? parks.find((item) => item["qitem_id"] === lane["qitem_id"]) ?? null : null,
     };
   }).sort((a, b) => a.order - b.order);
@@ -231,12 +235,20 @@ function problemText(slice: SliceFacts): string | null {
   return null;
 }
 
-/** The one state word a person scans: a live problem, live activity, else the declared status. */
+/** Outcome acceptance, live work and authored intent are separate inputs. */
+function outcomeComplete(slice: SliceFacts): boolean {
+  const r = slice.readiness;
+  return !!r?.configured && r.state === "ready" && r.items.length > 0 && r.items.every(i => i.state === "accepted");
+}
 function stateWord(slice: SliceFacts): string {
   const problem = problemText(slice);
-  if (problem) return problem.startsWith("needs input") ? "needs input" : problem.startsWith("waits on") ? "blocked" : problem.split(" ")[0]!;
-  if (slice.lane) return str(record(slice.lane["activity"])["activity"], "claimed");
-  return declaredText(slice);
+  if (problem) return problem.startsWith("needs input") ? "needs input" : problem.startsWith("waits on") ? "blocked" : "waiting";
+  if (record(slice.lane?.["activity"])["activity"] === "working") return "working";
+  if (slice.work.length) return slice.work.some(w => w["state"] === "blocked") ? "waiting" : "assigned";
+  if (outcomeComplete(slice)) return "outcome complete";
+  if (slice.readiness?.items.some(i => i.state === "withdrawn" || i.state === "rejected")) return "reopened";
+  if (slice.readiness?.configured) return "outcomes pending";
+  return declaredText(slice) === "done" ? "declared done" : "planned";
 }
 
 function proofText(scope: SliceScopeSnap | null): string | null {
@@ -246,19 +258,22 @@ function proofText(scope: SliceScopeSnap | null): string | null {
 }
 
 function assigneeText(slice: SliceFacts): string | null {
-  if (!slice.lane) return null;
-  const activity = record(slice.lane["activity"]);
-  const by = str(activity["decided_by"], "");
-  return `${seatShort(slice.lane["seat"])}${by ? ` (${by})` : ""}`;
+  const owners = [...new Set(slice.work.map(w => seatShort(w["seat"])).filter(Boolean))];
+  return owners.length ? owners.join(", ") : null;
+}
+function plannedOwnerText(slice: SliceFacts): string {
+  const build = slice.plannedOwners.filter(p => p.component === "build.minimal-gap");
+  return [...new Set((build.length ? build : slice.plannedOwners).map(p => seatShort(p.owner)))].join(", ") || "unknown";
 }
 
 /** What unlocks next, only when the projection actually says so. */
 function nextText(slice: SliceFacts): string | null {
   const seq = slice.sequencing;
   if (!seq) return null;
+  if (outcomeComplete(slice) || slice.work.length) return null;
   if (seq["next_up"] === true) return "ready to start";
   if (blockerText(seq["blocked_on_rows"])) return null; // the problem column carries it
-  if (slice.lane || slice.rank >= 4 || declaredText(slice) === "done") return null;
+
   const deps = seq["depends_on"];
   if (Array.isArray(deps) && deps.length > 0) return `after ${deps.map(String).join(", ")}`;
   return null;
@@ -290,7 +305,7 @@ function stateMark(word: string): string {
   if (word === "working") return "●";
   if (word === "needs input") return "◐";
   if (word === "blocked") return "⚑";
-  if (word === "done") return "✓";
+  if (word === "done" || word === "outcome complete") return "✓";
   if (word === "failed") return "✕";
   return "○";
 }
@@ -302,71 +317,36 @@ function padCell(text: string, width: number): string {
 
 function graphNode(slice: SliceFacts, width: number): ContentLine[] {
   const inside = width - 2;
-  const title = ` ${slice.id} `;
-  const topTail = `${"─".repeat(Math.max(0, inside - title.length - 1))}┐`;
-  const nameText = padCell(` ${slice.name}`, inside);
-  const state = `${stateMark(stateWord(slice))} ${stateWord(slice)}`;
-  const owner = assigneeText(slice);
-  const ownerRoom = Math.max(0, inside - 1 - state.length);
-  const rawOwner = owner ? ` · ${owner}` : "";
-  const ownerText = ownerRoom > 0 ? clip(rawOwner, ownerRoom) : "";
-  const statusPad = " ".repeat(Math.max(0, inside - 1 - state.length - ownerText.length));
+  const state = stateWord(slice);
+  const owners = assigneeText(slice);
+  const deps = slice.sequencing?.["depends_on"];
+  const after = Array.isArray(deps) ? deps.map(String).join(", ") || "none declared" : "unknown";
+  const cell = (text: string, token: Token): ContentLine => semantic([
+    { text: "│", token: "chrome" }, { text: padCell(" " + text, inside), token }, { text: "│", token: "chrome" },
+  ], width);
   return [
-    semantic([{ text: "┌─", token: "chrome" }, { text: title, token: "accentBright", bold: true }, { text: topTail, token: "chrome" }], width),
-    semantic([{ text: "│", token: "chrome" }, { text: nameText, token: "bright" }, { text: "│", token: "chrome" }], width),
-    semantic([
-      { text: "│ ", token: "chrome" },
-      { text: state, token: stateToken(stateWord(slice)), bold: true },
-      { text: ownerText, token: "dim" },
-      { text: statusPad },
-      { text: "│", token: "chrome" },
-    ], width),
+    semantic([{ text: "┌" + padCell(`─ ${slice.id} `, inside).replace(/ +$/, m => "─".repeat(m.length)) + "┐", token: "accentBright" }], width),
+    cell(slice.name, "bright"), cell(`${stateMark(state)} ${state}`, stateToken(state)),
+    cell(owners ? `Owner: ${owners}` : `Planned: ${plannedOwnerText(slice)}`, "dim"),
+    cell(`After: ${after}`, "dim"),
     semantic([{ text: `└${"─".repeat(inside)}┘`, token: "chrome" }], width),
   ];
 }
 
 function graphChunk(execution: ExecutionViewSnap, members: SliceFacts[], width: number): ContentLine[] {
   const gap = 2;
-  const perRow = width >= 108 ? 3 : 2;
-  const nodeWidth = Math.min(34, Math.max(18, Math.floor((width - gap * (Math.min(perRow, members.length) - 1)) / Math.min(perRow, members.length))));
+  const perRow = width >= 108 ? 3 : width >= 70 ? 2 : 1;
+  const nodeWidth = Math.floor((width - gap * (Math.min(perRow, members.length) - 1)) / Math.min(perRow, members.length));
   const out: ContentLine[] = [];
   for (let start = 0; start < members.length; start += perRow) {
     const chunk = members.slice(start, start + perRow);
-    const boxes = chunk.map((slice) => graphNode(slice, nodeWidth));
-    const zones = chunk.map((slice, index) => ({
-      start: index * (nodeWidth + gap),
-      end: index * (nodeWidth + gap) + nodeWidth,
-      action: sliceAction(execution, slice),
-    }));
-    for (let line = 0; line < 4; line += 1) {
-      const segs = boxes.flatMap((box, index) => [
-        ...(index > 0 ? [{ text: " ".repeat(gap) }] : []),
-        ...(box[line]!.segs ?? [{ text: box[line]!.text }]),
-      ]);
-      out.push({ text: segs.map((seg) => seg.text).join(""), segs, zones });
+    const boxes = chunk.map(slice => graphNode(slice, nodeWidth));
+    const zones = chunk.map((slice, index) => ({ start: index * (nodeWidth + gap), end: index * (nodeWidth + gap) + nodeWidth, action: sliceAction(execution, slice) }));
+    for (let line = 0; line < 6; line++) {
+      const segs = boxes.flatMap((box, index) => [...(index ? [{ text: " ".repeat(gap) }] : []), ...box[line]!.segs!]);
+      out.push({ text: segs.map(seg => seg.text).join(""), segs, zones });
     }
-    const centers = chunk.map((_, index) => index * (nodeWidth + gap) + Math.floor(nodeWidth / 2));
-    const busWidth = Math.min(width, chunk.length * nodeWidth + Math.max(0, chunk.length - 1) * gap);
-    const stubs = Array.from({ length: busWidth }, () => " ");
-    for (const center of centers) if (center < stubs.length) stubs[center] = "│";
-    out.push({ text: stubs.join("").trimEnd() });
-    if (chunk.length === 1) {
-      const arrow = Array.from({ length: busWidth }, () => " ");
-      if (centers[0]! < arrow.length) arrow[centers[0]!] = "▼";
-      out.push(semantic([{ text: arrow.join("").trimEnd(), token: "chrome" }], width));
-      continue;
-    }
-    const bus = Array.from({ length: busWidth }, () => " ");
-    const lo = centers[0] ?? 0;
-    const hi = centers.at(-1) ?? lo;
-    for (let x = lo; x <= hi && x < bus.length; x += 1) bus[x] = "━";
-    for (const center of centers) if (center < bus.length) bus[center] = "┴";
-    const mid = Math.floor((lo + hi) / 2);
-    if (mid < bus.length) bus[mid] = centers.includes(mid) ? "┼" : "┬";
-    out.push(semantic([{ text: bus.join("").trimEnd(), token: "chrome" }], width));
-    const arrow = Array.from({ length: busWidth }, () => " ");
-    if (mid < arrow.length) arrow[mid] = "▼";
-    out.push(semantic([{ text: arrow.join("").trimEnd(), token: "chrome" }], width));
+    if (start + perRow < members.length) out.push(semantic([{ text: "  ↓ next in plan order · dependencies above", token: "chrome" }], width));
   }
   return out;
 }
@@ -390,17 +370,9 @@ function waveRows(execution: ExecutionViewSnap, wave: string, members: SliceFact
     { text: title, token: "bright", bold: true },
     { text: ` ${"━".repeat(width)}`, token: "chrome" },
   ], width);
-  if (width < 70) return [
-    { text: "" }, header,
-    ...planningLines(execution, width, wave, expanded),
-    ...members.map((slice) => semanticAction([
-      { text: `${stateMark(stateWord(slice))} ${stateWord(slice).padEnd(11)}`, token: stateToken(stateWord(slice)), bold: true },
-      { text: `${slice.id}  `, token: "accentBright" },
-      { text: slice.name, token: "bright" },
-    ], sliceAction(execution, slice), width)),
-  ];
   return [
-    { text: "" }, header, ...planningLines(execution, width, wave, expanded), ...graphChunk(execution, members, width),
+    { text: "" }, { ...header, zones: [{ start: 0, end: width, action: open(`group:wave:${wave}`) }] }, ...graphChunk(execution, members, width),
+    ...(expanded ? planningLines(execution, width, wave, true) : []),
   ];
 }
 
@@ -463,28 +435,24 @@ function evidenceDetail(execution: ExecutionViewSnap, slices: SliceFacts[], widt
 
 function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionScopesSnap[] | undefined, width: number, timeZone = DEFAULT_TIME_ZONE): ContentLine[] {
   const slices = sliceFacts(execution, scopes);
-  const live = slices.filter((slice) => stateWord(slice) === "working").length;
-  const problems = slices.filter((slice) => problemText(slice)).length;
+  const live = slices.filter(slice => stateWord(slice) === "working").length;
+  const problems = slices.filter(slice => problemText(slice)).length;
   const build = shortSha(record(execution.sources?.["build_info"])["commit"]);
-  const now = slices.filter((slice) => stateWord(slice) === "working").map((slice) => slice.id);
-  const needsHuman = slices.filter((slice) => problemText(slice));
-  const attributed = execution.readiness?.slices.some(s => s.readiness.configured) === true;
-  const done = attributed ? execution.readiness!.slices.filter(s => s.readiness.state === "ready").length : slices.filter((slice) => declaredText(slice) === "done").length;
-  const next = slices.find((slice) => nextText(slice) === "ready to start");
-  const unknown = slices.filter((slice) => !slice.readiness?.configured && RUNGS.some((rung) => slice.cells[rung].state === "undetermined")).length;
-  const missionState = attributed ? `PROOF ${execution.readiness!.state.toUpperCase()}` : problems > 0 ? "NEEDS ATTENTION" : live > 0 ? "ACTIVE" : done === slices.length && slices.length > 0 ? "COMPLETE" : "QUIET";
-  const missionToken: Token = problems > 0 ? "warn" : live > 0 || missionState === "COMPLETE" ? "ok" : "dim";
-  const nowText = now.length ? now.join(", ") : "no live slice";
-  const nextValue = next ? `${next.id} · ready to start` : "no sequenced next transition";
-  const progress = `${done}/${slices.length} ${attributed ? "proof ready" : "declared done"} · ${live} working${problems ? ` · ${problems} with a problem` : ""}`;
+  const active = slices.filter(slice => slice.work.length || problemText(slice));
+  const needsHuman = slices.filter(slice => problemText(slice)?.startsWith("needs input"));
+  const attributed = slices.some(slice => slice.readiness?.configured);
+  const done = slices.filter(outcomeComplete).length;
+  const next = slices.find(slice => nextText(slice) === "ready to start") ?? slices.find(slice => !outcomeComplete(slice) && !slice.work.length);
+  const unknown = slices.filter(slice => !slice.readiness?.configured).length;
+  const missionState = slices.length && done === slices.length ? "OUTCOMES COMPLETE" : "OUTCOMES OPEN";
+  const missionToken: Token = problems ? "warn" : done === slices.length && slices.length ? "ok" : "dim";
+  const nowText = active.length ? active.map(slice => `${slice.id} · ${assigneeText(slice) ?? "owner unknown"} · ${stateWord(slice)}`).join("; ") : "no open slice work in this read";
+  const nextValue = next ? `${next.id} · ${nextText(next) ?? "dependency eligibility unknown"}` : "outcomes complete; release decision separate";
+  const progress = `${done}/${slices.length} outcomes complete · ${live} working${problems ? ` · ${problems} waiting` : ""}${unknown ? ` · ${unknown} proof unknown` : ""}`;
   const fact = (label: string, value: string, token: Token): ContentLine => semantic([
     { text: `  ${label.padEnd(10)}`, token: "dim", bold: true },
     { text: value, token },
   ], width);
-  const narrowFact = (label: string, value: string, token: Token): ContentLine[] => [
-    semantic([{ text: `  ${label}`, token: "dim", bold: true }], width),
-    semantic([{ text: `    ${value}`, token }], width),
-  ];
   const lines: ContentLine[] = [semantic([
     { text: execution.mission, token: "accentBright", bold: true },
     { text: " · ", token: "chrome" },
@@ -493,15 +461,15 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
     { text: `${slices.length} slice${slices.length === 1 ? "" : "s"}`, token: "bright" },
   ], width)];
 
-  if (width < 70) {
-    lines.push(...narrowFact("NOW", nowText, now.length ? "ok" : "dim"));
-    lines.push(...narrowFact("NEXT", nextValue, next ? "accentBright" : "dim"));
-    lines.push(...narrowFact("PROGRESS", progress, "bright"));
-  } else {
-    lines.push(fact("NOW", nowText, now.length ? "ok" : "dim"));
-    lines.push(fact("NEXT", nextValue, next ? "accentBright" : "dim"));
-    lines.push(fact("PROGRESS", progress, "bright"));
+  lines.push(fact("NOW", nowText, active.length ? "ok" : "dim"));
+  if (active.length) {
+    const first = active[0]!;
+    const detail = problemText(first) ?? str(first.work[0]?.["summary"], "Open the slice for queue and activity evidence");
+    lines.push(semanticAction([{ text: "  " + detail, token: problemText(first) ? "warn" : "bright" }], sliceAction(execution, first), width));
   }
+  lines.push(fact("NEXT", nextValue, next ? "accentBright" : "dim"));
+  lines.push(fact("PROGRESS", progress, "bright"));
+  lines.push(fact("LIFECYCLE", `${execution.readiness?.historicalStatus ?? "unknown"} · separate from outcomes`, "dim"));
   if (needsHuman.length) {
     const first = needsHuman[0]!;
     lines.push(semanticAction([
@@ -509,6 +477,9 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
       { text: `${needsHuman.map((slice) => slice.id).join(", ")} · ${problemText(first)}`, token: "bright" },
     ], sliceAction(execution, first), width));
   }
+  const waves = new Map<string, SliceFacts[]>();
+  for (const slice of slices) waves.set(waveOf(slice), [...(waves.get(waveOf(slice)) ?? []), slice]);
+  for (const [wave, members] of waves) lines.push(...waveRows(execution, wave, members, width));
   const provenanceAction = attributed || unknown > 0 ? open("evidence") : open("sources");
   const provenance: SemanticSeg[] = [
     { text: "  provenance · ", token: "dim" },
@@ -525,9 +496,6 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
   lines.push(...lifecycleLines(execution, width));
   lines.push(...planningLines(execution, width));
 
-  const waves = new Map<string, SliceFacts[]>();
-  for (const slice of slices) waves.set(waveOf(slice), [...(waves.get(waveOf(slice)) ?? []), slice]);
-  for (const [wave, members] of waves) lines.push(...waveRows(execution, wave, members, width));
   if (slices.length === 0) lines.push({ text: "  (no slices on this mission)" });
   return lines;
 }
@@ -707,6 +675,12 @@ function sliceDetail(
     { text: "" }, ...card(`${slice.readiness?.configured ? "CODE LINEAGE" : "EVIDENCE"} · declared ${declaredText(slice)} · ${evidenceText(slice.cells, slice.rank)}`, evidence, width),
     { text: "" }, ...card("RULING", rulingRows(detail, width, timeZone), width),
     { text: "" }, ...card("NEEDS YOU", [cardField("state", needs ?? "none on current projection")], width),
+    ...wrapDetailLines([
+      { text: `Outcome: ${outcomeComplete(slice) ? "complete — all current required judgments accepted" : "not complete / proof pending or unknown"}` },
+      ...slice.work.map(w => ({ text: `Queue ${str(w["qitem_id"])} · ${str(w["state"], "assigned")} · owner ${str(w["seat"])} · ${str(w["summary"], "")}${w["blocked_on"] ? ` · waits on ${str(w["blocked_on"])}` : ""}` })),
+      ...slice.plannedOwners.map(p => ({ text: `Planned ${p.component}: ${p.owner} · ${p.source}` })),
+      { text: "Schedule: dependency order only; ETA unknown." },
+    ], width),
     { text: "" }, ...card("TYPED ROWS", typedRows, width),
     { text: "" }, ...planningLines(execution, width), ...planningLines(execution, width, waveOf(slice), true),
     { text: "" }, ...card("DEPENDENCIES", dependencies, width),

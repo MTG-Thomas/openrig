@@ -96,6 +96,7 @@ describe("live visual regressions", () => {
     };
     const view = createViewState({ instanceId: "t", getSnapshot: () => snap });
     view.dispatch({ type: "jump", section: "specs" });
+    view.dispatch({ type: "toggle-expand", key: "specs-kind:agent" });
     const rows = computeExplorerRows(view.get(), snap);
     const target = rows.findIndex((row) => row.label.includes("spec-15"));
     view.dispatch({ type: "select", index: target, rowCount: rows.length });
@@ -284,6 +285,7 @@ describe("live visual regressions", () => {
     };
     const view = createViewState({ instanceId: "t", getSnapshot: () => snap });
     view.dispatch({ type: "jump", section: "specs" });
+    view.dispatch({ type: "toggle-expand", key: "specs-kind:agent" });
 
     const output = renderScreen(view.get(), snap, { cols: 140, rows: 34 }).lines.join("\n");
     expect(output).toContain("/ filter specs…");

@@ -71,13 +71,33 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
   let scope = deps.scopeKey?.() ?? "";
   let generation = 0;
   let controller = new AbortController();
-  let page = new PageRead(deps.now);
+  let page = new PageRead(deps.now, forgetDenied);
+  // Bounded history local to this client. Returning revalidates the page's own reads.
+  const pages = new Map<string, { page: PageRead; snapshot: FleetSnapshot; load: LoadState; lastConfirmedAt: number | null }>();
+  function forgetDenied(url: string): void {
+    // A denial in one view also invalidates historical views of that same URL.
+    // Unrelated pages and successful sibling reads in this page remain intact.
+    for (const [key, entry] of pages) if (entry.page.has(url)) pages.delete(key);
+  }
   function syncScope(): void {
     const next = deps.scopeKey?.() ?? "";
     if (next === scope) return;
+    pages.delete(scope);
+    pages.set(scope, { page, snapshot, load: { ...load, inFlight: false }, lastConfirmedAt });
+    while (pages.size > 12) pages.delete(pages.keys().next().value!);
+    const prior = pages.get(next);
+    const navigator = snapshot;
     scope = next; generation += 1; controller.abort(); controller = new AbortController();
-    page = new PageRead(deps.now); snapshot = emptySnapshot(); flashes = [];
-    lastConfirmedAt = null; load = { inFlight: false, settled: false };
+    page = prior?.page ?? new PageRead(deps.now, forgetDenied);
+    snapshot = prior?.snapshot ?? { ...emptySnapshot(), hosts: navigator.hosts, specs: navigator.specs,
+      projects: navigator.projects, projectRead: navigator.projectRead, scopes: navigator.scopes,
+      terminals: navigator.terminals && { catalog: navigator.terminals.catalog, catalogLoaded: navigator.terminals.catalogLoaded, preview: null } };
+    flashes = [];
+    lastConfirmedAt = prior?.lastConfirmedAt ?? null;
+    load = prior ? { ...prior.load, stale: true, inFlight: false } : { inFlight: false, settled: false };
+    // An old transport may take time to unwind. It cannot delay the new page.
+    const expected = generation;
+    runRefresh = singleFlight(() => expected === generation ? readPage() : Promise.resolve());
   }
   let quietTimer: QuietTimerHandle | null = null;
   let closed = false;
@@ -101,7 +121,7 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
     quietTimer.unref?.();
   }
 
-  const runRefresh = singleFlight(async () => {
+  const readPage = async () => {
     clearQuietTimer();
     syncScope();
     const startedGeneration = generation;
@@ -142,7 +162,8 @@ export function createLiveRefresh(deps: LiveRefreshDeps): LiveRefresh {
       deps.onFrame();
       armQuietTimer();
     }
-  });
+  };
+  let runRefresh = singleFlight(() => generation === 0 ? readPage() : Promise.resolve());
 
   refresh = () => {
     if (closed) return Promise.resolve();

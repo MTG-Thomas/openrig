@@ -731,7 +731,14 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     const hostName = state.drill.find((d) => d.kind === "host")?.name;
     const host = (hostName ? snap.hosts.find((candidate) => candidate.name === hostName) : snap.hosts[0]);
     if (leaf?.kind === "host" && host) return instanceContentLines(state, snap, host, contentWidth, motion);
-    const rigName = state.drill.find((d) => d.kind === "rig")?.name ?? snap.hosts[0]?.rigs[0]?.name;
+    if (!leaf && host?.rigs.length) return wrapDetailLines([
+      { text: `TOPOLOGY · ${host.name}` }, { text: "Choose a rig to read its seats and work." },
+      ...host.rigs.filter(rig => !state.filter || rig.name.includes(state.filter)).map(rig => ({
+        text: `${rig.name} · ${rig.lifecycleState ?? "state unknown"}`,
+        action: { type: "drill" as const, resource: "rig" as const, name: rig.name, target: { host: host.name } },
+      })),
+    ], contentWidth);
+    const rigName = state.drill.find((d) => d.kind === "rig")?.name ;
     const rig = host?.rigs.find((candidate) => candidate.name === rigName);
     if (!rig || !host) {
       const notLoaded = snap.readErrors.find((error) => error.startsWith("Live data not loaded"));
@@ -749,6 +756,7 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
       }
       return [{ text: "(no rigs served — proven empty, not fabricated)" }];
     }
+    if (rig.inventoryNotLoaded) return [{ text: `Reading ${rig.name}…` }];
     if (rig.inventoryUnavailable) return [{ text: `Inventory unavailable for ${rig.name} · refresh to Retry` }];
     const podFilter = leaf?.kind === "pod" ? leaf.name : null;
     const all = rig.pods.flatMap((p) => p.agents.map((a) => ({ pod: p.name, ...a })));
@@ -1092,7 +1100,10 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     if (state.project && (snap.projectRead?.id !== state.project.id || snap.projectRead?.root !== state.project.root)) return [...identity, { text: "Reading selected project…" }];
     const entry = catalog?.projects.find(p => p.id === state.project!.id && p.root === state.project!.root);
     const errors = (snap.readErrors ?? []).map(text => ({ text: `Unavailable: ${text}` }));
-    const projectHeader = state.project ? [...identity, listItem("Read current source", { type: "project-source" }), ...wrapDetailLines(errors, contentWidth)] : [];
+    const missionOverview = !!state.scopesMission && !state.scopesSelected && !state.executionOpen;
+    const projectHeader = state.project ? missionOverview
+      ? [{ text: `PROJECT ${state.project.id}`, action: { type: "project-source" as const } }, ...wrapDetailLines(errors, contentWidth)]
+      : [...identity, listItem("Read current source", { type: "project-source" }), ...wrapDetailLines(errors, contentWidth)] : [];
     if (state.project && (!entry || entry.error)) return [...projectHeader, { text: "Choose a project again or go Back." }];
     if (state.project && !state.scopesMission) return [...projectHeader, { text: "Choose a mission" }, ...(snap.scopes ?? []).map(m => listItem(m.mission + (m.error ? " · source unavailable" : ""), { type: "scopes-mission-open", mission: m.mission })), ...(!snap.scopes?.length && !errors.length ? [{ text: "No missions found in this project." }] : [])];
     // SCOPES owns both levels. Both mission-graph and Explorer slice routes land
@@ -1135,6 +1146,8 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
 }
 
 export interface RenderOptions {
+  /** First visit: preserve the prior frame with its original label and no effect targets. */
+  previousPage?: { state: ViewState; snapshot: FleetSnapshot };
   startup?: StartupState;
   /** I5 — the live command context (from the C3 detector); default "standard". */
   commandContext?: string;
@@ -1648,9 +1661,15 @@ function renderBody(state: ViewState, snap: FleetSnapshot, options: RenderOption
   // Slice-17: the file-tree re-skin is a DISPLAY transform only — rows, keys,
   // actions, and the hit-map all keep resolving against the row model above.
   const { labels: explorerDisplay, metas: explorerMetas } = navigatorDisplay(explorer, snap, explW - 1);
-  const content: ContentLine[] = !load.settled && !state.externalUrl
-    ? [{ text: `${motion.frame} ${state.section === "topology" ? "topology" : sectionTitle.toLowerCase()} read pending…` }]
-    : contentLines(state, snap, Math.max(cols - explW - (fullReading ? 1 : 2), 0), motion);
+  const contentWidth = Math.max(cols - explW - (fullReading ? 1 : 2), 0);
+  const previous = !load.settled && !state.externalUrl ? options.previousPage : undefined;
+  const content: ContentLine[] = previous
+    ? [...wrapDetailLines([{ text: `Previous: ${previous.state.section} · ${previous.state.file ? `${previous.state.file.root}/${previous.state.file.path}` : previous.state.drill.map(d => d.name).join(" / ") || [previous.state.project?.id, previous.state.scopesMission, previous.state.terminalView].filter(Boolean).join(" / ") || "overview"}` }], contentWidth),
+       { text: `Opening ${sectionTitle.toLowerCase()}… · Explorer remains available` },
+       ...contentLines(previous.state, previous.snapshot, contentWidth, { ...motion, loading: false }).map(line => ({ text: line.text }))]
+    : !load.settled && !state.externalUrl
+      ? [{ text: `${sectionTitle} · choose a location in Explorer` }, { text: `${motion.frame} ${sectionTitle.toLowerCase()} read pending…` }]
+      : contentLines(state, snap, contentWidth, motion);
   if (!load.settled && !reduced) motion.used = true;
   const footer = state.footerOn ? snap.stream.at(-1) : undefined;
   // round-5 (guard): the tmux-style ONE-SHOT activity flash targets the

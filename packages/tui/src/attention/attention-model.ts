@@ -64,6 +64,7 @@ export function attentionLines(state: ViewState, snap: FleetSnapshot, width: num
     const bad = read.sources.filter(s => s.state !== "available");
     if (bad.length) lines.push({ text: "Some sources unavailable or partial; this feed is incomplete." });
     for (const [kind, title] of [["action", "Human requests"], ["update", "Updates"]] as const) {
+      if (state.attentionCategory && state.attentionCategory !== kind) continue;
       lines.push({ text: "" }, { text: title });
       const items = read.items.filter(i => i.kind === kind && (!state.filter || `${i.summary} ${i.scope}`.toLowerCase().includes(state.filter.toLowerCase())));
       if (!items.length) lines.push({ text: state.filter ? "  No matches in the served items." : bad.some(s => kind === "action" ? s.source === "queue" : s.source !== "queue") ? "  Unknown: a required source is unavailable or partial." : "  No current items in the available source window." });

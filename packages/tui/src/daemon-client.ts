@@ -312,8 +312,8 @@ export class DaemonClient {
 
   // --- drive-structure writes (BR-8: EXISTING contracts only; the ONLY two) ---
   /** the web's TerminalLauncher contract: POST /api/terminal/open {view} */
-  async terminalViews(): Promise<{ catalog?: import("./terminals/terminal-model.js").TerminalEntry[] }> {
-    return await this.get("/api/terminal/views?detail=1") as { catalog?: import("./terminals/terminal-model.js").TerminalEntry[] };
+  async terminalViews(): Promise<{ saved: Array<{ id: string; name: string; members: Array<{ seat: string }> }>; rigs: string[] }> {
+    return await this.get("/api/terminal/views") as { saved: Array<{ id: string; name: string; members: Array<{ seat: string }> }>; rigs: string[] };
   }
   async previewTerminal(view: string): Promise<import("./terminals/terminal-model.js").TerminalPreview> {
     return await this.get(`/api/terminal/preview?view=${encodeURIComponent(view)}`) as import("./terminals/terminal-model.js").TerminalPreview;

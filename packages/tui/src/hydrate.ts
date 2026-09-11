@@ -443,26 +443,28 @@ export async function hydrateSnapshot(
   const wantsSpecs = !viewContext || viewContext.section === "specs" || topologyLeaf?.kind === "agent";
   const wantsTopologyScope = !viewContext || viewContext.section === "topology";
   const wantsRecent = wantsTopologyScope && (!topologyLeaf || topologyLeaf.kind === "host" || topologyLeaf.kind === "rig");
+  const focusedTopology = !!viewContext && wantsTopologyScope && viewContext.viewTab !== "pulse";
+  const broadReads = !readingOnly && !focusedTopology && !wantsConnections;
   const wantsGraph = wantsTopologyScope && (!viewContext || viewContext.viewTab === "graph");
 
   const [instanceHealth, healthProjection, agg, summaries, library, review, streamItems, attention, blocked, inProgress, pending, recentlyFinished, scopesRead, executionRead, sliceDetailRead, connectionsRead] = await Promise.all([
     safe<InstanceHealthRead>("health", () => client.health()),
-    readingOnly ? Promise.resolve(null) : safe<HealthProjectionRead>("health-findings", () => client.healthFindings()),
-    readingOnly ? Promise.resolve(null) : safe<AttentionAggregateRead>("attention-aggregate", () => client.attentionAggregate()),
+    !(broadReads || viewContext?.viewTab === "health") ? Promise.resolve(null) : safe<HealthProjectionRead>("health-findings", () => client.healthFindings()),
+    !broadReads ? Promise.resolve(null) : safe<AttentionAggregateRead>("attention-aggregate", () => client.attentionAggregate()),
     readingOnly ? Promise.resolve(null) : safe<RigSummaryRead[]>("rigs-summary", () => client.rigsSummary()),
     (wantsSpecs || wantsConnections) ? safe<SpecLibraryRead[]>("specs-library", () => client.specsLibrary()) : Promise.resolve(null),
-    readingOnly ? Promise.resolve(null) : safe<ReviewFleetRead>("review-fleet", () => client.reviewFleet()),
-    readingOnly ? Promise.resolve(null) : safe<StreamItemRead[]>("stream-tail", () => client.streamLatest()),
+    !broadReads ? Promise.resolve(null) : safe<ReviewFleetRead>("review-fleet", () => client.reviewFleet()),
+    !broadReads ? Promise.resolve(null) : safe<StreamItemRead[]>("stream-tail", () => client.streamLatest()),
     // PULSE ▲ NEEDS YOU + ⧗ BLOCKED + ◌ PARKED — the shipped queue reads (increments 2/2b)
-    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-attention", () => client.queueAttention()),
-    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-blocked", () => client.queueBlocked()),
-    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-in-progress", () => client.queueInProgress()),
+    !broadReads ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-attention", () => client.queueAttention()),
+    !broadReads ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-blocked", () => client.queueBlocked()),
+    !broadReads ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-in-progress", () => client.queueInProgress()),
     // PULSE UP NEXT + JUST FINISHED lane reads (increment 3) — same shipped /list route
-    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-pending", () => client.queuePending()),
-    readingOnly ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-recently-finished", () => client.queueRecentlyFinished()),
-    readingOnly ? Promise.resolve(null) : safe<{ missions: unknown[]; sourceObservation?: { state: string } }>("scopes", () => client.scopesDetailed() as Promise<{ missions: unknown[] }>),
-    readingOnly ? Promise.resolve(null) : safe<{ rows: unknown[] }>("execution", () => client.execution(executionMission ?? undefined) as Promise<{ rows: unknown[] }>),
-    !readingOnly && sliceDetailName
+    !broadReads ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-pending", () => client.queuePending()),
+    !broadReads ? Promise.resolve(null) : safe<QueueItemRead[]>("queue-recently-finished", () => client.queueRecentlyFinished()),
+    !broadReads ? Promise.resolve(null) : safe<{ missions: unknown[]; sourceObservation?: { state: string } }>("scopes", () => client.scopesDetailed() as Promise<{ missions: unknown[] }>),
+    !broadReads ? Promise.resolve(null) : safe<{ rows: unknown[] }>("execution", () => client.execution(executionMission ?? undefined) as Promise<{ rows: unknown[] }>),
+    broadReads && sliceDetailName
       ? safe<SliceDetailSnap>(`slice-detail(${sliceDetailName})`, () => client.sliceDetail(sliceDetailName))
       : Promise.resolve(null),
     wantsConnections ? safe<ConnectionsRead>("connections", () => client.connections()) : Promise.resolve(null),
@@ -471,7 +473,7 @@ export async function hydrateSnapshot(
   const agentSpecNames = new Set((library ?? []).filter((entry) => entry.kind === "agent").map((entry) => entry.name));
   if (scopesRead?.sourceObservation?.state === "unavailable") readErrors.push("scopes: proof source updates unavailable; current HTTP basis only");
   if (review?.registryError) readErrors.push(`review-fleet registry: ${review.registryError}`);
-  const recentTransitionsRig = currentRigName ?? summaries?.[0]?.name ?? null;
+  const recentTransitionsRig = currentRigName ?? (!viewContext ? summaries?.[0]?.name : null) ?? null;
   const recentTransitionsScope = topologyLeaf?.kind === "host"
     ? { kind: "instance" } as const
     : recentTransitionsRig ? { kind: "rig", rig: recentTransitionsRig } as const : null;
@@ -514,7 +516,9 @@ export async function hydrateSnapshot(
   // one entry per agent seat WITH a canonical session (infra seats have none).
   const seatActivity: SeatActivitySummary[] = [];
   for (const rig of summaries ?? []) {
-    const nodes = await safe<NodeInventoryRead[]>(`nodes(${rig.name})`, () => client.rigNodes(rig.id));
+    const readInventory = wantsConnections ? connectionsRead?.configuration?.inboundDestination?.split("@")[1] === rig.name
+      : !focusedTopology || topologyLeaf?.kind === "host" || currentRigName === rig.name;
+    const nodes = readInventory ? await safe<NodeInventoryRead[]>(`nodes(${rig.name})`, () => client.rigNodes(rig.id)) : null;
     for (const node of nodes ?? []) {
       if (node.nodeKind !== "agent" || !node.canonicalSessionName) continue;
       seatActivity.push({
@@ -537,13 +541,13 @@ export async function hydrateSnapshot(
       id: rig.id,
       name: rig.name,
       pods: nodes ? groupPods(nodes) : [],
-      ...(nodes === null ? { inventoryUnavailable: true } : {}),
+      ...(!readInventory ? { inventoryNotLoaded: true } : nodes === null ? { inventoryUnavailable: true } : {}),
       ...(graph ? { graph } : {}),
       ...(rig.lifecycleState ? { lifecycleState: rig.lifecycleState } : {}),
       authoredSpecName: undefined as string | undefined,
     };
     rigs.push(rigRow);
-    if (rig.lifecycleState && rig.lifecycleState !== "running") {
+    if (broadReads && rig.lifecycleState && rig.lifecycleState !== "running") {
       // rig-down leg (§4.A): summary lifecycleState verbatim, enriched by the
       // rig-status projection where it answers — composed BESIDE the items.
       const st = await safe<RigStatusRead>(`rig-status(${rig.name})`, () => client.rigStatus(rig.id));

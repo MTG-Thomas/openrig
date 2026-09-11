@@ -1,14 +1,15 @@
 import type { ViewState } from "./types.js";
 import { retainAttentionSources } from "./attention/source-continuity.js";
 
-/** One active page's successful HTTP reads. Discarded on navigation, never shared
- * between TUIs or used for effects. Each source can fail without erasing siblings. */
+/** One page's successful HTTP reads; never shared between TUIs or used for effects.
+ * Each source can fail without erasing siblings. */
 export class PageRead {
   private values = new Map<string, { body: string; status: number; headers: Headers; at: number }>();
   private seen = new Set<string>();
   errors: string[] = [];
   retainedAt: number | undefined;
-  constructor(private now: () => number) {}
+  constructor(private now: () => number, private denied: (url: string) => void = () => {}) {}
+  has(url: string): boolean { return this.values.has(url); }
   begin(): void { this.seen.clear(); this.errors = []; this.retainedAt = undefined; }
   end(): void { for (const key of this.values.keys()) if (!this.seen.has(key)) this.values.delete(key); }
   fetch(fetchImpl: typeof fetch, signal: AbortSignal, optional = false): typeof fetch {
@@ -26,7 +27,9 @@ export class PageRead {
         // Absence/access refusal is a new answer; do not resurrect deleted or
         // newly forbidden content from the prior successful response.
         if (!response.ok) {
+          signal.throwIfAborted();
           this.values.delete(key);
+          this.denied(key);
           this.errors.push(`${new URL(key).pathname}: HTTP ${response.status}`);
           return response;
         }

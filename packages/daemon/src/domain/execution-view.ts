@@ -74,6 +74,7 @@ export interface ExecutionViewDeps {
 }
 
 interface QueueRowLite {
+  summary?: string | null;
   qitem_id: string;
   source_session: string;
   destination_session: string;
@@ -251,6 +252,7 @@ interface WaveMapData {
 }
 
 interface ArrangementSlice {
+  plannedOwners: Array<{ component: string; owner: string; source: string }>;
   path: string;
   order: number;
   wave?: string;
@@ -517,6 +519,13 @@ function readArrangement(missionsRoot: string, mission: string, slices: SliceFac
           ? waveBySlice.get(facts.id)
           : undefined;
       const entry: ArrangementSlice = {
+        plannedOwners: (() => {
+          const sdlc = sliceManifest["sdlc"];
+          const components = isRecord(sdlc) ? sdlc["components"] : null;
+          return Array.isArray(components) ? components.flatMap((component, index) =>
+            isRecord(component) && typeof component["id"] === "string" && typeof component["owner"] === "string"
+              ? [{ component: component["id"], owner: component["owner"], source: `${resolved}#sdlc.components[${index}].owner` }] : []) : [];
+        })(),
         path: resolved,
         order: member.order,
         ...(wave ? { wave } : {}),
@@ -692,7 +701,7 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
   const missionWhere = missionLikes.map(() => "(tags LIKE ? OR body LIKE ?)").join(" OR ");
   const candidateRows = deps.db
     .prepare(
-      `SELECT qitem_id, source_session, destination_session, state, tags, body, claimed_at,
+      `SELECT qitem_id, source_session, destination_session, state, tags, body, summary, claimed_at,
               last_heartbeat, blocked_on, ts_created, ts_updated,
               (SELECT COUNT(*) FROM queue_transitions t
                  WHERE t.qitem_id = queue_items.qitem_id
@@ -999,6 +1008,12 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
     return {
       slice_id: s.id,
       dir: s.dir,
+      planned_owners: arranged?.plannedOwners ?? [],
+      work_rows: rows.filter(r => (sliceOfRow(r) === s.id || sliceOfRow(r) === s.dir)
+        && ["pending", "in-progress", "blocked"].includes(r.state))
+        .sort((a, b) => b.ts_updated.localeCompare(a.ts_updated))
+        .map(r => ({ qitem_id: r.qitem_id, seat: r.destination_session, state: r.state,
+          summary: r.summary ?? null, blocked_on: r.blocked_on, claimed_at: r.claimed_at })),
       depends_on: dependsOn,
       soft_after: softAfter,
       blocked_on_rows: blockedRows,
@@ -1122,7 +1137,7 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
   for (const sequenced of q2) {
     const derived = readiness?.slices.find(s => s.scope === sequenced.dir);
     if (!derived?.readiness.configured) continue;
-    sequenced.next_up = derived.eligible === null ? INDETERMINATE : derived.eligible && derived.readiness.state !== "ready";
+    sequenced.next_up = derived.eligible === null ? INDETERMINATE : derived.eligible && derived.readiness.state !== "ready" && sequenced.work_rows.length === 0;
     sequenced.next_up_basis = `Attributed proof readiness ${readiness!.revision}; dependency eligibility ${derived.eligible}`;
   }
   const q6 = {

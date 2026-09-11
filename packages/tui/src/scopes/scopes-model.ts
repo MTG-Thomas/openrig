@@ -273,7 +273,7 @@ export function scopeIdentityLines(detail: SliceScopeSnap, mission: string | nul
   if (detail.error) return wrapped(`${mission}/${detail.dirName} · Source unavailable: ${detail.error}`, width, "", "warn");
   const lines: ContentLine[] = [];
   const w = Math.max(24, width);
-  const stage = detail.readiness?.configured ? `proof ${detail.readiness.state}` : detail.stage ?? detail.status ?? "unknown";
+  const stage = detail.readiness?.configured ? (detail.readiness.state === "ready" ? "outcome complete" : detail.readiness.items.some(i => i.state === "withdrawn" || i.state === "rejected") ? "reopened" : "outcomes pending") : detail.stage ?? detail.status ?? "unknown";
   const stateToken: Token = /done|established|building|active|spec/i.test(stage) ? "ok" : "dim";
   const proofToken: Token = detail.proof.total > 0 && detail.proof.paired === detail.proof.total ? "ok" : "warn";
   const locks = `${detail.locks.spec ? "spec locked" : "spec open"} · ${detail.locks.delivery ? "delivery locked" : "delivery open"}`;

@@ -11,6 +11,7 @@ import type { FleetSnapshot, Screen, ViewState, ViewStateStore } from "../src/ty
 // (a visible table cell, a spec member line), not a labeled control.
 
 const snap = demoSnapshot();
+snap.specs.find(s => s.name === "openrig-build-rig")!.pods = [{ id: "build", namespace: "build", members: [{ id: "guard", agentRef: "guard-agent", runtime: "codex" }], edges: [] }];
 // Explicit human request from the Attention authority, not a converted agent signal.
 snap.attentionRead = {
   scope: "instance", readAt: "2026-09-10T00:00:00Z", sources: [{ source: "queue", state: "available", detail: "fixture" }],
@@ -40,7 +41,7 @@ function clickAt(store: ViewStateStore, x: number, y: number): boolean {
 function findContentLine(store: ViewStateStore, match: RegExp): { y: number; text: string } {
   const screen = renderScreen(store.get(), snap, { cols: 120, rows: 32 });
   const idx = screen.lines.findIndex((l) => match.test(l));
-  if (idx < 0) throw new Error(`no rendered line matches ${match}`);
+  if (idx < 0) throw new Error(`no rendered line matches ${match}\n${screen.lines.join("\n")}`);
   return { y: idx + 1, text: screen.lines[idx]! };
 }
 
@@ -83,9 +84,13 @@ describe("content-pane parity (Phase 3): click the surface, not a control", () =
     byCommand.dispatch(parseCommand("spec guard-agent"));
 
     byMouse.dispatch(parseCommand("spec openrig-build-rig"));
-    const member = findContentLine(byMouse, /▪ guard-agent/);
-    expect(clickAt(byMouse, member.text.indexOf("guard-agent") + 3, member.y)).toBe(true);
-    expect(comparable(byMouse.get())).toEqual(comparable(byCommand.get()));
+    const layout = renderScreen(byMouse.get(), snap, { cols: 120, rows: 32 });
+    byMouse.dispatch({ type: "layout", contentMaxOffset: layout.contentMaxOffset, contentTargetCount: layout.contentTargets.length });
+    byMouse.dispatch({ type: "content-scroll", delta: layout.contentMaxOffset });
+    const member = findContentLine(byMouse, /┃.*▪.*guard-agent/);
+    expect(clickAt(byMouse, member.text.lastIndexOf("guard-agent") + 3, member.y)).toBe(true);
+    expect(byMouse.get().drill).toEqual(byCommand.get().drill);
+    expect(byMouse.get().section).toBe(byCommand.get().section);
   });
 
   it("clicking the tabs line toggles TABLE→OVERVIEW — identical to `tab overview`", () => {

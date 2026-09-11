@@ -101,7 +101,7 @@ describe("founder live-QA correction — mission dashboard", () => {
       const width = cols - explorerWidth(cols) - 2;
       const lines = executionContentLines(snap.execution, snap.scopes, [], null, width) as SemanticLine[];
       const body = lines.map((line) => line.text).join("\n");
-      const mission = lines.findIndex((line) => line.text.includes("release-0.5.9") && /ATTENTION|ACTIVE|COMPLETE/.test(line.text));
+      const mission = lines.findIndex((line) => line.text.includes("release-0.5.9") && /OUTCOMES (OPEN|COMPLETE)/.test(line.text));
       const now = lines.findIndex((line) => /\bNOW\b/.test(line.text));
       const next = lines.findIndex((line) => /\bNEXT\b/.test(line.text));
       const progress = lines.findIndex((line) => /\bPROGRESS\b/.test(line.text));
@@ -324,6 +324,7 @@ describe("founder live-QA correction — rig-wide RECENT rail", () => {
     const snap = recentSnapshot();
     for (const cols of [160, 120, 84]) {
       const view = createViewState({ instanceId: "recent", getSnapshot: () => snap });
+      view.dispatch({ type: "drill", resource: "rig", name: "openrig-build", target: { host: "vm-host" } });
       const screen = renderScreen(view.get(), snap, { cols, rows: 80 });
       const body = screen.lines.join("\n");
       expect(body).toContain("RECENT");
@@ -345,6 +346,7 @@ describe("founder live-QA correction — rig-wide RECENT rail", () => {
     const snap = recentSnapshot();
     snap.recentTransitions = [];
     const view = createViewState({ instanceId: "recent-empty", getSnapshot: () => snap });
+      view.dispatch({ type: "drill", resource: "rig", name: "openrig-build", target: { host: "vm-host" } });
     const body = renderScreen(view.get(), snap, { cols: 160, rows: 80 }).lines.join("\n");
     expect(body).toContain("No recorded transitions in the current window.");
   });

@@ -128,6 +128,7 @@ async function run(): Promise<void> {
   let drawnScope = pageReadKey(view.get());
   let drawnSnapshot = snapshot;
   let drawnSettled = false;
+  let previousPage: { state: ReturnType<typeof view.get>; snapshot: FleetSnapshot } | undefined;
   let activityEvents: ReturnType<typeof subscribeActivityEvents> | null = null;
   function enableLive(): boolean {
     if (!live || !client || startup?.state.connection !== "up") return false;
@@ -162,12 +163,14 @@ async function run(): Promise<void> {
       ...(!liveEnabled ? { readErrors: [`Live data not loaded · connection ${startup?.state.connection ?? "probing"} · L Local reading · S Startup`] } : {}),
       launchingCli: process.env["OPENRIG_TUI_CLI_IDENTITY"]?.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) };
     const opts = { cols, rows, nowMs, completion, colorMode: style.mode, commandContext: commandContext(), ...crashCartOpts, ...(startup?.state.open && !view.get().palette ? { startup: startup.state } : {}), restoreScroll: restoreScrollOffset, ...(liveEnabled && live ? { load: live.load(), rowFlashes: live.flashes() } : {}) };
-    lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
+    if (liveEnabled && live?.load().settled) previousPage = { state: { ...view.get() }, snapshot };
+    const pageOptions = { ...opts, ...(liveEnabled && !live?.load().settled ? { previousPage } : {}) };
+    lastScreen = renderScreen(view.get(), snapshot, pageOptions, inputLine);
     if (startup?.state.local) startup.state.local.scroll = Math.min(startup.state.local.scroll, lastScreen.contentMaxOffset);
     // Startup has its own selection/scroll; keep the underlying reader bookmark intact.
     if (!startup?.state.open && !view.get().palette && (!liveEnabled || live?.load().settled) && (view.get().contentMaxOffset !== lastScreen.contentMaxOffset || view.get().contentTargetCount !== lastScreen.contentTargets.length)) {
       view.dispatch({ type: "layout", contentMaxOffset: lastScreen.contentMaxOffset, contentTargetCount: lastScreen.contentTargets.length });
-      lastScreen = renderScreen(view.get(), snapshot, opts, inputLine);
+      lastScreen = renderScreen(view.get(), snapshot, pageOptions, inputLine);
     }
     // styling is a zero-width post-pass over the tested plain layer — the
     // hitMap coordinates always match what is on screen

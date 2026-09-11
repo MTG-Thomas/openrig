@@ -13,7 +13,7 @@ describe("S01 entry and page reads", () => {
     const startup = new StartupController({ client, home: "/fixture", probe: async () => '{"state":"up"}', startDaemon, onWork, onChange: () => {} });
     await startup.refresh();
     expect(startup.state.open).toBe(false);
-    expect(onWork).toHaveBeenCalledWith({ rigId: "r", rigName: "active" });
+    expect(onWork).toHaveBeenCalledWith();
     expect(startDaemon).not.toHaveBeenCalled();
   });
   it("marks a terminal source failure stale", async () => {
@@ -38,7 +38,7 @@ describe("request identity and partial refresh", () => {
     let mode = "success"; let now = 1000;
     const client = new DaemonClient({ fetchImpl: (async () => {
       if (mode === "failure") throw new Error("fixture timeout");
-      return new Response(JSON.stringify({ saved: [], rigs: [], catalog: mode === "empty" ? [] : [{ view: "saved:one", name: "One", kind: "saved", members: ["one"], ready: 1, absent: 0, degraded: 0, pages: 1 }] }));
+      return new Response(JSON.stringify({ saved: mode === "empty" ? [] : [{ id: "one", name: "One", members: [{ seat: "one" }] }], rigs: [] }));
     }) as typeof fetch });
     const state = { ...createViewState({ instanceId: "fixture" }).get(), section: "terminals", terminalView: null };
     const live = createLiveRefresh({ hydrate: (page, signal) => hydrateSnapshot(client.forPage(page, signal), undefined, undefined, undefined, undefined, state), now: () => now, onFrame: () => {} });

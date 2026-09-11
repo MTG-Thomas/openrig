@@ -47,7 +47,7 @@ function draw(cols: number, rows: number) {
 describe("terminal browser → preview → explicit Open", () => {
   it.each([[140, 42], [80, 24]])("uses the opened plan, pages and Back at %ix%i", async (cols, rows) => {
     view.dispatch(parseCommand("terminals", view.get().sections)); await refresh();
-    expect(snap.terminals?.catalog.map(e => [e.kind, e.ready, e.members.length])).toEqual([["saved", 14, 16], ["derived", 1, 1]]);
+    expect(snap.terminals?.catalog.map(e => [e.kind, e.readinessUnverified, e.members.length])).toEqual([["saved", true, 16], ["derived", true, 0]]);
     const savedRow = computeExplorerRows(view.get(), snap).findIndex(r => r.key === "terminal:saved:fixture");
     view.dispatch({ type: "select", index: savedRow });
     const before = view.get();

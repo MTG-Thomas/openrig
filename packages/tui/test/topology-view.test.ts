@@ -42,7 +42,9 @@ function graphSnap(): FleetSnapshot {
 }
 
 function makeStore(snap: FleetSnapshot) {
-  return createViewState({ instanceId: "topo-test", getSnapshot: () => snap });
+  const view = createViewState({ instanceId: "topo-test", getSnapshot: () => snap });
+  view.dispatch({ type: "drill", resource: "rig", name: snap.hosts[0]!.rigs[0]!.name, target: { host: snap.hosts[0]!.name } });
+  return view;
 }
 
 describe("graph view reachability (the existing navigation, extended additively)", () => {
@@ -635,6 +637,7 @@ describe("ROUND-3 LOCKED SET (orch locked-scope GO; pins 02259adb/29a10b62)", ()
   it("explorer icons are MONOCHROME (color is for status only)", () => {
     const snap = graphSnap();
     const s = makeStore(snap);
+    s.dispatch({ type: "select", index: 0 }); // inspect an unselected icon, not selection paint
     const screen = renderScreen(s.get(), snap, { cols: 150, rows: 40 });
     const styled = stylizeLines(screen, createStyle("truecolor"));
     const rigLine = styled.find((l) => stripAnsi(l).includes("▦ openrig-build"))!;

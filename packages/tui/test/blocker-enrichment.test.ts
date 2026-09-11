@@ -19,7 +19,8 @@ const refs = [...gates, "qitem-present", "qitem-missing"];
 const blocked = refs.map((blockedOn, i) => ({ qitemId: `qitem-waiter-${i}`, blockedOn,
   state: "blocked", destinationSession: "worker@rig", handedOffTo: null,
   tier: null, tags: null, summary: "Waiting", claimedAt: null, tsUpdated: "2026-09-11T00:00:00Z" }));
-const state = createViewState({ instanceId: "fixture" }).get();
+// Blocker enrichment belongs to the explicitly selected Pulse work view.
+const state = { ...createViewState({ instanceId: "fixture" }).get(), viewTab: "pulse" as const };
 type Failure = 403 | 404 | 503 | "timeout";
 function fail(mode: Failure): Response {
   if (mode === "timeout") throw new DOMException("The operation was aborted due to timeout", "TimeoutError");

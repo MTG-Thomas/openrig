@@ -55,6 +55,7 @@ describe("content library mirrors the explorer grouping", () => {
   it("collapses agent folders in the CONTENT pane too, honoring the same expansion state", () => {
     const s = createViewState({ instanceId: "t", getSnapshot: () => nsSnap });
     s.dispatch(parseCommand(":specs"));
+    s.dispatch({ type: "toggle-expand", key: "specs-kind:agent" });
     let lines = renderScreen(s.get(), nsSnap, { cols: 140, rows: 34 }).lines.join("\n");
     expect(lines).toContain("review/ (2)");
     expect(lines).not.toContain("rev-1");

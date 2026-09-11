@@ -7,6 +7,7 @@ export interface TerminalEntry {
   name: string;
   kind: "saved" | "derived";
   members: string[];
+  readinessUnverified?: boolean;
   ready: number;
   absent: number;
   degraded: number;
@@ -39,8 +40,11 @@ export async function readTerminals(client: DaemonClient, view?: string | null):
   const result: TerminalRead = { catalog: [], preview: null };
   try {
     const listing = await client.terminalViews();
-    if (!listing.catalog) throw new Error("This daemon does not serve terminal previews. Use a matching CLI/daemon version.");
-    result.catalog = listing.catalog;
+    if (!Array.isArray(listing.saved) || !Array.isArray(listing.rigs)) throw new Error("Terminal names could not be read.");
+    result.catalog = [
+      ...listing.saved.map(s => ({ view: `saved:${s.id}`, name: s.name, kind: "saved" as const, members: s.members.map(m => m.seat) })),
+      ...listing.rigs.map(name => ({ view: `rig:${name}`, name, kind: "derived" as const, members: [] })),
+    ].map(entry => ({ ...entry, readinessUnverified: true, ready: 0, absent: 0, degraded: 0, pages: 0 }));
     result.catalogLoaded = true;
     if (view) result.preview = await client.previewTerminal(view);
   } catch (error) {
@@ -54,9 +58,13 @@ export function terminalExplorerRows(state: ViewState, snap: FleetSnapshot): Exp
   const entries = snap.terminals.catalog;
   const rows: ExplorerRow[] = [];
   for (const kind of ["saved", "derived"] as const) {
-    rows.push({ label: `  ${kind === "saved" ? "Saved" : "Derived"} (${entries.filter(e => e.kind === kind).length})`, key: `terminals:${kind}`, action: { type: "noop" } });
+    const key = `terminals:${kind}`;
+    const open = kind === "saved" || state.expanded.includes(key) || !!state.filter;
+    rows.push({ label: `  ${kind === "saved" ? "Saved" : `${open ? "▾" : "▸"} Derived`} (${entries.filter(e => e.kind === kind).length})`, key,
+      action: kind === "saved" ? { type: "noop" } : { type: "toggle-expand", key } });
+    if (!open) continue;
     for (const entry of entries.filter(e => e.kind === kind && `${e.name} ${e.members.join(" ")}`.toLowerCase().includes(state.filter.toLowerCase()))) {
-      rows.push({ label: `    ${entry.name} · ${entry.ready}/${entry.members.length}`, key: `terminal:${entry.view}`, action: { type: "terminal-preview", view: entry.view } });
+      rows.push({ label: `    ${entry.name}${entry.readinessUnverified ? "" : ` · ${entry.ready}/${entry.members.length}`}`, key: `terminal:${entry.view}`, action: { type: "terminal-preview", view: entry.view } });
     }
   }
   return rows;
@@ -78,11 +86,14 @@ export function terminalLines(state: ViewState, snap: FleetSnapshot, width: numb
     lines.push({ text: "Browse and preview are passive. Only Open creates a Herdr space." });
     for (const kind of ["saved", "derived"] as const) {
       const entries = read.catalog.filter(e => e.kind === kind && `${e.name} ${e.members.join(" ")}`.toLowerCase().includes(state.filter.toLowerCase()));
-      lines.push({ text: "" }, { text: `${kind === "saved" ? "Saved" : "Derived"} · ${entries.length} views` });
+      const open = kind === "saved" || state.expanded.includes("terminals:derived") || !!state.filter;
+      lines.push({ text: "" }, { text: `${kind === "saved" ? "Saved" : `${open ? "▾" : "▸"} Derived`} · ${entries.length} views`,
+        ...(kind === "derived" ? { action: { type: "toggle-expand" as const, key: "terminals:derived" } } : {}) });
+      if (!open) continue;
       if (!entries.length) lines.push({ text: kind === "saved" ? "No saved views. Existing terminal-views.yaml stores membership, not custom geometry." : "No derived rig views available." });
       for (const entry of entries) {
-        lines.push({ text: `${entry.name} · ${entry.members.length} members · ${entry.ready} attachable · ${entry.absent + entry.degraded} unavailable · ${entry.pages} pages`, action: { type: "terminal-preview", view: entry.view } });
-        lines.push({ text: `  ${entry.members.join(", ") || "Empty view"}` });
+        lines.push({ text: `${entry.name} · ${entry.readinessUnverified ? (entry.kind === "saved" ? `${entry.members.length} saved members · Preview readiness` : "Preview members and readiness") : `${entry.members.length} members · ${entry.ready} attachable · ${entry.absent + entry.degraded} unavailable · ${entry.pages} pages`}`, action: { type: "terminal-preview", view: entry.view } });
+        if (entry.kind === "saved") lines.push({ text: `  ${entry.members.join(", ") || "Empty view"}` });
       }
     }
     return wrapDetailLines(lines, width);

@@ -179,6 +179,7 @@ describe("file-tree re-skin (Direction B navigator)", () => {
       ] }], graph }] }],
     };
     const s = createViewState({ instanceId: "card-tty", getSnapshot: () => ttySnap });
+    s.dispatch({ type: "drill", resource: "rig", name: "r", target: { host: "h" } });
     s.dispatch({ type: "tab", tab: "graph" });
     const screen = renderScreen(s.get(), ttySnap, { cols: 150, rows: 40 });
     const styled = stylizeLines(screen, createStyle("truecolor"));
@@ -189,6 +190,8 @@ describe("file-tree re-skin (Direction B navigator)", () => {
 
   it("the clawd card mark paints eye-on-terracotta (fg #181818 on bg #ad6755) through the seg channel", () => {
     const s = createViewState({ instanceId: "card-clawd", getSnapshot: () => graphSnapLocal() });
+    const host = graphSnapLocal().hosts[0]!;
+    s.dispatch({ type: "drill", resource: "rig", name: host.rigs[0]!.name, target: { host: host.name } });
     s.dispatch({ type: "tab", tab: "graph" });
     const snap2 = graphSnapLocal();
     const screen = renderScreen(s.get(), snap2, { cols: 150, rows: 40 });
@@ -208,6 +211,7 @@ describe("file-tree re-skin (Direction B navigator)", () => {
     };
     const s = createViewState({ instanceId: "nav-ns", getSnapshot: () => nsSnap });
     s.dispatch({ type: "jump", section: "specs" });
+    s.dispatch({ type: "toggle-expand", key: "specs-kind:agent" });
     s.dispatch({ type: "toggle-expand", key: "folder:vault" });
     const screen = renderScreen(s.get(), nsSnap, { cols: 120, rows: 40 });
     const pane = explorerPane(screen.lines);

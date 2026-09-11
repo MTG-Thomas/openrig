@@ -59,6 +59,7 @@ export interface PodNode {
 }
 
 export interface RigNode {
+  inventoryNotLoaded?: boolean;
   inventoryUnavailable?: boolean;
   authoredSpecName?: string;
   /** daemon rig id; absent only in static demo fixtures */
@@ -421,6 +422,7 @@ export type Action =
   | { type: "terminal-result"; view: string; message: string }
   | { type: "terminal-preview"; view: string }
   | { type: "terminal-page"; page: number }
+  | { type: "attention-category"; category: "action" | "update" }
   | { type: "attention-open"; id: string }
   | { type: "attention-source"; path: string }
   | { type: "file-open"; target: import("./reading.js").FileTarget }
@@ -488,6 +490,7 @@ export interface ViewState {
   terminalView?: string | null;
   terminalPage?: number;
   attentionOpen?: string | null;
+  attentionCategory?: "action" | "update" | null;
   file?: import("./reading.js").FileTarget | null;
   externalUrl?: string | null;
   timeZone: string;
@@ -537,7 +540,7 @@ export interface ViewState {
   lastError: string | null;
 }
 
-export type NavigationFrame = Pick<ViewState, "attentionOpen" | "project" | "terminalView" | "terminalPage" | "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
+export type NavigationFrame = Pick<ViewState, "attentionCategory" | "attentionOpen" | "project" | "terminalView" | "terminalPage" | "file" | "externalUrl" | "section" | "drill" | "filter" | "selection" | "runningOf" | "viewTab" | "contentOffset" | "contentMaxOffset" | "contentTargetCount" | "contentSelection" | "focusedPane" | "scopesMission" | "scopesSelected" | "scopesCollapseReqs" | "scopesNarrative" | "executionOpen" | "expanded" | "timeZoneHelp" | "recentOpen" | "configCategory" | "configKey">;
 
 export interface ViewStateStore {
   instanceId: string;

@@ -21,6 +21,7 @@ import { migrate } from "../src/db/migrate.js";
 import { coreSchema } from "../src/db/migrations/001_core_schema.js";
 import { bindingsSessionsSchema } from "../src/db/migrations/002_bindings_sessions.js";
 import { eventsSchema } from "../src/db/migrations/003_events.js";
+import { queueItemSummarySchema } from "../src/db/migrations/044_queue_item_summary.js";
 import { queueItemsSchema } from "../src/db/migrations/024_queue_items.js";
 import { queueTransitionsSchema } from "../src/db/migrations/025_queue_transitions.js";
 import { queueTransitionWakesSchema } from "../src/db/migrations/073_queue_transition_wakes.js";
@@ -168,6 +169,7 @@ describe("execution view — S27 (OPR.0.5.6.27)", () => {
       bindingsSessionsSchema,
       eventsSchema,
       queueItemsSchema,
+      queueItemSummarySchema,
       queueTransitionsSchema,
       queueTransitionWakesSchema,
       viewsCustomSchema,
@@ -312,6 +314,19 @@ describe("execution view — S27 (OPR.0.5.6.27)", () => {
     const doc = result.rows[0] as Record<string, unknown>;
     expect(doc.mission).toBe(MISSION);
     expect((doc.q1_lanes as Record<string, unknown>[]).map((lane) => lane.qitem_id)).toContain("qitem-lane-31");
+  });
+
+  it("carries planned components separately from current queue ownership, including waiting and handoff", () => {
+    const file = path.join(missionsRoot, MISSION, "slices", "31-alpha", "slice.yaml");
+    fs.appendFileSync(file, "sdlc:\n  components:\n    - { id: build.minimal-gap, owner: planned@fixture }\n");
+    const read = () => (show().q2_sequencing as Record<string, unknown>[]).find(s => s.slice_id === "OPR.9.9.31")!;
+    expect(read().planned_owners).toEqual([{ component: "build.minimal-gap", owner: "planned@fixture", source: fs.realpathSync(file) + "#sdlc.components[0].owner" }]);
+    expect(read().work_rows).toEqual(expect.arrayContaining([expect.objectContaining({ qitem_id: "qitem-lane-31", seat: SEAT_A, state: "in-progress" })]));
+    db.prepare("UPDATE queue_items SET state='blocked', blocked_on='external:review' WHERE qitem_id='qitem-lane-31'").run();
+    expect(read().work_rows).toEqual(expect.arrayContaining([expect.objectContaining({ seat: SEAT_A, state: "blocked", blocked_on: "external:review" })]));
+    db.prepare("UPDATE queue_items SET state='handed-off' WHERE qitem_id='qitem-lane-31'").run();
+    expect((read().work_rows as Record<string, unknown>[]).some(w => w.qitem_id === "qitem-lane-31")).toBe(false);
+    expect(read().planned_owners).toHaveLength(1);
   });
 
   it("EC-3: the worktree_path field is Q1's join key; a legacy baton falls back marked fragile", () => {

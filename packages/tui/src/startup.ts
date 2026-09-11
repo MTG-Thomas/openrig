@@ -95,7 +95,7 @@ export class StartupController {
       if (this.automaticEntry && this.state.open && running) {
         this.automaticEntry = false;
         this.state.open = false;
-        this.deps.onWork({ rigId: running.id, rigName: running.name });
+        this.deps.onWork();
       }
     });
   }

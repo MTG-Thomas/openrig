@@ -88,7 +88,7 @@ export function createViewState(options: CreateViewStateOptions): ViewStateStore
 
   function dispatch(action: Action): ViewState {
     const previous = state;
-    if (["attention-open", "terminal-preview", "project-select", "jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, file: null, externalUrl: null, recentOpen: null, timeZoneHelp: false, attentionOpen: null };
+    if (["attention-category", "attention-open", "terminal-preview", "project-select", "jump", "drill", "cross", "tab", "scopes-mission-open", "scopes-open", "health-open", "execution-open", "recent-open", "timezone", "config-category", "config-setting"].includes(action.type)) state = { ...state, file: null, externalUrl: null, recentOpen: null, timeZoneHelp: false, attentionOpen: null };
     state = reduce(state, action, getSnapshot());
     // Connections is a side trip from work, including explorer/palette entry.
     if (action.type === "jump" && ![...SYSTEM_SECTIONS, "needs"].includes(action.section) && ![...SYSTEM_SECTIONS, "needs"].includes(previous.section)) state.history = [];
@@ -121,6 +121,8 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
       return syncSelection(resetContent({ ...next, section: "terminals", terminalView: action.view, terminalPage: 0, drill: [], viewTab: "table", healthOpen: null }), snap);
     case "terminal-page":
       return resetContent({ ...next, terminalPage: Math.max(0, Math.min(action.page, (snap.terminals?.preview?.composed.pages.length ?? 1) - 1)) });
+    case "attention-category":
+      return syncSelection({ ...resetContent({ ...next, section: "needs", attentionCategory: action.category, attentionOpen: null }), focusedPane: "content" }, snap);
     case "attention-open":
       return syncSelection({ ...resetContent({ ...next, section: "needs", attentionOpen: action.id, file: null, externalUrl: null, healthOpen: null }), focusedPane: "content" }, snap);
     case "attention-source": {
@@ -162,7 +164,7 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
     case "jump": {
       next.terminalView = null;
       next.terminalPage = 0;
-      if (action.section === "needs") { next.attentionOpen = null; next.file = null; next.externalUrl = null; next.recentOpen = null; next.timeZoneHelp = false; }
+      if (action.section === "needs") { next.attentionCategory = null; next.attentionOpen = null; next.file = null; next.externalUrl = null; next.recentOpen = null; next.timeZoneHelp = false; }
       // scopes: jumping anywhere (incl. back to :scopes) closes the opened slice.
       if (action.section === "scopes") next.project = null;
       next.scopesMission = null;
@@ -316,12 +318,12 @@ function reduce(state: ViewState, action: Action, snap: FleetSnapshot): ViewStat
 }
 
 function location(s: ViewState): string {
-  return JSON.stringify([s.attentionOpen, s.project, s.terminalView, s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey, s.file, s.externalUrl]);
+  return JSON.stringify([s.attentionCategory, s.attentionOpen, s.project, s.terminalView, s.section, s.drill, s.runningOf, s.scopesMission, s.scopesSelected, s.executionOpen, s.recentOpen?.transitionId, s.timeZoneHelp, s.configCategory, s.configKey, s.file, s.externalUrl]);
 }
 
 function navigationFrame(s: ViewState): NavigationFrame {
-  const { attentionOpen, project, terminalView, terminalPage, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
-  return { attentionOpen, project, terminalView, terminalPage, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
+  const { attentionCategory, attentionOpen, project, terminalView, terminalPage, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey } = s;
+  return { attentionCategory, attentionOpen, project, terminalView, terminalPage, file, externalUrl, section, drill, filter, selection, runningOf, viewTab, contentOffset, contentMaxOffset, contentTargetCount, contentSelection, focusedPane, scopesMission, scopesSelected, scopesCollapseReqs, scopesNarrative, executionOpen, expanded, recentOpen, timeZoneHelp, configCategory, configKey };
 }
 
 function clearScopeCoordinatesOnSectionChange(previous: ViewState, next: ViewState): ViewState {
@@ -350,7 +352,7 @@ export function specDetailArrowsScroll(state: ViewState): boolean {
 export function locationKey(state: ViewState): string {
   if (state.section === "system") return "system:health";
   if (state.section === "terminals" && state.terminalView) return `terminal:${state.terminalView}`;
-  if (state.section === "needs" && state.attentionOpen) return `attention:${state.attentionOpen}`;
+  if (state.section === "needs" && state.attentionCategory) return `attention-category:${state.attentionCategory}`;
   if (state.section === "config" && state.configCategory) return `config:${state.configCategory}`;
   if (state.section === "scopes" && state.scopesSelected) return `scopes-slice:${state.scopesSelected.mission}/${state.scopesSelected.slice}`;
   if (state.section === "scopes" && state.scopesMission) return `scopes-mission:${state.scopesMission}`;
@@ -383,6 +385,7 @@ function syncSelection(state: ViewState, snap: FleetSnapshot): ViewState {
   const leaf = state.drill.at(-1);
   if (leaf?.kind === "spec") {
     const spec = findSpec(snap, leaf.name);
+    if (spec) expanded.add(`specs-kind:${spec.kind}`);
     if (spec?.kind === "agent" && spec.namespace) expanded.add(`folder:${spec.namespace}`);
   }
   const withExpansion = { ...state, expanded: [...expanded] };
@@ -650,7 +653,10 @@ export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): Expl
       for (const kind of kinds) {
         const list = snap.specs.filter((s) => s.kind === kind).filter((s) => !state.filter || s.name.includes(state.filter));
         if (list.length === 0) continue;
-        rows.push({ label: `  ${kind.toUpperCase()} SPECS (${list.length})`, action: { type: "jump", section: "specs" }, key: `specs-kind:${kind}` });
+        const key = `specs-kind:${kind}`;
+        const openKind = expanded.has(key) || !!state.filter;
+        rows.push({ label: `  ${openKind ? "▾" : "▸"} ${kind.toUpperCase()} SPECS (${list.length})`, action: { type: "toggle-expand", key }, disclosureAction: { type: "toggle-expand", key }, key });
+        if (!openKind) continue;
         if (kind !== "agent") {
           for (const spec of list)
             rows.push({ label: `    ▪ ${spec.name}`, action: { type: "drill", resource: "spec", name: spec.name }, key: `spec:${spec.name}` });
@@ -683,7 +689,8 @@ export function computeExplorerRows(state: ViewState, snap: FleetSnapshot): Expl
         }
       }
     } else if (section.name === "needs") {
-      for (const item of snap.attentionRead?.items ?? []) rows.push({ label: `  ${item.kind === "action" ? "!" : "·"} ${item.summary}`, key: `attention:${item.id}`, action: { type: "attention-open", id: item.id } });
+      rows.push({ label: "  Human requests", key: "attention-category:action", action: { type: "attention-category", category: "action" } },
+        { label: "  Updates", key: "attention-category:update", action: { type: "attention-category", category: "update" } });
       if (state.history?.length) rows.push({ label: "  Back", key: "attention:back", action: { type: "back" } });
     }
   }

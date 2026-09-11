@@ -89,7 +89,7 @@ describe("filters are view-scoped (founder direct-drive catch)", () => {
   });
 });
 
-describe("specs default expansion (item 3): rig specs full, agent folders collapsed", () => {
+describe("Specs kind disclosure with nested agent folders", () => {
   const nsSnap: FleetSnapshot = {
     ...snap,
     specs: [
@@ -101,9 +101,12 @@ describe("specs default expansion (item 3): rig specs full, agent folders collap
     ],
   };
 
-  it("lists every rig spec but collapses agent folders to the folder row", () => {
+  it("shows the kind groups first, then every rig spec and collapsed agent folders when opened", () => {
     const s = createViewState({ instanceId: "t", getSnapshot: () => nsSnap });
     s.dispatch(parseCommand(":specs"));
+    expect(computeExplorerRows(s.get(), nsSnap).some(r => r.key?.startsWith("spec:"))).toBe(false);
+    s.dispatch({ type: "toggle-expand", key: "specs-kind:rig" });
+    s.dispatch({ type: "toggle-expand", key: "specs-kind:agent" });
     const labels = computeExplorerRows(s.get(), nsSnap).map((r) => r.label);
     expect(labels.some((l) => l.includes("rig-a"))).toBe(true);
     expect(labels.some((l) => l.includes("rig-b"))).toBe(true);
@@ -114,6 +117,7 @@ describe("specs default expansion (item 3): rig specs full, agent folders collap
   it("toggling a folder shows its specs; toggling again collapses", () => {
     const s = createViewState({ instanceId: "t", getSnapshot: () => nsSnap });
     s.dispatch(parseCommand(":specs"));
+    s.dispatch({ type: "toggle-expand", key: "specs-kind:agent" });
     s.dispatch({ type: "toggle-expand", key: "folder:review" });
     let labels = computeExplorerRows(s.get(), nsSnap).map((r) => r.label);
     expect(labels.some((l) => l.includes("rev-1"))).toBe(true);

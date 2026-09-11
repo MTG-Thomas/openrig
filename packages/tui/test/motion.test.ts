@@ -79,6 +79,7 @@ describe("motion rides the LOAD LIFECYCLE — guard round-5 finding 1 (spinner =
   function graphTabStore(base = snap) {
     const noGraph = structuredClone(base);
     const s = createViewState({ instanceId: "sp", getSnapshot: () => noGraph });
+    s.dispatch({ type: "drill", resource: "rig", name: "openrig-build", target: { host: "vm-host" } });
     s.dispatch({ type: "tab", tab: "graph" });
     return { s, noGraph };
   }
