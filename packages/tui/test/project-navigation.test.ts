@@ -48,3 +48,43 @@ it.each([[140, 42], [80, 24]])("retains exact project through equal-ID work, fil
     expect(request).toMatch(/project=[ab]/); expect(request).toMatch(/projectRoot=%2Fbooks%2F[ab]/);
   }
 });
+
+it.each([[140, 42], [80, 24]])("localizes malformed entries and recovers without contaminating healthy browsing at %ix%i", async (cols, rows) => {
+  let repaired = false;
+  const calls: string[] = [];
+  const good = { ...demoSnapshot().scopes![0]!.slices[0]!, dirName: "good", id: "good", intent: "Healthy sibling intent" };
+  const client = new DaemonClient({ baseUrl: "http://fixture", fetchImpl: (async url => {
+    const u = new URL(String(url)); calls.push(u.pathname);
+    if (u.pathname === "/api/scopes/projects") return Response.json({ catalogPath: "/books/workspace.yaml", projects: [{ id: "a", name: "Book", root: "/books/a" }] });
+    if (u.pathname === "/api/scopes") return Response.json({ readErrors: [], missions: [
+      { mission: "broken", slices: [], error: "Invalid frontmatter: /books/a/missions/broken/SPEC.md" },
+      { mission: "mixed", slices: [good, { ...good, id: "bad", dirName: "bad", ...(repaired ? { intent: "Repaired source intent" } : { error: "Invalid frontmatter: /books/a/missions/mixed/slices/bad/SPEC.md", intent: "", status: null }) }] },
+      { mission: "healthy", slices: [good] },
+    ] });
+    if (u.pathname === "/api/views/execution") return Response.json({ rows: [{ view: "execution", mission: u.searchParams.get("mission"), q1_lanes: [], q2_sequencing: [], q4_ladder: [], q5_park: [] }] });
+    if (u.pathname.startsWith("/api/slices")) return Response.json(null);
+    if (u.pathname === "/api/files/roots") return Response.json({ roots: [] });
+    throw Error("Unexpected " + u.pathname);
+  }) as typeof fetch });
+  let snap = emptySnapshot();
+  const view = createViewState({ instanceId: "errors", getSnapshot: () => snap });
+  async function refresh() { snap = await hydrateSnapshot(client, undefined, view.get().scopesMission, view.get().scopesSelected?.slice, null, view.get()); }
+  const content = () => renderScreen(view.get(), snap, { cols, rows }).lines.join("\n");
+  view.dispatch(parseCommand("projects")); await refresh();
+  view.dispatch(parseCommand("project a")); await refresh();
+  expect(content()).toContain("broken · source unavailable");
+  view.dispatch(parseCommand("mission healthy")); await refresh();
+  expect(snap.readErrors).toEqual([]); expect(content()).not.toContain("Invalid frontmatter");
+  view.dispatch(parseCommand("mission mixed")); await refresh();
+  expect(content()).toContain("bad · source unavailable");
+  view.dispatch({ type: "scopes-open", mission: "mixed", slice: "good" }); await refresh();
+  expect(content()).not.toContain("Invalid frontmatter");
+  view.dispatch({ type: "scopes-open", mission: "mixed", slice: "bad" }); calls.length = 0; await refresh();
+  expect(content()).toContain("Source unavailable"); expect(content()).not.toContain("PROOF");
+  expect(calls).not.toContain("/api/slices/bad"); expect(snap.readErrors).toEqual([]);
+  repaired = true; await refresh(); expect(content()).not.toContain("Invalid frontmatter");
+  view.dispatch({ type: "back" }); await refresh(); expect(view.get().scopesSelected?.slice).toBe("good");
+  view.dispatch(parseCommand("mission broken")); calls.length = 0; await refresh();
+  expect(content()).toContain("Source unavailable"); expect(calls).not.toContain("/api/views/execution");
+  expect(content()).not.toContain("No missions found");
+});

@@ -1094,16 +1094,20 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     const errors = (snap.readErrors ?? []).map(text => ({ text: `Unavailable: ${text}` }));
     const projectHeader = state.project ? [...identity, listItem("Read current source", { type: "project-source" }), ...wrapDetailLines(errors, contentWidth)] : [];
     if (state.project && (!entry || entry.error)) return [...projectHeader, { text: "Choose a project again or go Back." }];
-    if (state.project && !state.scopesMission) return [...projectHeader, { text: "Choose a mission" }, ...(snap.scopes ?? []).map(m => listItem(m.mission, { type: "scopes-mission-open", mission: m.mission })), ...(!snap.scopes?.length && !errors.length ? [{ text: "No missions found in this project." }] : [])];
+    if (state.project && !state.scopesMission) return [...projectHeader, { text: "Choose a mission" }, ...(snap.scopes ?? []).map(m => listItem(m.mission + (m.error ? " · source unavailable" : ""), { type: "scopes-mission-open", mission: m.mission })), ...(!snap.scopes?.length && !errors.length ? [{ text: "No missions found in this project." }] : [])];
     // SCOPES owns both levels. Both mission-graph and Explorer slice routes land
     // on the same execution-backed canonical detail; store-direct content is
     // composed into that page instead of surviving as a competing destination.
     const sel = state.scopesSelected;
     const missionName = state.scopesMission;
+    const mission = snap.scopes?.find(m => m.mission === missionName);
+    if (mission?.error) return [...projectHeader, ...wrapDetailLines([{ text: `${missionName} · Source unavailable` }, { text: mission.error }, { text: "Correct the source and refresh; Back returns to other missions." }], contentWidth)];
     const execution = snap.execution?.mission === missionName ? snap.execution : null;
     const detail = sel
       ? (snap.scopes ?? []).find((m) => m.mission === sel.mission)?.slices.find((sl) => sl.dirName === sel.slice) ?? null
       : null;
+    if (detail?.error) return [...projectHeader, ...wrapDetailLines([{ text: `${missionName}/${detail.dirName} · Source unavailable` }, { text: detail.error }, { text: "Correct the source and refresh; Back returns to other slices." }], contentWidth)];
+    if (!sel && !state.executionOpen) projectHeader.push(...(mission?.slices.filter(s => s.error) ?? []).map(s => listItem(`${s.dirName} · source unavailable`, { type: "scopes-open", mission: missionName!, slice: s.dirName })));
     if (state.executionOpen && execution) {
       return [...projectHeader, ...executionContentLines(execution, snap.scopes, snap.readErrors, state.executionOpen, contentWidth, false, snap.sliceDetail, {
         collapseReqs: state.scopesCollapseReqs,

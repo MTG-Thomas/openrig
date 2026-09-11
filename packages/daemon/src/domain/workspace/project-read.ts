@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parse } from "yaml";
+import { parse, YAMLParseError } from "yaml";
 import type { SettingsStore } from "../user-settings/settings-store.js";
 import { NODE_FILE_PRECEDENCE } from "../scope/node-file.js";
 import { readProjectCatalog, selectCatalogProject, yamlObject, ProjectReadError } from "./project-catalog.js";
@@ -20,16 +20,23 @@ export function insideProject(root: string, target: string): string {
   if (path.isAbsolute(rel) || rel === ".." || rel.startsWith(`..${path.sep}`)) throw new ProjectReadError("project_path_escape", `Source is outside selected project: ${target}`);
   return actual;
 }
-export function workSource(root: string, dir: string): string {
+export function workSource(root: string, dir: string, validate = true): string {
   insideProject(root, dir);
   const source = NODE_FILE_PRECEDENCE.map(name => path.join(dir, name)).find(file => fs.existsSync(file));
   if (!source) throw new ProjectReadError("source_unavailable", `No work source at ${dir}`);
   insideProject(root, source);
+  if (!validate) return source;
   const text = fs.readFileSync(source, "utf8");
   if (text.startsWith("---")) {
     const end = text.indexOf("\n---", 3);
     if (end < 0) throw new ProjectReadError("source_invalid", `Unterminated frontmatter: ${source}`);
-    const value = parse(text.slice(3, end));
+    let value: unknown;
+    try { value = parse(text.slice(3, end)); }
+    catch (err) {
+      if (!(err instanceof YAMLParseError)) throw err;
+      const at = err.linePos?.[0];
+      throw new ProjectReadError("source_invalid", `Invalid frontmatter: ${source} (${err.code}${at ? `, line ${at.line}, column ${at.col}` : ""}). Read the source to correct it.`);
+    }
     if (value !== null && (typeof value !== "object" || Array.isArray(value))) throw new ProjectReadError("source_invalid", `Invalid frontmatter: ${source}`);
   }
   return source;
@@ -83,8 +90,15 @@ export function projectMission(p: ProjectRead, mission: string): string {
   const slices = path.join(dir, "slices");
   if (fs.existsSync(slices)) {
     insideProject(p.root, slices);
-    for (const child of fs.readdirSync(slices, { withFileTypes: true }))
-      if (child.isDirectory() || child.isSymbolicLink()) workSource(p.root, path.join(slices, child.name));
+    for (const child of fs.readdirSync(slices, { withFileTypes: true })) {
+      // Keep containment checks for every source consumed by mission readers.
+      // A child's syntax belongs to that child's read, not its healthy siblings.
+      if (child.isDirectory() || child.isSymbolicLink()) {
+        const childDir = insideProject(p.root, path.join(slices, child.name));
+        const source = NODE_FILE_PRECEDENCE.map(name => path.join(childDir, name)).find(file => fs.existsSync(file));
+        if (source) insideProject(p.root, source);
+      }
+    }
   }
   return dir;
 }

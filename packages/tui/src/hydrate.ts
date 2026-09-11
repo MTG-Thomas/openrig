@@ -399,10 +399,12 @@ export async function hydrateSnapshot(
     const project = selected && projects?.projects.find(p => p.id === selected.id && p.root === selected.root);
     if (selected && (!project || project.error)) readErrors.push(`project ${selected.id}: ${project?.error ?? "selection changed or unavailable; choose the project again"}`);
     const readable = !!project && !project.error;
-    const [scopes, execution, detail, roots] = await Promise.all([
-      readable ? safe<{ missions: FleetSnapshot["scopes"]; sources?: Record<string, string>; readErrors?: string[] }>("scopes", () => client.scopesDetailed(selected)) : null,
-      readable && executionMission ? safe<{ rows: NonNullable<FleetSnapshot["execution"]>[] }>("execution", () => client.execution(executionMission, selected)) : null,
-      readable && executionMission && sliceDetailName ? safe<SliceDetailSnap>("slice-detail", () => client.sliceDetail(sliceDetailName, executionMission, selected)) : null,
+    const scopes = readable ? await safe<{ missions: FleetSnapshot["scopes"]; sources?: Record<string, string>; readErrors?: string[] }>("scopes", () => client.scopesDetailed(selected)) : null;
+    const mission = scopes?.missions?.find(m => m.mission === executionMission);
+    const slice = mission?.slices.find(s => s.dirName === sliceDetailName);
+    const [execution, detail, roots] = await Promise.all([
+      readable && executionMission && !mission?.error ? safe<{ rows: NonNullable<FleetSnapshot["execution"]>[] }>("execution", () => client.execution(executionMission, selected)) : null,
+      readable && executionMission && sliceDetailName && !mission?.error && !slice?.error ? safe<SliceDetailSnap>("slice-detail", () => client.sliceDetail(sliceDetailName, executionMission, selected)) : null,
       safe<Awaited<ReturnType<DaemonClient["fileRoots"]>>>("file-roots", () => client.fileRoots()),
     ]);
     readErrors.push(...(scopes?.readErrors ?? []));

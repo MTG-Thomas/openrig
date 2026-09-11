@@ -370,6 +370,8 @@ scheme, and nothing downstream can see it.
   `rig tui`, **PROJECTS** → choose a project → mission → slice shows the work story with row
   drill-in, current source and Escape back. Project IDs and roots distinguish equal display
   names; an unavailable project read does not substitute another project's work.
+  Malformed mission or slice sources stay visible as local unavailable entries while healthy
+  neighbors remain readable. Open the affected source to inspect it, then refresh after correction.
 - **TUI Feed** — inspect **Human requests** separately from **Updates**, with the scope shown as
   **Instance / All humans**. Human destinations and explicit human blockers show the recipient,
   relevant project, needed decision and work it unblocks; agent priority alone is not a human

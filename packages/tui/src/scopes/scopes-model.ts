@@ -20,6 +20,7 @@ export interface ReadinessSnap {
   } | null }>;
 }
 export interface SliceScopeSnap {
+  error?: string;
   sourcePath?: string;
   readiness?: ReadinessSnap;
   dirName: string;
@@ -36,10 +37,11 @@ export interface SliceScopeSnap {
   specShaShort: string | null;
   prdExists: boolean;
 }
-export interface MissionScopesSnap { mission: string; slices: SliceScopeSnap[] }
+export interface MissionScopesSnap { mission: string; slices: SliceScopeSnap[]; error?: string }
 
 /** Slice state glyph (mock: ● building/spec · ✓ delivery-locked · ⊙ other/idle). */
 export function sliceGlyph(s: SliceScopeSnap): string {
+  if (s.error) return "!";
   if (s.readiness?.configured) return s.readiness.state === "ready" ? "✓" : "⊙";
   if (s.locks.delivery) return "✓";
   if (s.stage === "building" || s.status === "building" || s.status === "spec") return "●";
@@ -65,7 +67,7 @@ export function scopesExplorerRows(
     const key = `scopes-mission:${m.mission}`;
     const open = expanded.has(key);
     rows.push({
-      label: `${indent}${open ? "▾" : "▸"} ${m.mission}`,
+      label: `${indent}${open ? "▾" : "▸"} ${m.mission}${m.error ? " · unavailable" : ""}`,
       action: { type: "scopes-mission-open", mission: m.mission },
       disclosureAction: { type: "toggle-expand", key },
       key,
@@ -268,6 +270,7 @@ export interface ScopeContentOpts {
  * canonical slice detail. Keeping it here prevents Explorer and mission-graph
  * navigation from growing separate slice pages again. */
 export function scopeIdentityLines(detail: SliceScopeSnap, mission: string | null, width: number): ContentLine[] {
+  if (detail.error) return wrapped(`${mission}/${detail.dirName} · Source unavailable: ${detail.error}`, width, "", "warn");
   const lines: ContentLine[] = [];
   const w = Math.max(24, width);
   const stage = detail.readiness?.configured ? `proof ${detail.readiness.state}` : detail.stage ?? detail.status ?? "unknown";
@@ -318,6 +321,7 @@ export function scopeIdentityLines(detail: SliceScopeSnap, mission: string | nul
  * Intent/Requirements/Proof contract renderer. Navigation chrome stays with
  * the owning page. */
 export function scopeContractLines(detail: SliceScopeSnap, opts: Pick<ScopeContentOpts, "collapseReqs" | "narrative" | "width">): ContentLine[] {
+  if (detail.error) return [];
   const lines: ContentLine[] = [];
   const w = Math.max(24, opts.width);
   if (opts.narrative) {

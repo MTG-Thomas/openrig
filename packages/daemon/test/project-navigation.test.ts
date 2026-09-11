@@ -14,6 +14,7 @@ import { scopesRoutes } from "../src/routes/scopes.js";
 import { viewsRoutes } from "../src/routes/views.js";
 import { slicesRoutes } from "../src/routes/slices.js";
 import { selectCatalogProject } from "../src/domain/workspace/project-catalog.js";
+import { workSource, projectMission } from "../src/domain/workspace/project-read.js";
 let root: string, app: Hono, db: ReturnType<typeof createDb>;
 function file(name: string, text: string) { fs.mkdirSync(path.dirname(name), { recursive: true }); fs.writeFileSync(name, text); }
 function source(text: string) { return `---\nid: same-id\nstatus: active\n---\n# Same name\n\n## Intent\n\n${text}\n`; }
@@ -44,6 +45,31 @@ beforeEach(() => {
 afterEach(() => { db.close(); fs.rmSync(root, { recursive: true, force: true }); });
 async function get(url: string) { const response = await app.request(url); return { status: response.status, body: await response.json() as any }; }
 describe("catalog project identity across work reads", () => {
+  it("keeps healthy missions and children reachable beside malformed source, then recovers", async () => {
+    const bad = path.join(root, "a/missions/release-x/slices/02-bad/SPEC.md");
+    file(bad, "---\nstatus: retired by another slice\n  kept for REASONING: preserve the original decision.\n---\n# Bad source\n");
+    file(path.join(root, "a/missions/bad-mission/SPEC.md"), "---\nid: [broken\n---\n");
+    file(path.join(root, "a/missions/healthy/SPEC.md"), source("healthy mission"));
+    let scopes = await get("/api/scopes?detail=1&project=a");
+    expect(scopes.status).toBe(200);
+    expect(scopes.body.readErrors).toEqual([]);
+    expect(scopes.body.missions.map((m: any) => m.mission).sort()).toEqual(["bad-mission", "healthy", "release-x"]);
+    const mission = scopes.body.missions.find((m: any) => m.mission === "release-x");
+    expect(mission.slices.find((s: any) => s.dirName === "01-story").intent).toBe("a slice only");
+    const failed = mission.slices.find((s: any) => s.dirName === "02-bad");
+    expect(failed.error).toContain("Invalid frontmatter");
+    expect(failed.error).toContain(bad);
+    expect(failed.error).not.toContain("status: retired");
+    expect(scopes.body.missions.find((m: any) => m.mission === "bad-mission").error).toContain("Invalid frontmatter");
+    expect((await get("/api/scopes?mission=release-x&detail=1&project=a")).status).toBe(200);
+    expect((await get("/api/views/execution?mission=release-x&project=a")).status).toBe(200);
+    expect((await get("/api/slices/01-story?mission=release-x&project=a")).status).toBe(200);
+    expect((await get("/api/scopes/slice?mission=release-x&slice=02-bad&project=a")).body.error).toBe("source_invalid");
+    file(bad, source("repaired slice"));
+    scopes = await get("/api/scopes?detail=1&project=a");
+    const repaired = scopes.body.missions.find((m: any) => m.mission === "release-x").slices.find((s: any) => s.dirName === "02-bad");
+    expect(repaired.error).toBeUndefined(); expect(repaired.intent).toBe("repaired slice");
+  });
   it("shares CLI catalog selection, preserves equal work IDs and filters execution/queue membership", async () => {
     const catalog = await get("/api/scopes/projects"); expect(catalog.body.projects.map((p: any) => p.id)).toEqual(["a", "b"]);
     for (const id of ["a", "b"]) {
@@ -67,12 +93,30 @@ describe("catalog project identity across work reads", () => {
     file(path.join(root, "a/SPEC.md"), source("a restored"));
     expect((await get("/api/scopes?project=a&projectRoot=wrong-root")).body.error).toBe("project_changed");
     file(path.join(root, "a/missions/release-x/slices/01-story/SPEC.md"), "---\nid: [broken\n---\n");
-    scopes = await get("/api/scopes?detail=1&project=a"); expect(scopes.body.missions).toEqual([]); expect(scopes.body.readErrors.length).toBe(1);
+    scopes = await get("/api/scopes?detail=1&project=a"); expect(scopes.body.missions[0].slices[0].error).toContain("Invalid frontmatter"); expect(scopes.body.readErrors).toEqual([]);
     expect((await get("/api/views/execution?project=a&mission=../b")).status).toBe(409);
     fs.renameSync(path.join(root, "a/missions"), path.join(root, "a/missions-retained"));
     fs.symlinkSync(path.join(root, "b/missions"), path.join(root, "a/missions"));
     expect((await get("/api/scopes?project=a")).status).toBe(409);
     file(path.join(root, "workspace.yaml"), "projects: [broken");
     expect((await get("/api/scopes/projects")).status).toBe(409);
+  });
+  it("keeps missing and permission errors local while retaining containment refusal", async () => {
+    const project = (await get("/api/scopes/projects")).body.projects[0];
+    const missing = path.join(root, "a/missions/release-x/slices/02-missing"); fs.mkdirSync(missing);
+    expect(() => workSource(project.root, missing)).toThrow("No work source");
+    expect(() => projectMission(project, "release-x")).not.toThrow();
+    const denied = path.join(root, "a/missions/release-x/slices/03-denied/SPEC.md"); file(denied, source("private")); fs.chmodSync(denied, 0);
+    try {
+      expect(() => workSource(project.root, path.dirname(denied))).toThrow(/EACCES/);
+      const result = (await get("/api/scopes?detail=1&project=a")).body;
+      expect(result.readErrors).toEqual([]);
+      expect(result.missions[0].slices.find((s: any) => s.dirName === "02-missing").error).toContain("No work source");
+      expect(result.missions[0].slices.find((s: any) => s.dirName === "03-denied").error).toContain("EACCES");
+      expect(result.missions[0].slices.find((s: any) => s.dirName === "01-story").intent).toBe("a slice only");
+    } finally { fs.chmodSync(denied, 0o600); }
+    fs.symlinkSync(path.join(root, "b/missions/release-x/slices/01-story"), path.join(root, "a/missions/release-x/slices/escape"));
+    expect(() => projectMission(project, "release-x")).toThrow("outside selected project");
+    expect((await get("/api/views/execution?project=a&mission=release-x")).status).toBe(409);
   });
 });

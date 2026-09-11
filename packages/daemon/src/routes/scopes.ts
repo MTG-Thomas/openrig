@@ -10,7 +10,7 @@ import { readMissionReadiness } from "../domain/proof/judgments.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { SliceIndexer } from "../domain/slices/slice-indexer.js";
-import { projectMissionScopes, projectSliceScope, type ScopeFsDeps, type SliceScopeDetail } from "../domain/scope/scope-view-projection.js";
+import { projectSliceScope, type ScopeFsDeps, type SliceScopeDetail } from "../domain/scope/scope-view-projection.js";
 
 const realFs: ScopeFsDeps = {
   readBytes: p => { try { return fs.readFileSync(p); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; } },
@@ -41,38 +41,45 @@ export function scopesRoutes(): Hono {
     const mission = c.req.query("mission");
     if (selected && mission) projectMission(selected, mission);
     const wantDetail = c.req.query("detail") === "1";
-    const detailFor = (missionName: string, dirName: string): (SliceScopeDetail & { narrative: string | null }) | null => {
-      if (selected) workSource(selected.root, path.join(r.root, missionName, "slices", dirName));
-      const d = projectSliceScope(realFs, path.join(r.root, missionName, "slices", dirName));
-      if (!d) return null;
-      // The TUI one-read hydrate: narrative CONTENT rides inline for the `n` DISPLAY —
-      // still never a data source (the projection never reads it for counts).
-      const narrative = d.progressPath ? realFs.readFile(d.progressPath) : null;
-      return { ...d, narrative, ...(selected ? { sourcePath: workSource(selected.root, path.join(r.root, missionName, "slices", dirName)) } : {}) };
+    const detailFor = (missionName: string, dirName: string): (SliceScopeDetail & { narrative: string | null; error?: string }) | null => {
+      let sourcePath: string | undefined;
+      try {
+        if (selected) sourcePath = workSource(selected.root, path.join(r.root, missionName, "slices", dirName), false);
+        if (selected) workSource(selected.root, path.join(r.root, missionName, "slices", dirName));
+        const d = projectSliceScope(realFs, path.join(r.root, missionName, "slices", dirName));
+        if (!d) return null;
+        // The TUI one-read hydrate: narrative CONTENT rides inline for the `n` DISPLAY —
+        // still never a data source (the projection never reads it for counts).
+        const narrative = d.progressPath ? realFs.readFile(d.progressPath) : null;
+        return { ...d, narrative, ...(selected ? { sourcePath: workSource(selected.root, path.join(r.root, missionName, "slices", dirName)) } : {}) };
+      } catch (err) {
+        return { dirName, id: null, displayName: dirName, error: (err as Error).message, ...(sourcePath ? { sourcePath } : {}),
+          status: null, stage: null, locks: { spec: null, delivery: null }, proof: { paired: 0, total: 0 },
+          intent: "", miniRequirements: [], proofContract: [], progressPath: null, specShaShort: null, prdExists: false, narrative: null };
+      }
+    };
+    const missionFor = (name: string) => {
+      if (selected) projectMission(selected, name);
+      const dir = path.join(r.root, name);
+      const slices = realFs.listDir(path.join(dir, "slices"))
+        .filter(s => realFs.isDirectory(path.join(dir, "slices", s)))
+        .map(s => detailFor(name, s)).filter((s): s is NonNullable<typeof s> => s !== null);
+      return { mission: name, slices: wantDetail ? slices : slices.map(({ intent, miniRequirements, proofContract, progressPath, specShaShort, prdExists, narrative, ...summary }) => summary), readiness: readMissionReadiness(dir) };
     };
     if (mission) {
-      const m = projectMissionScopes(realFs, r.root, mission);
-      if (!m) return c.json({ error: "mission_not_found", mission }, 404);
-      const readiness = readMissionReadiness(path.join(r.root, mission));
-      if (!wantDetail) return c.json({ ...m, readiness });
-      return c.json({ mission: m.mission, readiness, slices: m.slices.map((sl) => detailFor(mission, sl.dirName)).filter(Boolean) });
+      if (!realFs.isDirectory(path.join(r.root, mission))) return c.json({ error: "mission_not_found", mission }, 404);
+      return c.json(missionFor(mission));
     }
     // No mission param: list every mission (the explorer tree); ?detail=1 upgrades rows to details.
     const missionNames = realFs.listDir(r.root).filter((e) => realFs.isDirectory(path.join(r.root, e)));
     const readErrors: string[] = [];
     const sources: Record<string, string> = {};
-    const visibleMissions = missionNames.filter(name => {
-      if (!selected) return true;
+    const missions = missionNames.map(name => {
       try {
-        const dir = projectMission(selected, name);
-        sources[name] = workSource(selected.root, dir);
-        return true;
-      } catch (err) { readErrors.push(`${name}: ${(err as Error).message}`); return false; }
+        if (selected) sources[name] = workSource(selected.root, path.join(r.root, name), false);
+        return missionFor(name);
+      } catch (err) { return { mission: name, slices: [], error: (err as Error).message }; }
     });
-    const missions = visibleMissions
-      .map((e) => projectMissionScopes(realFs, r.root, e))
-      .filter((m): m is NonNullable<typeof m> => m !== null)
-      .map((m) => ({ ...(wantDetail ? { mission: m.mission, slices: m.slices.map((sl) => detailFor(m.mission, sl.dirName)).filter(Boolean) } : m), readiness: readMissionReadiness(path.join(r.root, m.mission)) }));
     return c.json({ missions, sources, readErrors, project: selected, sourceObservation: proofSourceObservation(c) });
   });
 
