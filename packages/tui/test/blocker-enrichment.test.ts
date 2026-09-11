@@ -3,6 +3,7 @@ import { DaemonClient } from "../src/daemon-client.js";
 import { hydrateSnapshot } from "../src/hydrate.js";
 import { createLiveRefresh } from "../src/live.js";
 import { createViewState, emptySnapshot } from "../src/state.js";
+import { isHumanSeatSession } from "../src/pulse/pulse-model.js";
 
 // The four observed external gates, including an external ref that embeds a
 // qitem ID, plus the existing human/legacy forms. None names a local qitem.
@@ -24,7 +25,7 @@ function fail(mode: Failure): Response {
   if (mode === "timeout") throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
   return Response.json({ error: "fixture_failure" }, { status: mode });
 }
-function fixture() {
+function fixture(humanRefs: string[] = [], collide = false) {
   const requests: string[] = [];
   let failure: { route: string; mode: Failure } | undefined;
   let now = 1000;
@@ -32,7 +33,12 @@ function fixture() {
     const url = new URL(String(input)); const route = url.pathname + url.search;
     requests.push(route);
     if (failure?.route === route) return fail(failure.mode);
-    if (route === "/api/queue/list?state=blocked") return Response.json(blocked);
+    if (route === "/api/queue/list?state=blocked") return Response.json([
+      ...blocked, ...humanRefs.map((blockedOn, i) => ({ ...blocked[0], qitemId: `qitem-human-${i}`, blockedOn })),
+    ]);
+    if (collide && humanRefs.some(ref => route === `/api/queue/${encodeURIComponent(ref)}`)) {
+      return Response.json({ destinationSession: "unrelated-owner@rig" });
+    }
     if (route === "/api/queue/qitem-present") return Response.json({ destinationSession: "reviewer@rig" });
     if (url.pathname.startsWith("/api/queue/") && !["/api/queue/list", "/api/queue/attention-aggregate"].includes(url.pathname)) return fail(404);
     if (route === "/healthz") return Response.json({ selfHostId: "fixture" });
@@ -48,6 +54,26 @@ function fixture() {
 }
 
 describe("optional blocker enrichment through the production page composition", () => {
+  it.each([false, true])("canonical human precedence prevents local lookup and false owner (collision=%s)", async collide => {
+    const humanRefs = [
+      "qitem-founder@external", "qitem-slack:UCONTROL@external",
+      "qitem-name.part_suffix@external", "qitem-@external",
+      "human-founder@kernel", "human-qitem@host", "slack:UCONTROL@external",
+    ];
+    expect(humanRefs.every(isHumanSeatSession)).toBe(true);
+    const f = fixture(humanRefs, collide);
+    try {
+      await f.live.refresh();
+      const humans = f.live.snapshot().blocked.filter(q => q.qitemId.startsWith("qitem-human-"));
+      expect(humans.map(q => q.blockedOn)).toEqual(humanRefs);
+      expect(humans.map(q => q.blockerSession ?? null)).toEqual(humanRefs.map(() => null));
+      for (const ref of humanRefs) expect(f.requests).not.toContain(`/api/queue/${encodeURIComponent(ref)}`);
+      expect(f.live.snapshot().blocked.find(q => q.blockedOn === "qitem-present")?.blockerSession).toBe("reviewer@rig");
+      expect(f.live.snapshot().readErrors).toEqual([]);
+      expect(f.live.load()).toMatchObject({ stale: false, lastSuccessAt: 1000 });
+    } finally { f.live.close(); }
+  });
+
   it("loads valid gates and missing local owners without false page failure or fabricated owners", async () => {
     const f = fixture();
     try {
