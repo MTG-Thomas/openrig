@@ -11,7 +11,7 @@ not know exists.** So the point of what follows is not skill. It is recognition:
 lands, something rhymes, and you go check instead of building.
 
 Eighty-one-plus top-level verbs ship (capability canon refreshed through
-`capability-delta-v0.5.14`). This marker describes the pack's teaching, not publication or live
+`capability-delta-v0.5.14-r6`). This marker describes the pack's teaching, not publication or live
 adoption. Read this once for shape, and let it make you suspicious that a thing already exists.
 Model-divergence proclamations are live product (trust them; pins use canonical
 model IDs).
@@ -100,8 +100,10 @@ unseen — which makes messages the one delivery channel that never gets skipped
   someone lists the stream before starting.
 - **`rig terminal open <view>`** — bring every live agent in a rig, mission or slice up as real
   typeable tiles at once.
-  In the TUI, **TERMINALS** lists Saved and Derived views. Select a view to inspect its members,
-  layout and pages; preview is passive. **Open in Herdr** deliberately opens the inspected plan
+  In the TUI, **TERMINALS** keeps Saved views prominent and Derived groups collapsed until
+  expanded. Names load before detailed readiness. Select a view to inspect its members,
+  layout and pages; preview is passive. Saved membership requires deliberate setup.
+  **Open in Herdr** deliberately opens the inspected plan
   and reports opened, absent or degraded members. Help or a side trip returns to the same preview.
 - **`rig walk <seat> --through <files> --pace <n>`** — deliver context pieces through
   file-backed terminal paste. When the current native generation record resolves, the complete
@@ -310,10 +312,13 @@ because someone lost work once.
   **o** opens the existing native terminal here to handle its prompts; detach to return.
   If a fresh start paused before context delivery, **c** finishes that same occupant’s context.
   **r** refreshes actual state and **d** expands diagnostics. **S** returns to startup from work.
-  Ordinary views distinguish initial loading, successful empty reads and failed reads. During
-  refresh or failure, previously loaded content in the same scope stays useful, with its last
+  Ordinary views keep the navigator usable through page/rig changes and slow or failed reads.
+  Topology offers rig selection first, then loads that rig before unrelated fleet details.
+  While a new page loads, useful prior content can remain under its original scope label with
+  no action targets. First visits retain navigation and local loading/error feedback.
+  During refresh or failure, previously loaded content in the same scope stays useful, with its last
   successful read time and Retry. A failed Feed source retains its contribution while healthy
-  sources update; confirmed empty results or removals clear old content. Late responses cannot
+  sources update; confirmed denial, empty results or removals clear affected content. Late responses cannot
   replace another page or project's data, and surviving selection and scroll stay in place.
 - **`rig crash-cart`** — the read-only daemon verdict and saved-state discovery used by that UI.
   An unavailable runtime, unauthorized endpoint or unreadable state is not an empty instance.
@@ -370,10 +375,17 @@ scheme, and nothing downstream can see it.
   `rig tui`, **PROJECTS** → choose a project → mission → slice shows the work story with row
   drill-in, current source and Escape back. Project IDs and roots distinguish equal display
   names; an unavailable project read does not substitute another project's work.
+  The mission overview puts outcomes, current work/owner, blockers, next dependencies and
+  readable slice boxes before process prose. Accepted required proof judgments determine
+  completion; attached evidence, quiet activity and handoff do not. Reopened and assigned
+  unfinished work stays open even when no unassigned next slice exists. Actual custody and
+  planned ownership remain distinct, as do outcome completion and mission lifecycle or
+  publication. Unknown owners and eligibility stay unknown. Narrow views keep boxes and scroll.
   Malformed mission or slice sources stay visible as local unavailable entries while healthy
   neighbors remain readable. Open the affected source to inspect it, then refresh after correction.
 - **TUI Feed** — inspect **Human requests** separately from **Updates**, with the scope shown as
-  **Instance / All humans**. Human destinations and explicit human blockers show the recipient,
+  **Instance / All humans**. Explorer lists these categories; their entries appear in the
+  content pane. Human destinations and explicit human blockers show the recipient,
   relevant project, needed decision and work it unblocks; agent priority alone is not a human
   request. Confirmed delivered quiet FYIs remain in a bounded update window after their delivery
   obligation closes, with a receipt and **No action needed**. Failed or ambiguous delivery is not
@@ -569,7 +581,8 @@ your circumstances is configuration, and the ones that are not, another agent ca
   Open the instance row for one continuous cross-rig agent table with pod separators and material
   `RECENT` transitions; drill into a rig, mission, slice, or agent without losing the owning
   identity. Use the mission's workflow/packet view and Specs purpose/source to understand work.
-  In **Specs**, selection previews purpose, contents and provenance; Enter opens details.
+  In **Specs**, kind groups start collapsed and expand explicitly. Selection previews purpose,
+  contents and provenance; Enter opens details.
   **View current source** reads disk within the explicitly configured readable roots. Relative
   Markdown links resolve against that source; headings open with a labelled starting point.
   Escape or `back` restores the caller's selection and scroll. Detail uses the full width on

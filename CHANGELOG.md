@@ -10,19 +10,25 @@ deprecations, and behavioral changes. Breaking changes are called out explicitly
 
 ## [0.5.14] - 2026-09-11
 
-**Status**: release candidate (RC), unpublished. Exact-cut substance and release
-verification, live adoption and publication remain pending. Real Slack/phone
-validation follows candidate VM adoption through the existing single consumer,
-before publication.
+**Status**: release candidate (RC), unpublished. The corrected private TUI review
+passed; exact-cut verification, corrected live TUI adoption and operator inspection
+remain pending. The completed single-consumer Slack/phone exercise is retained
+evidence for unchanged notifications. Publication remains a separate decision.
 
 - Enter a confirmed running rig directly, with responsive Help, Skip and Local
   during slow or unverified startup.
-- Keep useful same-page content during refresh and source failure, with honest
-  freshness and Retry; preserve scope identity and successful removal semantics.
+- Keep the navigator and labelled useful content during page/rig changes, slow
+  reads and failures; preserve scope identity, passive prior content and confirmed
+  removal semantics. Read the selected rig before unrelated fleet details.
 - Send complete bounded human briefs with related thread detail, distinguish
   quiet FYIs from decisions, and retain delivery/reply correlation.
 - Find instance-wide Human requests and delivered Updates in Feed; open Health,
   Configuration and Connections under System, with six top-level entries.
+- Browse Feed categories, explicitly expand Specs kinds and Derived terminal
+  views, and find Saved views without expanding the whole catalog.
+- Read mission outcomes, current or planned owner, blockers and next dependencies
+  above slice boxes at both terminal widths. Native accepted judgments drive
+  completion; assigned or reopened work and mission lifecycle remain distinct.
 - Reduce repeated terminal inventory work while preserving saved-view preview
   and explicit Herdr Open; no general latency improvement is claimed.
 - Keep primary queue facts readable when optional blocker descriptions fail;
