@@ -11,7 +11,7 @@ not know exists.** So the point of what follows is not skill. It is recognition:
 lands, something rhymes, and you go check instead of building.
 
 Eighty-one-plus top-level verbs ship (capability canon refreshed through
-`capability-delta-v0.5.13`). This marker describes the pack's teaching, not publication or live
+`capability-delta-v0.5.14`). This marker describes the pack's teaching, not publication or live
 adoption. Read this once for shape, and let it make you suspicious that a thing already exists.
 Model-divergence proclamations are live product (trust them; pins use canonical
 model IDs).
@@ -295,18 +295,26 @@ because someone lost work once.
 - **`rig doctor`** — is the *installation* wired up correctly, or are you chasing a bug that is
   really a broken install. **`rig preflight`** asks whether this machine can run OpenRig at all.
 - **Bare `rig`** — the same TUI for first setup, daemon-down startup and ordinary work.
+  A positive observation of a running rig enters ordinary work without a repeated Startup choice.
+  With no running rig, the chooser remains; slow or unverified detection does not mean stopped.
+  A late observation never takes navigation away after you have chosen another route.
   **?** Help, **w** Skip and **L** Local reading remain usable during slow probes or loading,
   and when the daemon is down or unverified. Local reading shows selected disk intent with
   provenance and read errors; it does not substitute for live queue, execution or topology data.
   These reading controls do not start a daemon or resume seats; skipping an already accepted
   operation does not cancel it.
-  Enter starts only the selected daemon; then choose rigs and individual seats, with kernel
-  recommended first. Previously occupied seats default to their authoritative conversation.
+  In startup, Enter starts only the selected daemon; then choose rigs and individual seats,
+  with kernel recommended first. Previously occupied seats default to their authoritative conversation.
   Missing history, ambiguous identity and unavailable authentication have distinct explanations;
   a fresh conversation requires a separate named confirmation. Declining launches nothing.
   **o** opens the existing native terminal here to handle its prompts; detach to return.
   If a fresh start paused before context delivery, **c** finishes that same occupant’s context.
   **r** refreshes actual state and **d** expands diagnostics. **S** returns to startup from work.
+  Ordinary views distinguish initial loading, successful empty reads and failed reads. During
+  refresh or failure, previously loaded content in the same scope stays useful, with its last
+  successful read time and Retry. A failed Feed source retains its contribution while healthy
+  sources update; confirmed empty results or removals clear old content. Late responses cannot
+  replace another page or project's data, and surviving selection and scroll stay in place.
 - **`rig crash-cart`** — the read-only daemon verdict and saved-state discovery used by that UI.
   An unavailable runtime, unauthorized endpoint or unreadable state is not an empty instance.
 - **`rig snapshot`** — take a restore point **before** the risky thing. `snapshot list` shows what
@@ -362,10 +370,14 @@ scheme, and nothing downstream can see it.
   `rig tui`, **PROJECTS** → choose a project → mission → slice shows the work story with row
   drill-in, current source and Escape back. Project IDs and roots distinguish equal display
   names; an unavailable project read does not substitute another project's work.
-- **TUI ATTENTION** — inspect **Action required** separately from **Updates**. Requests and
-  explicit human blockers show what decision is needed and what work it unblocks; outcome and
-  health updates retain their source and history. Open detail and evidence, then Back. Reading
-  does not approve or deliver a request, and queue closure alone does not accept an outcome.
+- **TUI Feed** — inspect **Human requests** separately from **Updates**, with the scope shown as
+  **Instance / All humans**. Human destinations and explicit human blockers show the recipient,
+  relevant project, needed decision and work it unblocks; agent priority alone is not a human
+  request. Confirmed delivered quiet FYIs remain in a bounded update window after their delivery
+  obligation closes, with a receipt and **No action needed**. Failed or ambiguous delivery is not
+  delivered history. Existing outcome and health updates retain their source and history.
+  Open detail and evidence, then Back. Reading does not approve or deliver a request, and queue
+  closure alone does not accept an outcome. Direct `attention`, `needs` and `feed` commands remain.
 - **`rig scope slice ls` / `show` / `create`** — the same at the altitude where work is actually
   buildable. `show` gives you intent, frontmatter and children without guessing which of five files
   to open.
@@ -492,6 +504,9 @@ reaching them is ordinary work rather than an escalation.
   pending, failed, or indeterminate delivery leaves the row intact. Inspect the same row's
   transitions before retrying. `rig send` remains agent-terminal delivery only.
 - **When project policy calls for human judgment or an update, load `messaging-the-human`.**
+  Use `rig context get skills/core/messaging-the-human/SKILL.md` for a complete decision brief,
+  related supplemental detail and explicit quiet-update intent. An FYI creates no approval
+  obligation; writing “FYI” in ordinary request prose does not select that intent.
   System World teaches these mechanics; Project World decides when and why they apply.
   Existing `<entityId>@host` blockers are internal custody labels mapped through the registry
   to the external participant, not a separate outbound route.
@@ -559,15 +574,18 @@ your circumstances is configuration, and the ones that are not, another agent ca
   narrow terminals. The TUI command `read <root>/<path>#heading` also opens a named source;
   missing, denied, binary, truncated and missing-heading results stay explicit. HTTP(S) links
   show a selectable destination without opening a browser; `v` enables terminal text selection.
-  Tab completes commands and snapshot arguments; Recent opens original events. **CONFIG**
-  browses instance/work roots, context, display, waiting, recovery, activity and advanced settings;
+  Tab completes commands and snapshot arguments; Recent opens original events. **System** opens
+  to instance **Health**, with **Configuration** and **Connections** beneath it. Contextual Health
+  remains available in the owning rig or agent view. **Configuration** browses instance/work
+  roots, context, display, waiting, recovery, activity and advanced settings;
   Slack and people are one category. Select a category, use right/left to change panes,
   Enter for full value/default/source/scope, `/` to search labels and keys, and Escape or `back`
   to return. Long detail scrolls; `v` enables terminal text selection. `refresh` reads the current
   view again without changing settings or verifying delivery. Sources & coverage names exclusions,
   daemon/CLI identity and the client timezone separately. Resolved settings do not prove runtime
-  adoption. The legacy `connections` command still inspects gateway services and human routes;
-  dated verification does not prove delivery. `timezone` gives persistent local-time guidance.
+  adoption. Direct `config` and `connections` commands remain; Connections inspects gateway
+  services and human routes. Dated verification does not prove delivery. `timezone` gives
+  persistent local-time guidance.
   **?** opens full-screen Help with command grammar and examples; Escape returns to the caller.
   **`rig tui commands`** lists everything it can do without launching it. **`rig ui open`** is
   unmaintained, best-effort, and replaced by the TUI, so never diagnose product behaviour from
