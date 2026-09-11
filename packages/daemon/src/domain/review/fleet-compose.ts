@@ -20,9 +20,8 @@
 // host's DB only (source closed on handoff), so no fleet double-count by
 // construction.
 //
-// D-7: per-host reads run concurrently under the named read-class deadline
-// (the attention-aggregator discipline) — a slow host degrades to its honest
-// per-host status; the glance NEVER stalls on the slowest host. The LOCAL
+// D-7: concurrent remote reads share one elapsed composition budget — a
+// slow host degrades to its honest per-host status. The LOCAL
 // host joins via the in-process composer directly (D-1 — one fleet member
 // with zero self-transport).
 
@@ -43,10 +42,11 @@ import type { HostRegistryLoadResult } from "../hosts/hosts-registry-reader.js";
 import { resolveHost } from "../hosts/hosts-registry-reader.js";
 import { remoteJsonRequest } from "../hosts/remote-daemon-http.js";
 
-/** The fleet aggregation READ deadline class (per-host bound) — same class
- *  as the shipped feed aggregation (a poll, not a bootstrap). Named here,
- *  passed explicitly at the call-site (D-7). */
-export const FLEET_READ_TIMEOUT_MS = 5_000;
+/** The ordinary TUI/CLI caller gives GET five seconds. Reserve one second
+ *  (20%) for union/serialization, transport and scheduling after fan-out;
+ *  remote waits share the remaining four seconds, INCLUDING elapsed local
+ *  work. This margin is not a guarantee under synchronous/event-loop stalls. */
+export const FLEET_READ_TIMEOUT_MS = 5_000 - 1_000;
 
 /** Fixed fan-out cap — a poll across a handful of hosts (the shipped
  *  aggregator's v1 posture; adaptive throttling out of scope). */
@@ -223,12 +223,12 @@ export interface FleetComposeDeps {
   /** Registry presence probe (a missing registry = a single-host operator —
    *  clean local-only fleet; an unreadable one is surfaced honestly). */
   registryExists: () => boolean;
-  /** View-time fact, passed in — the composer itself is clock-free. */
+  /** View-time fact, passed in — the union never derives time state. */
   nowIso: string;
   fetchImpl?: typeof fetch;
   env?: Record<string, string | undefined>;
   readFile?: (path: string) => string;
-  /** Test override; production uses FLEET_READ_TIMEOUT_MS. */
+  /** Test override for the TOTAL elapsed budget; never per-host/per-wave. */
   timeoutMs?: number;
   concurrency?: number;
 }
@@ -252,7 +252,7 @@ function parseComposedRig(payload: unknown): ComposedRigAgents | null {
   return payload as ComposedRigAgents;
 }
 
-async function readHostComposedRig(hostId: string, reg: HostRegistryLoadResult, deps: FleetComposeDeps): Promise<PerHostOutcome> {
+async function readHostComposedRig(hostId: string, reg: HostRegistryLoadResult, deps: FleetComposeDeps, deadline: number): Promise<PerHostOutcome> {
   if (!reg.ok) {
     return { status: { hostId, status: "unreachable", error: reg.error }, input: null };
   }
@@ -266,9 +266,18 @@ async function readHostComposedRig(hostId: string, reg: HostRegistryLoadResult, 
       input: null,
     };
   }
+  const remainingMs = Math.floor(deadline - performance.now());
+  if (remainingMs <= 0) {
+    return {
+      status: { hostId, status: "unreachable", error: "fleet read budget exhausted; remote request not attempted" },
+      input: null,
+    };
+  }
   const res = await remoteJsonRequest(resolved.host, "/api/review/rig", {
     method: "GET",
-    timeoutMs: deps.timeoutMs ?? FLEET_READ_TIMEOUT_MS,
+    // Reuse the transport's abort across request AND body. Later worker
+    // waves receive only time left on this same deadline, never a reset.
+    timeoutMs: remainingMs,
     fetchImpl: deps.fetchImpl,
     env: deps.env,
     readFile: deps.readFile,
@@ -302,7 +311,9 @@ async function readHostComposedRig(hostId: string, reg: HostRegistryLoadResult, 
         status: {
           hostId,
           status: "unreachable",
-          error: res.phase === "body" ? `read timed out: response headers arrived (HTTP ${res.status}) but the body never completed` : `read timed out after ${deps.timeoutMs ?? FLEET_READ_TIMEOUT_MS}ms`,
+          error: res.phase === "body"
+            ? `fleet read budget exhausted: response headers arrived (HTTP ${res.status}) but the body never completed`
+            : "fleet read budget exhausted before response headers",
           failedStep: "remote-daemon-unreachable",
         },
         input: null,
@@ -316,6 +327,9 @@ async function readHostComposedRig(hostId: string, reg: HostRegistryLoadResult, 
  *  registered host fanned out concurrently under the named deadline (D-7),
  *  per-host status complete by construction, union deduped on the Q4 key. */
 export async function composeFleet(deps: FleetComposeDeps): Promise<ComposedFleet> {
+  // Start BEFORE synchronous local work and registry reads. A timer cannot
+  // preempt those; if they consume the budget, add no further remote waits.
+  const deadline = performance.now() + (deps.timeoutMs ?? FLEET_READ_TIMEOUT_MS);
   const local = deps.composeLocalRig();
   const localInput: FleetHostInput = {
     hostId: LOCAL_HOST_ID,
@@ -350,7 +364,7 @@ export async function composeFleet(deps: FleetComposeDeps): Promise<ComposedFlee
       const i = next;
       if (i >= hostIds.length) return;
       next += 1;
-      outcomes[i] = await readHostComposedRig(hostIds[i]!, reg, deps);
+      outcomes[i] = await readHostComposedRig(hostIds[i]!, reg, deps, deadline);
     }
   });
   await Promise.all(workers);

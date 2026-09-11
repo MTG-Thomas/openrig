@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   composeFleet,
   unionFleet,
@@ -399,7 +399,115 @@ describe("composeFleet — the fan-out shell (D-1/D-7 + per-host honesty)", () =
     expect(fleet.hosts).toHaveLength(1);
   });
 
-  it("the read deadline class is named and bounded (a poll, not a bootstrap)", () => {
-    expect(FLEET_READ_TIMEOUT_MS).toBe(5_000);
+  it("reserves response time inside the ordinary five-second caller deadline", () => {
+    expect(FLEET_READ_TIMEOUT_MS).toBe(5_000 - 1_000);
+  });
+});
+
+describe("composeFleet — one elapsed budget, including local work and worker waves", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function registry(count: number): HostRegistry {
+    return { hosts: Array.from({ length: count }, (_, i) => ({ id: `h${i}`, transport: "http" as const, url: `http://h${i}.invalid` })) };
+  }
+
+  function timedDeps(localMs = 0, count = 9) {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const started = performance.now();
+    const starts: number[] = [];
+    const aborts: number[] = [];
+    const deps = fanoutDeps({
+      timeoutMs: 100,
+      loadRegistry: () => ({ ok: true, registry: registry(count) }),
+      composeLocalRig: () => {
+        vi.advanceTimersByTime(localMs);
+        return localComposed([item({ identity: "qi-kept-local" })]);
+      },
+      fetchImpl: ((_url, init) => new Promise<Response>((_resolve, reject) => {
+        starts.push(performance.now() - started);
+        init!.signal!.addEventListener("abort", () => {
+          aborts.push(performance.now() - started);
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
+      })) as typeof fetch,
+    });
+    return { deps, starts, aborts, started };
+  }
+
+  it.each([0, 60])("aborts the pending first wave and never grants later waves a fresh budget (local %ims)", async (localMs) => {
+    const { deps, starts, aborts, started } = timedDeps(localMs);
+    const pending = composeFleet(deps);
+    await vi.runAllTimersAsync();
+    const fleet = await pending;
+    expect(performance.now() - started).toBeLessThanOrEqual(100);
+    expect(starts).toEqual(Array(4).fill(localMs));
+    expect(aborts).toEqual(Array(4).fill(100));
+    expect(fleet.hosts.map(h => h.hostId)).toEqual(["local", ...registry(9).hosts.map(h => h.id)]);
+    expect(fleet.needsYou.items.map(i => i.fleetKey)).toEqual(["local|qi-kept-local"]);
+    expect(fleet.rollup).toMatchObject({ needsYouCount: 1, hostCount: 10, unreachableCount: 9 });
+    for (const h of fleet.hosts.slice(1)) {
+      expect(h.status.status).toBe("unreachable");
+      expect(h.status.error).toContain("budget exhausted");
+      expect(h).not.toHaveProperty("seatCount");
+    }
+    for (const h of fleet.hosts.slice(5)) expect(h.status.error).toContain("not attempted");
+  });
+
+  it.each([100, 150])("local work consuming %ims leaves no further remote wait or request", async (localMs) => {
+    const { deps, starts, started } = timedDeps(localMs);
+    const pending = composeFleet(deps);
+    await vi.runAllTimersAsync();
+    const fleet = await pending;
+    expect(performance.now() - started).toBe(localMs); // no claim of preempting synchronous work
+    expect(starts).toEqual([]);
+    expect(fleet.needsYou.items[0]!.fleetKey).toBe("local|qi-kept-local");
+    expect(fleet.hosts.slice(1).every(h => h.status.error?.includes("not attempted"))).toBe(true);
+  });
+
+  it("keeps timely results from multiple waves and their original host order", async () => {
+    const { deps } = timedDeps(10);
+    deps.fetchImpl = ((url) => new Promise<Response>(resolve => {
+      setTimeout(() => resolve(composedRigResponse([item({ identity: new URL(String(url)).hostname })])), 20);
+    })) as typeof fetch;
+    const pending = composeFleet(deps);
+    await vi.runAllTimersAsync();
+    const fleet = await pending;
+    expect(fleet.hosts.map(h => h.hostId)).toEqual(["local", ...registry(9).hosts.map(h => h.id)]);
+    expect(fleet.hosts.every(h => h.status.status === "ok")).toBe(true);
+    expect(fleet.needsYou.items.map(i => i.fleetKey).sort()).toEqual([
+      "local|qi-kept-local", ...registry(9).hosts.map(h => `${h.id}|${h.id}.invalid`),
+    ].sort());
+    expect(fleet.rollup).toMatchObject({ needsYouCount: 10, hostCount: 10, unreachableCount: 0 });
+  });
+
+  it("keeps a completed remote alongside local data when its sibling exhausts the budget", async () => {
+    const { deps, aborts } = timedDeps(0, 2);
+    const stalled = deps.fetchImpl!;
+    deps.fetchImpl = ((url, init) => String(url).includes("h0.")
+      ? Promise.resolve(composedRigResponse([item({ identity: "qi-timely" })]))
+      : stalled(url, init)) as typeof fetch;
+    const pending = composeFleet(deps);
+    await vi.runAllTimersAsync();
+    const fleet = await pending;
+    expect(fleet.needsYou.items.map(i => i.fleetKey).sort()).toEqual(["h0|qi-timely", "local|qi-kept-local"]);
+    expect(fleet.hosts.map(h => h.status.status)).toEqual(["ok", "ok", "unreachable"]);
+    expect(aborts).toEqual([100]);
+  });
+
+  it("a body stall shares the remaining budget, aborts its transport, and names received headers", async () => {
+    const { deps, started } = timedDeps(60, 1);
+    let signal: AbortSignal;
+    deps.fetchImpl = (async (_url, init) => {
+      signal = init!.signal!;
+      return new Response(new ReadableStream(), { status: 200 });
+    }) as typeof fetch;
+    const pending = composeFleet(deps);
+    await vi.runAllTimersAsync();
+    const fleet = await pending;
+    expect(performance.now() - started).toBe(100);
+    expect(signal!.aborted).toBe(true);
+    expect(fleet.hosts[1]!.status).toMatchObject({ status: "unreachable" });
+    expect(fleet.hosts[1]!.status.error).toMatch(/budget exhausted.*headers.*HTTP 200.*body/);
+    expect(fleet.needsYou.items[0]!.fleetKey).toBe("local|qi-kept-local");
   });
 });

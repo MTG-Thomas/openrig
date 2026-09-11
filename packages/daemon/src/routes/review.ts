@@ -89,7 +89,7 @@ export function reviewRoutes(): Hono {
       composeLocalRig: () => gatherer.composeRig(),
       loadRegistry: registryLoader,
       registryExists: registryProbe,
-      // The view-time fact enters at the edge — the composer stays clock-free.
+      // View time enters at the edge; the union never derives host time state.
       nowIso: new Date().toISOString(),
     });
     return c.json(fleet);
