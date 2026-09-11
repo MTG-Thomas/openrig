@@ -3292,7 +3292,9 @@ export class QueueRepository {
     const row = this.db.prepare("SELECT * FROM queue_items WHERE qitem_id = ?")
       .get(qitemId) as QueueItemRow | undefined;
     if (!row) return null;
-    const item = this.rowToItem(row);
+    // The delivery episode uses row fields, not the waiting/backstop view.
+    // Keep this read fresh without repeating the caller's recovery-tag scan.
+    const item = this.rowToItem(row, false);
     const episodeState = this.currentDeliveryEpisode(item);
     if (episodeState === "inactive") return null;
     const episode = episodeState;
