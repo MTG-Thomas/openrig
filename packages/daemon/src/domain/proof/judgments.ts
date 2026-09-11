@@ -64,11 +64,11 @@ function workspaceOf(dir: string, io: ScopeFsDeps, required = true): string {
     }
   }
 }
-function policyOf(dir: string, io: ScopeFsDeps): ScopeReadiness["policy"] {
+function policyOf(dir: string, io: ScopeFsDeps, readManifest = manifest): ScopeReadiness["policy"] {
   const root = workspaceOf(dir, io, false);
   for (let p = path.resolve(dir); ; p = path.dirname(p)) {
     for (const name of ["slice.yaml", "mission.yaml", "project.yaml"]) {
-      const file = path.join(p, name), doc = manifest(io, file);
+      const file = path.join(p, name), doc = readManifest(io, file);
       if (doc && Object.hasOwn(doc, "proofPolicy")) {
         const policy = mapping(doc.proofPolicy, `${file}: proofPolicy`);
         if (Object.keys(policy).some(k => k !== "judges")) throw new JudgmentError("policy_invalid", `${file}: proofPolicy supports judges only`);
@@ -79,6 +79,22 @@ function policyOf(dir: string, io: ScopeFsDeps): ScopeReadiness["policy"] {
     }
     if (p === root) return null;
   }
+}
+export type ProofPolicyRead = (dir: string, io: ScopeFsDeps) => ScopeReadiness["policy"];
+
+/** One synchronous read composition owns this reader, then discards it. Only
+ * policy manifest inputs (including absence) are reused, by absolute path and
+ * exact I/O provider. Never retain across requests or pass through a mutation.
+ * Parsed objects stay private; policyOf returns fresh policy/judges each time.
+ * Errors still throw with their original source. This is not an atomic snapshot. */
+export function createProofPolicyRead(): ProofPolicyRead {
+  const inputs = new WeakMap<ScopeFsDeps, Map<string, Mapping | null>>();
+  return (dir, io) => policyOf(dir, io, (provider, file) => {
+    let files = inputs.get(provider);
+    if (!files) { files = new Map(); inputs.set(provider, files); }
+    if (!files.has(file)) files.set(file, manifest(provider, file));
+    return files.get(file)!;
+  });
 }
 export function readProofContract(dir: string, io: ScopeFsDeps) {
   const files = { prd: "IMPLEMENTATION-PRD.md", readme: "README.md", spec: "SPEC.md" };
@@ -140,12 +156,12 @@ export function evidenceAt(root: string, dir: string, ref: string): Evidence {
   return { ref: path.relative(fs.realpathSync(root), target).split(path.sep).join("/") + (fragment ? `#${fragment}` : ""), sha256: createHash("sha256").update(addressed).digest("hex") };
 }
 
-export function readSliceReadiness(dir: string, io: ScopeFsDeps = proofFs): ScopeReadiness {
+export function readSliceReadiness(dir: string, io: ScopeFsDeps = proofFs, readPolicy: ProofPolicyRead = policyOf): ScopeReadiness {
   let policy: ScopeReadiness["policy"] = null, receipts: Judgment[] = [], items: ItemReadiness[] = [];
   const issues: string[] = [];
   let policyRead = false;
   try {
-    policy = policyOf(dir, io); policyRead = true;
+    policy = readPolicy(dir, io); policyRead = true;
     receipts = ledger(dir, io);
     const root = workspaceOf(dir, io, false), promises = readProofContract(dir, io);
     if (new Set(promises.map(p => p.id)).size !== promises.length) throw new JudgmentError("item_ambiguous", "Repeated item identity; give distinct promises explicit <!-- proof-item: id --> markers");
@@ -248,7 +264,7 @@ export function recordJudgment(missionsRoot: string, input: JudgeInput, actor: s
   return { judgment, readiness: readSliceReadiness(dir), replayed: false };
 }
 
-export function readMissionReadiness(missionDir: string): MissionReadiness {
+export function readMissionReadiness(missionDir: string, readPolicy: ProofPolicyRead = policyOf): MissionReadiness {
   const issues: string[] = [], slices: MissionReadiness["slices"] = [];
   let historicalStatus: string | null = null;
   try {
@@ -264,7 +280,7 @@ export function readMissionReadiness(missionDir: string): MissionReadiness {
       if (!Array.isArray(depends) || depends.some(x => typeof x !== "string")) throw new JudgmentError("dependencies_invalid", `${member.path}: execution.depends_on must be a list`);
       const id = (data?.metadata as { id?: unknown } | undefined)?.id ?? path.basename(dir);
       if (typeof id !== "string" || !id || slices.some(s => s.id === id)) throw new JudgmentError("dependency_identity", `${member.path}: missing or repeated slice identity`);
-      slices.push({ scope: path.basename(dir), id, readiness: readSliceReadiness(dir), dependsOn: depends as string[], eligible: null });
+      slices.push({ scope: path.basename(dir), id, readiness: readSliceReadiness(dir, proofFs, readPolicy), dependsOn: depends as string[], eligible: null });
     }
     const memo = new Map<string, boolean | null>();
     const visit = (s: MissionReadiness["slices"][number], visiting = new Set<string>()): boolean | null => {
@@ -287,8 +303,8 @@ export function readMissionReadiness(missionDir: string): MissionReadiness {
   return { revision: hash([slices, issues]), state, slices, issues, historicalStatus };
 }
 
-export function readProjectReadiness(missionsRoot: string) {
-  const missions = fs.readdirSync(missionsRoot).filter(n => fs.statSync(path.join(missionsRoot, n)).isDirectory()).map(name => ({ name, ...readMissionReadiness(contained(missionsRoot, path.join(missionsRoot, name))) }));
+export function readProjectReadiness(missionsRoot: string, readPolicy: ProofPolicyRead = policyOf) {
+  const missions = fs.readdirSync(missionsRoot).filter(n => fs.statSync(path.join(missionsRoot, n)).isDirectory()).map(name => ({ name, ...readMissionReadiness(contained(missionsRoot, path.join(missionsRoot, name)), readPolicy) }));
   const active = missions.filter(m => ["active", "release-candidate"].includes(m.historicalStatus ?? ""));
   return { revision: hash(active), state: active.length && active.every(m => m.state === "ready") ? "ready" : active.some(m => m.state === "unknown") ? "unknown" : "not-ready", missions, basis: "Active mission readiness; distinct outcome judgment and publication remain separate" };
 }

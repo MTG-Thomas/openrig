@@ -6,7 +6,7 @@
 // `n`; it is not read here at all. The render never asserts a proven-green the store
 // does not enforce: `paired` means exactly "≥1 C1 drop cites this contract item".
 import * as path from "node:path";
-import { readSliceReadiness, readProofContract, type ScopeReadiness } from "../proof/judgments.js";
+import { readSliceReadiness, readProofContract, type ScopeReadiness, type ProofPolicyRead } from "../proof/judgments.js";
 import { createHash } from "node:crypto";
 import { NODE_FILE_PRECEDENCE } from "./node-file.js";
 
@@ -195,7 +195,7 @@ function specShaFromLockedArtifacts(fs: ScopeFsDeps, sliceDir: string, fm: strin
   return createHash("sha256").update(bytes).digest("hex").slice(0, 8);
 }
 
-export function projectSliceScope(fs: ScopeFsDeps, sliceDir: string): SliceScopeDetail | null {
+export function projectSliceScope(fs: ScopeFsDeps, sliceDir: string, readPolicy?: ProofPolicyRead): SliceScopeDetail | null {
   const readmePath = NODE_FILE_PRECEDENCE
     .map((n) => path.join(sliceDir, n))
     .find((p) => fs.exists(p));
@@ -222,7 +222,7 @@ export function projectSliceScope(fs: ScopeFsDeps, sliceDir: string): SliceScope
   const heading = /^# (.+)$/m.exec(content);
   const progressPath = path.join(sliceDir, "PROGRESS.md");
   return {
-    readiness: readSliceReadiness(sliceDir, fs),
+    readiness: readSliceReadiness(sliceDir, fs, readPolicy),
     dirName: path.basename(sliceDir),
     id: fmValue(fm, "id"),
     displayName: heading ? heading[1]!.trim() : path.basename(sliceDir),

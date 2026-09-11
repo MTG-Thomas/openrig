@@ -1,6 +1,6 @@
 import { belongsToProject } from "./workspace/project-catalog.js";
 import { inspectGraph } from "./workflow-reconciliation.js";
-import { readMissionReadiness, readProjectReadiness } from "./proof/judgments.js";
+import { createProofPolicyRead, readMissionReadiness, readProjectReadiness } from "./proof/judgments.js";
 import { lifecycleObligations, requiredLifecycleSteps } from "./lifecycle-obligations.js";
 import { QueueWakeRepository } from "./queue-wake-repository.js";
 // S27 (OPR.0.5.6.27) — the execution view: one JSON document answering the six
@@ -1117,7 +1117,8 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
       dfMargin = { available_kib: INDETERMINATE, path: dfPath, basis: "statfs failed" };
     }
   }
-  const readiness = missionsRoot && mission !== INDETERMINATE ? readMissionReadiness(path.join(missionsRoot, mission)) : null;
+  const readPolicy = createProofPolicyRead();
+  const readiness = missionsRoot && mission !== INDETERMINATE ? readMissionReadiness(path.join(missionsRoot, mission), readPolicy) : null;
   for (const sequenced of q2) {
     const derived = readiness?.slices.find(s => s.scope === sequenced.dir);
     if (!derived?.readiness.configured) continue;
@@ -1138,7 +1139,7 @@ export function buildExecutionView(deps: ExecutionViewDeps, opts?: { mission?: s
     ...(opts?.project ? { project: opts.project, membership: "exact project:<id> queue tags and lifecycle identity; unscoped rows excluded" } : {}),
     view: "execution",
     readiness,
-    project_readiness: missionsRoot ? readProjectReadiness(missionsRoot) : null,
+    project_readiness: missionsRoot ? readProjectReadiness(missionsRoot, readPolicy) : null,
     // Authored guidance is carried verbatim in meaning, never parsed into edges or acceptance.
     planning_guidance: arrangement?.state === "valid" ? arrangement.guidance : [],
     mission,

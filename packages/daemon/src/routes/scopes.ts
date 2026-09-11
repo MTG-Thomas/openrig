@@ -6,7 +6,7 @@ import { listProjects, selectedProject, projectReadResponse, projectMission, wor
 // Data path: README frontmatter locks + proof/ C1 drops — never PROGRESS.md for counts.
 import { Hono } from "hono";
 import { proofSourceObservation } from "../domain/proof/source-watch.js";
-import { readMissionReadiness } from "../domain/proof/judgments.js";
+import { createProofPolicyRead, readMissionReadiness } from "../domain/proof/judgments.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { SliceIndexer } from "../domain/slices/slice-indexer.js";
@@ -41,12 +41,13 @@ export function scopesRoutes(): Hono {
     const mission = c.req.query("mission");
     if (selected && mission) projectMission(selected, mission);
     const wantDetail = c.req.query("detail") === "1";
+    const readPolicy = createProofPolicyRead();
     const detailFor = (missionName: string, dirName: string): (SliceScopeDetail & { narrative: string | null; error?: string }) | null => {
       let sourcePath: string | undefined;
       try {
         if (selected) sourcePath = workSource(selected.root, path.join(r.root, missionName, "slices", dirName), false);
         if (selected) workSource(selected.root, path.join(r.root, missionName, "slices", dirName));
-        const d = projectSliceScope(realFs, path.join(r.root, missionName, "slices", dirName));
+        const d = projectSliceScope(realFs, path.join(r.root, missionName, "slices", dirName), readPolicy);
         if (!d) return null;
         // The TUI one-read hydrate: narrative CONTENT rides inline for the `n` DISPLAY —
         // still never a data source (the projection never reads it for counts).
@@ -64,7 +65,7 @@ export function scopesRoutes(): Hono {
       const slices = realFs.listDir(path.join(dir, "slices"))
         .filter(s => realFs.isDirectory(path.join(dir, "slices", s)))
         .map(s => detailFor(name, s)).filter((s): s is NonNullable<typeof s> => s !== null);
-      return { mission: name, slices: wantDetail ? slices : slices.map(({ intent, miniRequirements, proofContract, progressPath, specShaShort, prdExists, narrative, ...summary }) => summary), readiness: readMissionReadiness(dir) };
+      return { mission: name, slices: wantDetail ? slices : slices.map(({ intent, miniRequirements, proofContract, progressPath, specShaShort, prdExists, narrative, ...summary }) => summary), readiness: readMissionReadiness(dir, readPolicy) };
     };
     if (mission) {
       if (!realFs.isDirectory(path.join(r.root, mission))) return c.json({ error: "mission_not_found", mission }, 404);
