@@ -11,12 +11,15 @@ export class PageRead {
   constructor(private now: () => number) {}
   begin(): void { this.seen.clear(); this.errors = []; this.retainedAt = undefined; }
   end(): void { for (const key of this.values.keys()) if (!this.seen.has(key)) this.values.delete(key); }
-  fetch(fetchImpl: typeof fetch, signal: AbortSignal): typeof fetch {
+  fetch(fetchImpl: typeof fetch, signal: AbortSignal, optional = false): typeof fetch {
     return (async (input, init) => {
       if (init?.method && init.method !== "GET") throw new Error("Page reader is read-only");
       const key = String(input);
-      this.seen.add(key);
       const requestSignal = init?.signal ? AbortSignal.any([signal, init.signal]) : signal;
+      // Optional enrichment shares cancellation, but neither contributes page
+      // failures nor retains a former owner as if it were freshly resolved.
+      if (optional) return fetchImpl(input, { ...init, signal: requestSignal });
+      this.seen.add(key);
       try {
         const response = await fetchImpl(input, { ...init, signal: requestSignal });
         if (response.status >= 500) throw new Error(`HTTP ${response.status}`);

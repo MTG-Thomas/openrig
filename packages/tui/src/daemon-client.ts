@@ -57,17 +57,21 @@ export function launchNodeNotice(agent: string, result: LaunchNodeResult): strin
 export class DaemonClient {
   readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private optionalFetchImpl: typeof fetch;
   private readonly headerSource: Record<string, string> | (() => Record<string, string>);
 
   constructor(options: DaemonClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? process.env["OPENRIG_URL"] ?? "http://127.0.0.1:7433").replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.optionalFetchImpl = this.fetchImpl;
     this.headerSource = options.headers ?? {};
   }
 
   forPage(page: PageRead, signal: AbortSignal): DaemonClient {
-    return new DaemonClient({ baseUrl: this.baseUrl, headers: this.headerSource,
+    const client = new DaemonClient({ baseUrl: this.baseUrl, headers: this.headerSource,
       fetchImpl: page.fetch(this.fetchImpl, signal) });
+    client.optionalFetchImpl = page.fetch(this.fetchImpl, signal, true);
+    return client;
   }
 
   private get headers(): Record<string, string> {
@@ -90,8 +94,8 @@ export class DaemonClient {
     }
   }
 
-  private async get(route: string): Promise<unknown> {
-    const res = await this.fetchImpl(`${this.baseUrl}${route}`, { headers: this.headers, signal: AbortSignal.timeout(5_000) });
+  private async get(route: string, fetchImpl = this.fetchImpl): Promise<unknown> {
+    const res = await fetchImpl(`${this.baseUrl}${route}`, { headers: this.headers, signal: AbortSignal.timeout(5_000) });
     if (!res.ok) throw new Error(`daemon read failed: GET ${route} → ${res.status}`);
     return res.json();
   }
@@ -280,8 +284,8 @@ export class DaemonClient {
   humanAttention(item?: string | null) {
     return this.get(`/api/attention${item ? `?item=${encodeURIComponent(item)}` : ""}`);
   }
-  queueItem(qitemId: string) {
-    return this.get(`/api/queue/${encodeURIComponent(qitemId)}`);
+  queueItem(qitemId: string, options: { optional?: boolean } = {}) {
+    return this.get(`/api/queue/${encodeURIComponent(qitemId)}`, options.optional ? this.optionalFetchImpl : this.fetchImpl);
   }
   reviewRig() {
     return this.get(`/api/review/rig`);

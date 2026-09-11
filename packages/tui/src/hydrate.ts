@@ -20,7 +20,6 @@ import type { ConnectionsRead, ControlPlaneRead } from "./connections/connection
 import { DaemonClient } from "./daemon-client.js";
 import { parse as parseYaml } from "yaml";
 import type { AgentRow, FleetSnapshot, HealthRecord, HostNode, NeedsItem, PodNode, QueueRead, RecentTransitionSnap, SeatActivitySummary, SliceDetailSnap, SpecEntry, ViewState } from "./types.js";
-import { isHumanSeatSession } from "./pulse/pulse-model.js";
 
 // Narrow read-shapes: just the served fields this module consumes (names match
 // the daemon's serialized output — see the Phase-2 endpoint-shape survey).
@@ -485,8 +484,8 @@ export async function hydrateSnapshot(
   // BLOCKED ON AGENTS label==referent (r1 finding): blockedOn is a qitem POINTER
   // for agent-blocks, so the blocking AGENT is that qitem's OWNER. Resolve each
   // via the shipped single-qitem daemon read (client.queueItem) — a BOUNDED
-  // per-row lookup. human-park (a session in blockedOn) is skipped: it belongs
-  // under NEEDS YOU and would 404.
+  // per-row lookup. Match queue-repository/readWaitingView's local qitem
+  // discriminator; human, typed and legacy external gates are not local IDs.
   // A miss (gate name / closed blocker) degrades QUIETLY to the raw blockedOn at
   // render (honest) — this is enrichment, NOT a load-bearing read, so it must not
   // pollute readErrors / the "reads failed" status line (the blocked LIST read,
@@ -494,8 +493,8 @@ export async function hydrateSnapshot(
   const blockedResolved: QueueRead[] = await Promise.all(
     (blocked ?? []).map(async (item) => {
       const read = toQueueRead(item);
-      if (read.blockedOn && !isHumanSeatSession(read.blockedOn)) {
-        const blocker = (await client.queueItem(read.blockedOn).catch(() => null)) as QueueItemRead | null;
+      if (read.blockedOn?.startsWith("qitem-")) {
+        const blocker = (await client.queueItem(read.blockedOn, { optional: true }).catch(() => null)) as QueueItemRead | null;
         read.blockerSession = blocker?.destinationSession ?? null;
       }
       return read;
