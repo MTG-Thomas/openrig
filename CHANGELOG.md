@@ -8,6 +8,30 @@ deprecations, and behavioral changes. Breaking changes are called out explicitly
 
 ---
 
+## [0.5.14] - 2026-09-11
+
+**Status**: release candidate (RC), unpublished. Exact-cut substance and release
+verification, live adoption and publication remain pending. Real Slack/phone
+validation follows candidate VM adoption through the existing single consumer,
+before publication.
+
+- Enter a confirmed running rig directly, with responsive Help, Skip and Local
+  during slow or unverified startup.
+- Keep useful same-page content during refresh and source failure, with honest
+  freshness and Retry; preserve scope identity and successful removal semantics.
+- Send complete bounded human briefs with related thread detail, distinguish
+  quiet FYIs from decisions, and retain delivery/reply correlation.
+- Find instance-wide Human requests and delivered Updates in Feed; open Health,
+  Configuration and Connections under System, with six top-level entries.
+- Reduce repeated terminal inventory work while preserving saved-view preview
+  and explicit Herdr Open; no general latency improvement is claimed.
+
+Root, CLI, daemon and web UI are `0.5.14`; terminal TUI remains `0.1.0`.
+Migration head advances to `081_human_notification_intent`. Private installed
+review and controlled notification checks retain their exact candidate and
+runtime attribution. See [the release notes](docs/releases/v0.5.14.md) for
+operator guidance, pending live validation and known limits.
+
 ## [0.5.13] - 2026-09-10
 
 **Status**: release candidate, unpublished. Exact-cut substance review,
