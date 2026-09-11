@@ -442,12 +442,16 @@ function overviewLines(execution: ExecutionViewSnap, scopes: readonly MissionSco
   const needsHuman = slices.filter(slice => problemText(slice)?.startsWith("needs input"));
   const attributed = slices.some(slice => slice.readiness?.configured);
   const done = slices.filter(outcomeComplete).length;
+  const allComplete = slices.length > 0 && done === slices.length;
   const next = slices.find(slice => nextText(slice) === "ready to start") ?? slices.find(slice => !outcomeComplete(slice) && !slice.work.length);
   const unknown = slices.filter(slice => !slice.readiness?.configured).length;
-  const missionState = slices.length && done === slices.length ? "OUTCOMES COMPLETE" : "OUTCOMES OPEN";
-  const missionToken: Token = problems ? "warn" : done === slices.length && slices.length ? "ok" : "dim";
+  const missionState = allComplete ? "OUTCOMES COMPLETE" : "OUTCOMES OPEN";
+  const missionToken: Token = problems ? "warn" : allComplete ? "ok" : "dim";
   const nowText = active.length ? active.map(slice => `${slice.id} · ${assigneeText(slice) ?? "owner unknown"} · ${stateWord(slice)}`).join("; ") : "no open slice work in this read";
-  const nextValue = next ? `${next.id} · ${nextText(next) ?? "dependency eligibility unknown"}` : "outcomes complete; release decision separate";
+  const nextValue = next ? `${next.id} · ${nextText(next) ?? "dependency eligibility unknown"}`
+    : allComplete ? "outcomes complete; release decision separate"
+    : active.length ? "await current work; outcomes remain open"
+    : "next eligibility unknown";
   const progress = `${done}/${slices.length} outcomes complete · ${live} working${problems ? ` · ${problems} waiting` : ""}${unknown ? ` · ${unknown} proof unknown` : ""}`;
   const fact = (label: string, value: string, token: Token): ContentLine => semantic([
     { text: `  ${label.padEnd(10)}`, token: "dim", bold: true },

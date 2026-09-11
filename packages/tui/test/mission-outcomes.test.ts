@@ -36,7 +36,9 @@ it.each([[140, 42], [80, 24]])("native judgments drive outcomes, queue drives wo
     recordJudgment(missions, { scope: `trial/slices/${id}`, item: item.id, verdict, reason: "Fixture judgment", evidence: ["proof/evidence.md"], expectedRevision: item.revision, expectedPrevious: item.judgment?.id ?? null }, "judge@fixture", "transport:v1");
   };
   try {
+    execution.q2_sequencing[0]!.next_up = true;
     expect(body()).toContain("OUTCOMES OPEN"); expect(body()).toContain("Planned: planned");
+    expect(body()).toContain("NEXT      one · ready to start");
     expect(body()).not.toContain("OUTCOMES COMPLETE"); // checked evidence + folded code do not accept an outcome
     execution.q1_lanes = [{ slice: "one", seat: "actual@fixture", qitem_id: "q1", activity: { activity: "working" } }];
     execution.q2_sequencing[0]!.work_rows = [{ qitem_id: "q1", seat: "actual@fixture", state: "in-progress", summary: "Build readable mission overview" }];
@@ -49,7 +51,19 @@ it.each([[140, 42], [80, 24]])("native judgments drive outcomes, queue drives wo
     expect(body()).not.toContain("OUTCOMES COMPLETE"); // handoff alone is not outcome acceptance
     judge("one", "accept"); judge("two", "accept");
     expect(body()).toContain("OUTCOMES COMPLETE"); expect(body()).toContain("active · separate from outcomes");
+    expect(body()).toContain("NEXT      outcomes complete; release");
+    expect(body()).toContain("PROGRESS  2/2 outcomes complete");
     judge("one", "withdraw"); expect(body()).toContain("OUTCOMES OPEN"); expect(body()).toContain("reopened");
+    execution.q2_sequencing[0]!.work_rows = [{ qitem_id: "reopened", seat: "actual@fixture", state: "in-progress", summary: "Correct reopened outcome" }];
+    expect(body()).toContain("NOW       one · actual · assigned");
+    expect(body()).toContain("NEXT      await current work; outcomes remain");
+    expect(body()).toContain("PROGRESS  1/2 outcomes complete");
+    expect(body()).toContain("OUTCOMES OPEN");
+    execution.q2_sequencing[0]!.blocked_on_rows = [{ qitem_id: "reopened", blocked_on: "review@fixture" }];
+    expect(body()).toContain("NOW       one · actual · blocked");
+    expect(body()).toContain("waits on review@fixture");
+    expect(body()).toContain("NEXT      await current work; outcomes remain");
+    execution.q2_sequencing[0]!.blocked_on_rows = [];
     const screen = renderScreen(view.get(), snap, { cols, rows });
     const text = screen.lines.join("\n");
     expect(text).toContain("┌"); expect(text).toContain("└"); expect(text).toContain("After:");
@@ -58,4 +72,20 @@ it.each([[140, 42], [80, 24]])("native judgments drive outcomes, queue drives wo
     expect(screen.contentTargets.some(t => t.action.type === "execution-open" && t.action.key === "slice:one")).toBe(true);
     expect(readFileSync(join(mission, "mission.yaml"), "utf8")).toBe(original);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it.each(["empty", "unknown-assigned", "unknown-unassigned"])("does not infer complete outcomes from %s data", kind => {
+  const empty = kind === "empty", assigned = kind === "unknown-assigned";
+  const execution: ExecutionViewSnap = {
+    view: "execution", mission: "trial", sources: {}, q1_lanes: [], q5_park: [],
+    q2_sequencing: empty ? [] : [{ slice_id: "one", next_up: "INDETERMINATE", work_rows: assigned ? [{ seat: "actual@fixture", state: "in-progress" }] : [] }],
+    q4_ladder: empty ? [] : [{ slice_id: "one" }],
+  };
+  const text = executionContentLines(execution, undefined, [], null, 120).map(line => line.text).join("\n");
+  expect(text).toContain("OUTCOMES OPEN");
+  expect(text).toContain(`PROGRESS  0/${empty ? 0 : 1} outcomes complete`);
+  expect(text).toContain("LIFECYCLE unknown · separate from outcomes");
+  expect(text).toContain(assigned ? "NOW       one · actual · assigned" : "NOW       no open slice work in this read");
+  expect(text).toContain(empty ? "NEXT      next eligibility unknown" : assigned ? "NEXT      await current work; outcomes remain open" : "NEXT      one · dependency eligibility unknown");
+  if (!empty) expect(text).toContain("1 proof unknown");
 });
