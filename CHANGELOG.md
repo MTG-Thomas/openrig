@@ -10,10 +10,11 @@ deprecations, and behavioral changes. Breaking changes are called out explicitly
 
 ## [0.5.14] - 2026-09-11
 
-**Status**: release candidate (RC), unpublished. The corrected private TUI review
-passed; exact-cut verification, corrected live TUI adoption and operator inspection
-remain pending. The completed single-consumer Slack/phone exercise is retained
-evidence for unchanged notifications. Publication remains a separate decision.
+**Status**: release candidate (RC), unpublished. Earlier private TUI review and
+VM adoption mechanics are recorded. Responsiveness, this child's live adoption
+and operator product acceptance remain pending. The completed single-consumer
+Slack/phone exercise is retained evidence for unchanged notifications.
+Publication remains a separate decision.
 
 - Enter a confirmed running rig directly, with responsive Help, Skip and Local
   during slow or unverified startup.
@@ -33,14 +34,17 @@ evidence for unchanged notifications. Publication remains a separate decision.
   and explicit Herdr Open; no general latency improvement is claimed.
 - Keep primary queue facts readable when optional blocker descriptions fail;
   bound fleet reads across stages and avoid duplicate policy/receipt read work.
+- Reduce restore/startup inventory scans with selective event indexes, preserving
+  history and projection results; private replay is not a live latency guarantee.
 - Preserve nullable identity provenance during queue-history archival. Shared
   history, RECENT and OWNER/receipt readers now include archived records;
   unknown historical provenance stays null rather than being reconstructed.
 
 Root, CLI, daemon and web UI are `0.5.14`; terminal TUI remains `0.1.0`.
-Migration head advances to `082_archive_identity_provenance`, following the
-explicit human-intent fields in migration 081. Private installed
-review and controlled notification checks retain their exact candidate and
+Migration head advances to `084_inventory_event_indexes`, following review read
+indexes in 083, archive identity provenance in 082 and explicit human-intent fields
+in migration 081. Private installed review and controlled notification checks
+retain their exact candidate and
 runtime attribution. See [the release notes](docs/releases/v0.5.14.md) for
 operator guidance, pending live validation and known limits.
 

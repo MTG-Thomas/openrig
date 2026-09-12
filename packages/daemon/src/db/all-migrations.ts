@@ -1,4 +1,4 @@
-// The canonical ordered migration list (001 → 083). SINGLE SOURCE: the daemon boot path
+// The canonical ordered migration list (001 → 084). SINGLE SOURCE: the daemon boot path
 // (startup.ts) and any test/tool that needs a schema-faithful DB both migrate from THIS array,
 // so a reader DB is never seeded from a stale hand-copied subset (the perf-fixture-migration-parity
 // trap). Append new migrations to the END, in order.
@@ -85,10 +85,11 @@ import { workflowLifecycleParallelSchema } from "./migrations/079_workflow_lifec
 import { humanNotificationIntentSchema } from "./migrations/081_human_notification_intent.js";
 import { archiveIdentityProvenanceSchema } from "./migrations/082_archive_identity_provenance.js";
 import { reviewReadIndexesSchema } from "./migrations/083_review_read_indexes.js";
+import { inventoryEventIndexesSchema } from "./migrations/084_inventory_event_indexes.js";
 import { scopedOperatingPostureSchema } from "./migrations/080_scoped_operating_posture.js";
 import type { Migration } from "./migrate.js";
 
-/** Ordered 001→083 (068 enforcer decisions, dropped forward by 071; 069/070 W3 launch truth). */
+/** Ordered 001→084 (068 enforcer decisions, dropped forward by 071; 069/070 W3 launch truth). */
 export const ALL_MIGRATIONS: Migration[] = [
   coreSchema,
   bindingsSessionsSchema,
@@ -173,4 +174,5 @@ export const ALL_MIGRATIONS: Migration[] = [
   humanNotificationIntentSchema,
   archiveIdentityProvenanceSchema,
   reviewReadIndexesSchema,
+  inventoryEventIndexesSchema,
 ];

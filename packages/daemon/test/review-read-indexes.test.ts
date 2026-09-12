@@ -11,12 +11,13 @@ import { OutboxHandler } from "../src/domain/outbox-handler.js";
 
 const NOW = "2026-09-11T23:49:05.118Z";
 const TODAY = "2026-09-11T00:00:00.000Z";
-const BEFORE = ALL_MIGRATIONS.filter(m => m.name < reviewReadIndexesSchema.name);
+const THROUGH = ALL_MIGRATIONS.filter(m => m.name <= reviewReadIndexesSchema.name);
+const BEFORE = THROUGH.filter(m => m.name < reviewReadIndexesSchema.name);
 const databases: Database.Database[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 function database(upgrade = false): Database.Database {
   const db = createDb(); databases.push(db);
-  migrate(db, upgrade ? BEFORE : ALL_MIGRATIONS);
+  migrate(db, upgrade ? BEFORE : THROUGH);
   return db;
 }
 function compose(db: Database.Database) {
@@ -74,7 +75,7 @@ describe("083 review read access paths", () => {
     expect(db.prepare("SELECT name FROM schema_migrations ORDER BY name DESC LIMIT 1").get()).toEqual({ name: reviewReadIndexesSchema.name });
     expectIndexed(db);
     const before = { output: compose(db), rows: queueBytes(db), schema: db.prepare("SELECT * FROM schema_migrations ORDER BY name").all() };
-    migrate(db, ALL_MIGRATIONS);
+    migrate(db, THROUGH);
     expect({ output: compose(db), rows: queueBytes(db), schema: db.prepare("SELECT * FROM schema_migrations ORDER BY name").all() }).toEqual(before);
   });
 
@@ -87,7 +88,7 @@ describe("083 review read access paths", () => {
     expect(before.settled[0]!.summary).toBeNull();
     expect(before.settled[1]!.toSession).toBe("unknown");
     expect(JSON.stringify(plans(db).recent)).toContain("SCAN queue_items");
-    migrate(db, ALL_MIGRATIONS);
+    migrate(db, THROUGH);
     expectIndexed(db);
     const added = (db.prepare("SELECT name FROM sqlite_master WHERE type='index' ORDER BY name").all() as { name: string }[]).map(row => row.name).filter(name => !indexNames.has(name));
     expect(added).toEqual(["idx_queue_items_ts_updated", "idx_queue_transitions_handoff_ts"]);
