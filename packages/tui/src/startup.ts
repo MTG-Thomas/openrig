@@ -69,22 +69,31 @@ export class StartupController {
       this.state.consent = undefined;
       this.state.connection = "probing";
       this.state.notice = "Reading actual state…";
-      const probe = await probeCrashCart(this.deps.probe);
-      this.state.probe = probe;
-      this.state.connection = probe.unavailable || probe.daemonState === "unverified" ? "unverified" : probe.daemonState === "down" ? "down" : "up";
-      if (probe.unavailable || probe.daemonState === "unverified") {
-        this.state.page = "unavailable";
-        this.state.notice = "Startup state is unavailable. No recovery effect has been authorized.";
-        this.state.detail = probe.unavailable ?? JSON.stringify(probe.daemonEvidence);
+      let rigs;
+      try {
+        // Normal entry uses the selected target's authenticated read and its existing
+        // deadline. The shorter recovery probe is not a prerequisite for reading work.
+        rigs = await this.deps.client.rigsSummary();
+        if (!Array.isArray(rigs) || rigs.some((r) => !r || typeof r.id !== "string" || typeof r.name !== "string")) throw new Error("The daemon did not return a usable rig list.");
+      } catch (error) {
+        const probe = await probeCrashCart(this.deps.probe);
+        const readError = error instanceof Error ? error.message : String(error);
+        this.state.probe = probe;
+        this.state.detail = [readError, probe.unavailable ?? JSON.stringify(probe.daemonEvidence ?? {})].join("\n");
+        if (probe.daemonState === "down" && !probe.unavailable) {
+          this.state.connection = "down";
+          this.state.page = "down";
+          this.state.notice = probe.crashCart?.mode === "first-run" ? "Welcome. This instance has no saved rigs yet." : "The daemon is stopped. Saved rigs remain available.";
+        } else {
+          this.state.connection = "unverified";
+          this.state.page = "unavailable";
+          this.state.notice = readError;
+        }
         return;
       }
-      if (probe.daemonState === "down") {
-        this.state.page = "down";
-        this.state.notice = probe.crashCart?.mode === "first-run" ? "Welcome. This instance has no saved rigs yet." : "The daemon is stopped. Saved rigs remain available.";
-        return;
-      }
-      const rigs = await this.deps.client.rigsSummary();
-      if (!Array.isArray(rigs) || rigs.some((r) => typeof r.id !== "string" || typeof r.name !== "string")) throw new Error("The daemon did not return a usable rig list.");
+      this.state.probe = undefined;
+      this.state.detail = "";
+      this.state.connection = "up";
       this.state.rigs = rigs.sort((a, b) => Number(b.name === "kernel") - Number(a.name === "kernel") || a.name.localeCompare(b.name));
       if (this.state.rig && this.state.rigs.some((r) => r.id === this.state.rig!.rigId)) await this.readRig(this.state.rig.rigId);
       else { this.state.page = "rigs"; this.state.selected = 0; }

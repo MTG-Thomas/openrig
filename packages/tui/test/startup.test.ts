@@ -15,6 +15,7 @@ function fixture() {
     fetchImpl: (async (url, options) => {
       const route = new URL(String(url)).pathname;
       if (options?.method === "POST") { const body = JSON.parse(String(options.body)); posts.push({ route, body }); return response(body); }
+      if (probeState === "down") throw new Error("connection refused");
       if (route === "/api/rigs/summary") return new Response(JSON.stringify([{ id: "r1", name: "kernel" }, { id: "bad", name: "unrelated-legacy" }]));
       return new Response(JSON.stringify({ rigId: "r1", rigName: "kernel", seats: [{ ...seat }] }));
     }) as typeof fetch,

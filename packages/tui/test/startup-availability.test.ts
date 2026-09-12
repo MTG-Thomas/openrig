@@ -8,7 +8,7 @@ import { createViewState, emptySnapshot } from "../src/state.js";
 it.each(["down", "unverified"])("keeps Help, local reading and skip usable before and after %s, with no effects", async (state) => {
   let finish!: (value: string) => void;
   const probe = new Promise<string>((resolve) => { finish = resolve; });
-  const fetchImpl = vi.fn(); const startDaemon = vi.fn(); const onWork = vi.fn(); const onHelp = vi.fn();
+  const fetchImpl = vi.fn(async () => { throw new Error("read unavailable"); }); const startDaemon = vi.fn(); const onWork = vi.fn(); const onHelp = vi.fn();
   const controller = new StartupController({ client: new DaemonClient({ fetchImpl }), home: "/fixture", probe: () => probe,
     startDaemon, onWork, onHelp, onChange: () => {}, readLocal: async () => ({ entries: [], source: "/fixture/workspace", readAt: "now" }) });
   const pending = controller.refresh();
@@ -20,15 +20,15 @@ it.each(["down", "unverified"])("keeps Help, local reading and skip usable befor
   await controller.key("escape"); expect(controller.state.open).toBe(true);
   await controller.key("escape"); expect(controller.state.open).toBe(false);
   expect(onWork).toHaveBeenCalledOnce();
-  expect(startDaemon).not.toHaveBeenCalled(); expect(fetchImpl).not.toHaveBeenCalled();
+  expect(startDaemon).not.toHaveBeenCalled(); expect(fetchImpl).toHaveBeenCalledOnce();
 });
 
 it("skip remains available during an unresolved probe and a late response does not reopen startup", async () => {
   let finish!: (value: string) => void;
   const onWork = vi.fn();
-  const controller = new StartupController({ client: new DaemonClient(), home: "/fixture", probe: () => new Promise((r) => { finish = r; }),
+  const controller = new StartupController({ client: new DaemonClient({ fetchImpl: async () => { throw new Error("read unavailable"); } }), home: "/fixture", probe: () => new Promise((r) => { finish = r; }),
     startDaemon: vi.fn(), onWork, onChange: () => {} });
-  const pending = controller.refresh(); await controller.key("w");
+  const pending = controller.refresh(); await controller.key("w"); await vi.waitFor(() => expect(finish).toBeDefined());
   expect(controller.state.open).toBe(false); expect(onWork).toHaveBeenCalledOnce();
   finish("{}"); await pending; expect(controller.state.open).toBe(false);
 });
@@ -41,7 +41,7 @@ it("Back abandons a slow local read without accepting its late result", async ()
 });
 
 it("explicit startup return leaves local reading and never claims skipped live data is empty", async () => {
-  const controller = new StartupController({ client: new DaemonClient(), home: "/fixture", probe: async () => "{}",
+  const controller = new StartupController({ client: new DaemonClient({ fetchImpl: async () => { throw new Error("read unavailable"); } }), home: "/fixture", probe: async () => "{}",
     startDaemon: vi.fn(), onWork: vi.fn(), onChange: () => {}, readLocal: async () => ({ entries: [] }) });
   await controller.key("L"); expect(controller.state.local).toBeDefined();
   await controller.open(); expect(controller.state.local).toBeUndefined();
