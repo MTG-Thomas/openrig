@@ -12,6 +12,7 @@ export function demoSnapshot(): FleetSnapshot {
         rigs: [
           {
             name: "openrig-build",
+            hasLiveAgents: true,
             pods: [
               {
                 name: "dev50",

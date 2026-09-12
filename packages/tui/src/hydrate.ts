@@ -28,6 +28,7 @@ interface RigSummaryRead {
   id: string;
   name: string;
   lifecycleState?: string;
+  hasLiveAgents?: boolean | null;
 }
 interface RigStatusRead {
   status?: string;
@@ -544,6 +545,7 @@ export async function hydrateSnapshot(
       ...(!readInventory ? { inventoryNotLoaded: true } : nodes === null ? { inventoryUnavailable: true } : {}),
       ...(graph ? { graph } : {}),
       ...(rig.lifecycleState ? { lifecycleState: rig.lifecycleState } : {}),
+      hasLiveAgents: rig.hasLiveAgents ?? null,
       authoredSpecName: undefined as string | undefined,
     };
     rigs.push(rigRow);

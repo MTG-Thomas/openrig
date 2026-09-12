@@ -129,6 +129,8 @@ export function stylizeLines(screen: Screen, s: Style): string[] {
   // second source of truth to drift
   const explorerFocused = (screen.lines.find((line) => line.includes("╋")) ?? "").includes("{ EXPLORER }");
 
+  const rigRows = new Set(screen.explorerRows.filter(row => row.key?.startsWith("rig:")).map(row => row.y));
+
   return screen.lines.map((line, index) => {
     if (index === 0) {
       const m = line.match(/^cmd ▸ (.*)(▊)(.*)$/);
@@ -191,36 +193,27 @@ export function stylizeLines(screen: Screen, s: Style): string[] {
       const left = line.slice(0, border);
       const marker = line.slice(border + 1, border + 2);
       const right = line.slice(border + 2);
-      if (marker === "›") {
-        // content-pane selection = a real highlight bar, not just a glyph
-        return `${paintExplorer(left, s, explorerFocused)}${s.paint("chrome", "┃")}${s.paint("accent", `›${right}`, { bg: "selection", bold: true })}`;
-      }
-      // S19 MR2 (guard finding 2) + round-4 finding 4: explorer seg RUNS —
-      // each run (status badge, right meta) paints its OWN tokens; the guide
-      // prefix keeps the explorer chrome rules and the text between runs is
-      // default ink (names). Selected rows keep the highlight bar.
       const em = screen.explorerMeta?.[index + 1];
-      if (em && em.length && !left.startsWith("▶") && !left.startsWith("◆")) {
-        let paintedLeft = "";
+      const selected = left.startsWith("▶") || left.startsWith("◆");
+      let paintedLeft = paintExplorer(left, s, explorerFocused);
+      // Presence stays legible on a rig's selection bar; other row selections keep their treatment.
+      if (em?.length && (!selected || rigRows.has(index + 1))) {
+        paintedLeft = "";
         let pos = 0;
-        em.forEach((run, k) => {
+        const selection = selected ? { bg: "selection" as const, bold: explorerFocused } : {};
+        for (const [k, run] of em.entries()) {
           const chunk = left.slice(pos, run.start);
-          paintedLeft += k === 0 ? paintExplorer(chunk, s, explorerFocused) : chunk;
-          paintedLeft += run.segs
-            .map((g) => (g.token || g.bg || g.inverse ? s.paint(g.token ?? "bright", g.text, { ...(g.bold ? { bold: true } : {}), ...(g.bg ? { bg: g.bg } : {}), ...(g.inverse ? { inverse: true } : {}) }) : g.text))
-            .join("");
+          paintedLeft += selected ? s.paint(explorerFocused ? "accent" : "dim", chunk, selection)
+            : k === 0 ? paintExplorer(chunk, s, explorerFocused) : paintExplorerBody(chunk, s);
+          paintedLeft += run.segs.map(g => s.paint(g.token ?? "bright", g.text,
+            { bold: g.bold, bg: g.bg, inverse: g.inverse, ...selection })).join("");
           pos = run.start + run.segs.reduce((n, g) => n + g.text.length, 0);
-        });
-        paintedLeft += left.slice(pos);
-        const cSegs = screen.segRows?.[index + 1];
-        if (cSegs) {
-          const segText = cSegs.map((g) => g.text).join("");
-          const paintedC = cSegs
-            .map((g) => (g.token || g.bg || g.inverse ? s.paint(g.token ?? "bright", g.text, { ...(g.bold ? { bold: true } : {}), ...(g.bg ? { bg: g.bg } : {}), ...(g.inverse ? { inverse: true } : {}) }) : g.text))
-            .join("");
-          return `${paintedLeft}${s.paint("chrome", "┃")}${marker}${paintedC}${right.slice(segText.length)}`;
         }
-        return `${paintedLeft}${s.paint("chrome", "┃")}${marker}${paintContent(right, s)}`;
+        paintedLeft += selected ? s.paint(explorerFocused ? "accent" : "dim", left.slice(pos), selection)
+          : paintExplorerBody(left.slice(pos), s);
+      }
+      if (marker === "›") {
+        return `${paintedLeft}${s.paint("chrome", "┃")}${s.paint("accent", `›${right}`, { bg: "selection", bold: true })}`;
       }
       // slice-17: canvas-rendered rows (graph view) carry token segments —
       // painted with THIS Style; plain(segs) === the content text by
@@ -234,9 +227,9 @@ export function stylizeLines(screen: Screen, s: Style): string[] {
               ? s.paint(seg.token ?? "bright", seg.text, { ...(seg.bold ? { bold: true } : {}), ...(seg.bg ? { bg: seg.bg } : {}), ...(seg.inverse ? { inverse: true } : {}) })
               : seg.text)
           .join("");
-        return `${paintExplorer(left, s, explorerFocused)}${s.paint("chrome", "┃")}${marker}${painted}${right.slice(segText.length)}`;
+        return `${paintedLeft}${s.paint("chrome", "┃")}${marker}${painted}${right.slice(segText.length)}`;
       }
-      return `${paintExplorer(left, s, explorerFocused)}${s.paint("chrome", "┃")}${marker}${paintContent(right, s)}`;
+      return `${paintedLeft}${s.paint("chrome", "┃")}${marker}${paintContent(right, s)}`;
     }
     // (The full-width segRows branch was removed with the crash-cart shell-placement rework — its only
     // caller, the full-width cockpit Screen, now renders in-pane via the split-pane │ path above.)

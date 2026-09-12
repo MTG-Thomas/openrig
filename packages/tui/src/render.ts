@@ -733,10 +733,8 @@ function contentLines(state: ViewState, snap: FleetSnapshot, contentWidth: numbe
     if (leaf?.kind === "host" && host) return instanceContentLines(state, snap, host, contentWidth, motion);
     if (!leaf && host?.rigs.length) return wrapDetailLines([
       { text: `TOPOLOGY · ${host.name}` }, { text: "Choose a rig to read its seats and work." },
-      ...host.rigs.filter(rig => !state.filter || rig.name.includes(state.filter)).map(rig => ({
-        text: `${rig.name} · ${rig.lifecycleState ?? "state unknown"}`,
-        action: { type: "drill" as const, resource: "rig" as const, name: rig.name, target: { host: host.name } },
-      })),
+      { text: `${host.rigs.length} rig${host.rigs.length === 1 ? "" : "s"} · select one in Explorer` },
+      { text: "Bright ▦ live agents · gray ▦ none · ? unknown" },
     ], contentWidth);
     const rigName = state.drill.find((d) => d.kind === "rig")?.name ;
     const rig = host?.rigs.find((candidate) => candidate.name === rigName);

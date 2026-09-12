@@ -60,10 +60,10 @@ function keyDepth(row: ExplorerRow): number {
 
 /** the label with its legacy indent + list glyph stripped; pod/folder rows
  * keep their GENUINE ▾/▸ (they really collapse), hosts/rigs lose theirs */
-function contentOf(row: ExplorerRow, parsed: KeyParts): string {
+function contentOf(row: ExplorerRow, parsed: KeyParts, snap: FleetSnapshot): string {
   const stripped = row.label.replace(/^\s+/, "");
   if (parsed.kind === "host") return `⊕ ${stripped.replace(/^[▾⌄] /, "")}`;
-  if (parsed.kind === "rig") return `▦ ${stripped.replace(/^[▾⌄] /, "")}`; // round-3 rig glyph
+  if (parsed.kind === "rig") return `${rigPresence(parsed, snap) === null ? "?" : "▦"} ${stripped.replace(/^[▾⌄] /, "")}`;
   if (parsed.kind === "pod") return stripped.replace(/^[▾▸] /, (m) => m.startsWith("▾") ? "⌄ " : "› ").replace(/ \(\d+\)$/, ""); // count moves to meta
   if (parsed.kind === "scopes-mission") return stripped.replace(/^[▾▸] /, (m) => m.startsWith("▾") ? "⌄ " : "› ");
   if (parsed.kind === "agent") {
@@ -94,6 +94,13 @@ function agentOf(parsed: KeyParts, snap: FleetSnapshot): AgentRow | null {
   return snap.hosts
     .find((h) => h.name === host)?.rigs.find((r) => r.name === rig)
     ?.pods.find((p) => p.name === pod)?.agents.find((a) => a.name === name.join("/")) ?? null;
+}
+
+/** Use structured identity/presence, never the possibly clipped status suffix. */
+function rigPresence(parsed: KeyParts, snap: FleetSnapshot): boolean | null {
+  const host = snap.hosts.find(h => h.name === parsed.parts[0]);
+  if (!host?.reachable) return null;
+  return host.rigs.find(r => r.name === parsed.parts[1])?.hasLiveAgents ?? null;
 }
 
 function metaOf(row: ExplorerRow, snap: FleetSnapshot): { text: string; segs: MarkSeg[] } | null {
@@ -165,13 +172,17 @@ function navigatorLabelsInner(rows: ExplorerRow[], snap: FleetSnapshot, width: n
     const guides = Array.from({ length: depth - 1 }, (_, level) => (railOpen[level + 1] ? "┃ " : "  ")).join("");
     const branch = isLast[i] ? "┗━ " : "┣━ ";
     const parsed = parseKey(row.key)!;
-    const content = contentOf(row, parsed);
+    const content = contentOf(row, parsed, snap);
     const meta = metaOf(row, snap);
     const prefix = ` ${guides}${branch}`;
     // S19 round-4 (guard finding 4): agent rows carry a STATUS BADGE run so
     // the served-truth glyph paints its activity ROLE (color is for status —
     // the one colored thing on the row; non-status icons stay monochrome)
     const runs: NavigatorMeta[] = [];
+    if (parsed.kind === "rig") {
+      const live = rigPresence(parsed, snap);
+      runs.push({ start: prefix.length, segs: [{ text: live === null ? "?" : "▦", token: live === true ? "bright" : "dim" }] });
+    }
     if (parsed.kind === "agent") {
       const agent = agentOf(parsed, snap);
       if (agent) {

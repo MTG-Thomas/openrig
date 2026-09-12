@@ -408,6 +408,33 @@ describe("Rig CRUD routes", () => {
     expect(beta.nodeCount).toBe(1);
   });
 
+  it("summary separates observed agent presence from attention, idle work and infrastructure", async () => {
+    const add = (name: string, status: string | null, runtime = "codex", attention = false) => {
+      const rig = repo.createRig(name);
+      const node = repo.addNode(rig.id, "worker", { runtime });
+      if (status !== null) {
+        const session = sessionRegistry.registerSession(node.id, `worker@${name}`);
+        sessionRegistry.updateStatus(session.id, status);
+        if (attention) sessionRegistry.updateStartupStatus(session.id, "attention_required");
+      }
+    };
+    add("live-degraded", "running", "codex", true);
+    add("idle-prompt", "idle");
+    add("stopped", "stopped");
+    add("exited", "exited");
+    add("unstarted", null);
+    add("unknown", "unknown");
+    add("infrastructure", "running", "terminal");
+    const res = await app.request("/api/rigs/summary");
+    expect(res.status).toBe(200);
+    const rows = await res.json();
+    const row = (name: string) => rows.find((r: { name: string }) => r.name === name);
+    expect(row("live-degraded")).toMatchObject({ hasLiveAgents: true, lifecycleState: "attention_required" });
+    expect(row("idle-prompt").hasLiveAgents).toBe(true);
+    for (const name of ["stopped", "exited", "unstarted", "infrastructure"]) expect(row(name).hasLiveAgents, name).toBe(false);
+    expect(row("unknown").hasLiveAgents).toBeNull();
+  });
+
   it("GET /api/rigs/summary -> includes hasServices from persisted rig services metadata", async () => {
     const rig1 = repo.createRig("svc-rig");
     repo.addNode(rig1.id, "worker", { runtime: "claude-code" });

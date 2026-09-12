@@ -30,6 +30,7 @@ function graphSnap(): FleetSnapshot {
       reachable: true,
       rigs: [{
         name: FIXTURE_RIG_NAME,
+        hasLiveAgents: true,
         pods: [
           { name: "orch", agents: [agentRow("orch.lead", "claude-code", 18)] },
           { name: "dev", agents: [agentRow("dev.driver", "claude-code", 24), agentRow("dev.qa", "codex", 63)] },
@@ -634,7 +635,7 @@ describe("ROUND-3 LOCKED SET (orch locked-scope GO; pins 02259adb/29a10b62)", ()
     expect(body).toMatch(/≡ dev/); // pod container tab carries the pod glyph
   });
 
-  it("explorer icons are MONOCHROME (color is for status only)", () => {
+  it("live rig icons are bright monochrome (color is for status only)", () => {
     const snap = graphSnap();
     const s = makeStore(snap);
     s.dispatch({ type: "select", index: 0 }); // inspect an unselected icon, not selection paint
@@ -642,7 +643,7 @@ describe("ROUND-3 LOCKED SET (orch locked-scope GO; pins 02259adb/29a10b62)", ()
     const styled = stylizeLines(screen, createStyle("truecolor"));
     const rigLine = styled.find((l) => stripAnsi(l).includes("▦ openrig-build"))!;
     expect(rigLine).not.toMatch(/38;2;77;189;178m[^m]*▦/); // NOT the old accent teal
-    expect(rigLine).toMatch(/38;2;109;116;128m[^m]*▦|38;2;76;84;99m[^m]*▦/); // dim/chrome monochrome
+    expect(rigLine).toContain(createStyle("truecolor").paint("bright", "▦"));
   });
 
   it("the official codex blue token is #6867aa and the three hint CANDIDATES exist unpicked", async () => {

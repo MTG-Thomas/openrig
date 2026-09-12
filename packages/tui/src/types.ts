@@ -59,6 +59,8 @@ export interface PodNode {
 }
 
 export interface RigNode {
+  /** Observed running/idle agent presence from summary; null/absent means unknown. */
+  hasLiveAgents?: boolean | null;
   inventoryNotLoaded?: boolean;
   inventoryUnavailable?: boolean;
   authoredSpecName?: string;
