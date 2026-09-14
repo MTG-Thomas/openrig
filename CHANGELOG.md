@@ -8,13 +8,12 @@ deprecations, and behavioral changes. Breaking changes are called out explicitly
 
 ---
 
-## [0.5.14] - 2026-09-11
+## [0.5.14] - 2026-09-14
 
-**Status**: release candidate (RC), unpublished. Earlier private TUI review and
-VM adoption mechanics are recorded. Responsiveness, this child's live adoption
-and operator product acceptance remain pending. The completed single-consumer
-Slack/phone exercise is retained evidence for unchanged notifications.
-Publication remains a separate decision.
+VM inspection was accepted: generally zero-to-two-second loading with
+occasional timeouts, formatting, icon colors and default views. This is an
+observed result, not a general latency or availability guarantee. The completed
+single-consumer Slack/phone exercise remains evidence for unchanged notifications.
 
 - Enter a confirmed running rig directly, with responsive Help, Skip and Local
   during slow or unverified startup.
@@ -46,7 +45,15 @@ indexes in 083, archive identity provenance in 082 and explicit human-intent fie
 in migration 081. Private installed review and controlled notification checks
 retain their exact candidate and
 runtime attribution. See [the release notes](docs/releases/v0.5.14.md) for
-operator guidance, pending live validation and known limits.
+operator guidance and verification limits.
+
+Known limitations: the inherited CLI health-check deadline can reject a queue
+command before its request is sent; that defect and occasional server delay are
+not fixed here. Same-candidate recovery did not establish durable responsiveness.
+Bundled Workflow Specs can disappear from discovery when an upgrade changes the
+install directory; that fix is explicitly deferred beyond 0.5.14. Recorded
+shutdown/config-preservation uncertainties and the prior recorder-write failure
+remain disclosed.
 
 ## [0.5.13] - 2026-09-10
 
