@@ -584,4 +584,74 @@ describe("ResumeMetadataRefresher", () => {
       expect(sessionRegistry.updateResumeToken).not.toHaveBeenCalled();
     });
   });
+
+  describe("opencode seats", () => {
+    const seat = (overrides?: Record<string, unknown>) => ({
+      sessionId: "sess-o", sessionName: "dev-owner@oc-rig", runtime: "opencode",
+      resumeType: null, resumeToken: null, cwd: "/repo", ...overrides,
+    });
+
+    it("null token fills cwd-scoped from the store with scrape provenance", async () => {
+      const sessionRegistry = { updateResumeToken: vi.fn(), markResumeProbeResult: vi.fn() } as unknown as SessionRegistry;
+      const seen: Array<string | null> = [];
+      const refresher = new ResumeMetadataRefresher({
+        sessionRegistry,
+        tmuxAdapter: mockTmux(),
+        opencodeSessionStore: {
+          readSessionIdForCwd: async (cwd: string | null) => {
+            seen.push(cwd);
+            return { ok: true as const, sessionId: "ses_live123" };
+          },
+        },
+        sleep: async () => {},
+      });
+      await refresher.refresh([seat()], { fillNullOnly: true });
+      expect(seen).toEqual(["/repo"]);
+      expect(sessionRegistry.updateResumeToken).toHaveBeenCalledWith(
+        "sess-o", "opencode_session_id", "ses_live123", "scrape",
+      );
+    });
+
+    it("present + matching token re-stamps freshness, never rewrites", async () => {
+      const sessionRegistry = { updateResumeToken: vi.fn(), markResumeProbeResult: vi.fn() } as unknown as SessionRegistry;
+      const refresher = new ResumeMetadataRefresher({
+        sessionRegistry,
+        tmuxAdapter: mockTmux(),
+        opencodeSessionStore: {
+          readSessionIdForCwd: async () => ({ ok: true as const, sessionId: "ses_live123" }),
+        },
+        sleep: async () => {},
+      });
+      await refresher.refresh([seat({ resumeToken: "ses_live123" })], { fillNullOnly: true });
+      expect(sessionRegistry.markResumeProbeResult).toHaveBeenCalledWith("sess-o", "resumable");
+      expect(sessionRegistry.updateResumeToken).not.toHaveBeenCalled();
+    });
+
+    it("present + different token leaves the ledger alone (no clobber)", async () => {
+      const sessionRegistry = { updateResumeToken: vi.fn(), markResumeProbeResult: vi.fn() } as unknown as SessionRegistry;
+      const refresher = new ResumeMetadataRefresher({
+        sessionRegistry,
+        tmuxAdapter: mockTmux(),
+        opencodeSessionStore: {
+          readSessionIdForCwd: async () => ({ ok: true as const, sessionId: "ses_other" }),
+        },
+        sleep: async () => {},
+      });
+      await refresher.refresh([seat({ resumeToken: "ses_live123" })], { fillNullOnly: true });
+      expect(sessionRegistry.markResumeProbeResult).not.toHaveBeenCalled();
+      expect(sessionRegistry.updateResumeToken).not.toHaveBeenCalled();
+    });
+
+    it("unwired store is a silent no-op", async () => {
+      const sessionRegistry = { updateResumeToken: vi.fn(), markResumeProbeResult: vi.fn() } as unknown as SessionRegistry;
+      const refresher = new ResumeMetadataRefresher({
+        sessionRegistry,
+        tmuxAdapter: mockTmux(),
+        sleep: async () => {},
+      });
+      await refresher.refresh([seat()], { fillNullOnly: true });
+      expect(sessionRegistry.updateResumeToken).not.toHaveBeenCalled();
+      expect(sessionRegistry.markResumeProbeResult).not.toHaveBeenCalled();
+    });
+  });
 });

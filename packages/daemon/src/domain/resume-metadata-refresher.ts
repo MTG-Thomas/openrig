@@ -44,6 +44,17 @@ interface ResumeMetadataRefresherDeps {
   contextUsageStore?: {
     readSidecar(sessionName: string): { ok: true; data: { session_id?: string } } | { ok: false; reason: string };
   };
+  /** OpenCode session-id reader for null-fill of an OpenCode seat's resume
+   *  token from live state during snapshot refresh. Cwd-scoped (opencode.db
+   *  `session` rows key on directory), so multi-seat rigs sharing a HOME
+   *  store stay seat-precise. Optional + structurally typed (older
+   *  wirings/tests omit it → OpenCode null-fill is a silent no-op). Muse has
+   *  no refresher branch: its store read is global-newest (no seat key), so
+   *  the recurring tick could misattribute across pod-mates — Muse tokens
+   *  are captured at fresh-launch time and on the adoption boundary instead. */
+  opencodeSessionStore?: {
+    readSessionIdForCwd(cwd: string | null): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }>;
+  };
 }
 
 export class ResumeMetadataRefresher {
@@ -56,6 +67,7 @@ export class ResumeMetadataRefresher {
   private sleep: (ms: number) => Promise<void>;
   private homeDir: string;
   private contextUsageStore: ResumeMetadataRefresherDeps["contextUsageStore"] | null;
+  private opencodeSessionStore: ResumeMetadataRefresherDeps["opencodeSessionStore"] | null;
 
   constructor(deps: ResumeMetadataRefresherDeps) {
     this.sessionRegistry = deps.sessionRegistry;
@@ -78,6 +90,7 @@ export class ResumeMetadataRefresher {
     this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.homeDir = deps.homeDir ?? os.homedir();
     this.contextUsageStore = deps.contextUsageStore ?? null;
+    this.opencodeSessionStore = deps.opencodeSessionStore ?? null;
   }
 
   /**
@@ -190,6 +203,29 @@ export class ResumeMetadataRefresher {
         // token stays put — a rolled-but-present token is no longer silently
         // nulled; FR-7's rollback catches an actually-unresumable token at restore.
         this.sessionRegistry.markResumeProbeResult(session.sessionId, probe);
+      }
+
+      if (session.runtime === "opencode") {
+        // Null-fill from the cwd-scoped opencode.db read (pure sqlite read,
+        // no probe/spawn — same lightweight posture as the Claude/Codex
+        // branches). `scrape` provenance fills a null slot and never
+        // clobbers a higher-trust token (the FR-3 rank guard).
+        const store = this.opencodeSessionStore;
+        if (!store) continue; // unwired — silent no-op (older wirings/tests)
+        if (session.resumeToken) {
+          if (fillNullOnly) {
+            const current = await store.readSessionIdForCwd(session.cwd ?? null).catch(() => null);
+            if (current?.ok && current.sessionId === session.resumeToken) {
+              this.sessionRegistry.markResumeProbeResult(session.sessionId, "resumable");
+            }
+          }
+          continue;
+        }
+        const found = await store.readSessionIdForCwd(session.cwd ?? null).catch(() => null);
+        if (found?.ok && found.sessionId.trim().length > 0) {
+          this.sessionRegistry.updateResumeToken(session.sessionId, "opencode_session_id", found.sessionId.trim(), "scrape");
+        }
+        continue;
       }
     }
   }

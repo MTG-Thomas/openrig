@@ -54,11 +54,15 @@ describe("ClaimService FR-3 — adoption-boundary resume-token capture", () => {
 
   afterEach(() => { db.close(); });
 
-  function buildService(): ClaimService {
+  function buildService(extra?: {
+    museSessionStore?: { readSessionId(n: string): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }> };
+    opencodeSessionStore?: { readSessionId(n: string): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }> };
+  }): ClaimService {
     return new ClaimService({
       db, rigRepo, sessionRegistry, discoveryRepo, eventBus, tmuxAdapter: mockTmux,
       contextUsageStore: { readSidecar: readSidecar as unknown as (n: string) => SidecarResult },
       resumeTokenCapturer: { captureCodexThreadId: captureCodexThreadId as unknown as (n: string) => Promise<string | undefined> },
+      ...extra,
     });
   }
 
@@ -122,6 +126,38 @@ describe("ClaimService FR-3 — adoption-boundary resume-token capture", () => {
     expect(row.resume_type).toBe("codex_id");
     expect(row.resume_provenance).toBe("adoption");
     expect(captureCodexThreadId).toHaveBeenCalledWith("dev-qa@test-rig");
+  });
+
+  it("bind captures a Muse resume token from the session store (provenance=adoption)", async () => {
+    const rig = rigRepo.createRig("test-rig");
+    const node = rigRepo.addNode(rig.id, "dev.owner", { runtime: "muse", cwd: "/projects/app" });
+    const discovered = seedDiscovery({ runtimeHint: "muse", tmuxSession: "dev-owner@test-rig" });
+
+    const result = await buildService({
+      museSessionStore: { readSessionId: async () => ({ ok: true as const, sessionId: "01a0cf56-5e03-7761-b8f4-60ff536fcac3" }) },
+    }).bind({ discoveredId: discovered.id, rigId: rig.id, logicalId: "dev.owner" });
+    expect(result.ok).toBe(true);
+
+    const row = tokenRow(node.id);
+    expect(row.resume_token).toBe("01a0cf56-5e03-7761-b8f4-60ff536fcac3");
+    expect(row.resume_type).toBe("muse_id");
+    expect(row.resume_provenance).toBe("adoption");
+  });
+
+  it("bind captures an OpenCode resume token from the session store (provenance=adoption)", async () => {
+    const rig = rigRepo.createRig("test-rig");
+    const node = rigRepo.addNode(rig.id, "dev.owner", { runtime: "opencode", cwd: "/projects/app" });
+    const discovered = seedDiscovery({ runtimeHint: "opencode", tmuxSession: "dev-owner@test-rig" });
+
+    const result = await buildService({
+      opencodeSessionStore: { readSessionId: async () => ({ ok: true as const, sessionId: "ses_f3bb408d9ffeA9wfnyVhkcmv6C" }) },
+    }).bind({ discoveredId: discovered.id, rigId: rig.id, logicalId: "dev.owner" });
+    expect(result.ok).toBe(true);
+
+    const row = tokenRow(node.id);
+    expect(row.resume_token).toBe("ses_f3bb408d9ffeA9wfnyVhkcmv6C");
+    expect(row.resume_type).toBe("opencode_session_id");
+    expect(row.resume_provenance).toBe("adoption");
   });
 
   it("bind honest-skips when the Claude sidecar is missing (no token persisted, skip event with reason)", async () => {
