@@ -379,11 +379,15 @@ export class MuseRuntimeAdapter implements RuntimeAdapter {
    *  (<root>/YYYY/MM/DD/<uuid>/session.jsonl). `session-message list`
    *  carries no timestamps, so the on-disk log is the recency source. */
   private scanSessionStore(): string | null {
+    return this.listSessionCandidates()[0]?.sessionId ?? null;
+  }
+
+  /** All session candidates under the store root, newest first. */
+  private listSessionCandidates(): Array<{ sessionId: string; log: string }> {
     const list = this.fs.listFiles;
     const mtime = this.fs.mtimeMs ?? defaultMtimeMs;
-    if (!list) return null;
-    let best: string | null = null;
-    let bestMtime = -1;
+    if (!list) return [];
+    const found: Array<{ sessionId: string; log: string; stamp: number }> = [];
     for (const year of safeList(list, this.sessionStoreRoot)) {
       for (const month of safeList(list, nodePath.join(this.sessionStoreRoot, year))) {
         for (const day of safeList(list, nodePath.join(this.sessionStoreRoot, year, month))) {
@@ -392,15 +396,37 @@ export class MuseRuntimeAdapter implements RuntimeAdapter {
             const log = nodePath.join(this.sessionStoreRoot, year, month, day, sessionId, "session.jsonl");
             if (!this.fs.exists(log)) continue;
             const stamp = mtime(log);
-            if (stamp !== null && stamp > bestMtime) {
-              bestMtime = stamp;
-              best = sessionId;
-            }
+            if (stamp !== null) found.push({ sessionId, log, stamp });
           }
         }
       }
     }
-    return best;
+    found.sort((a, b) => b.stamp - a.stamp);
+    return found;
+  }
+
+  /** Cwd-scoped session read: newest session (by session.jsonl mtime)
+   *  whose log records this workspace_root. The log embeds
+   *  `"workspace_root":"<cwd>"` (JSON-escaped) within the first frames, so
+   *  distinct cwds disambiguate; pod-mates sharing the exact cwd still
+   *  collide (documented newest-wins). Newest-first with early exit plus a
+   *  50-candidate cap — the adoption path runs rarely. */
+  async readSessionIdForCwd(cwd: string | null): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }> {
+    if (!cwd) return { ok: false, reason: "missing_sidecar" };
+    const needle = `"workspace_root":${JSON.stringify(cwd)}`;
+    let checked = 0;
+    for (const candidate of this.listSessionCandidates()) {
+      if (checked >= 50) break;
+      checked += 1;
+      let content: string;
+      try {
+        content = this.fs.readFile(candidate.log);
+      } catch {
+        continue;
+      }
+      if (content.includes(needle)) return { ok: true, sessionId: candidate.sessionId };
+    }
+    return { ok: false, reason: "missing_sidecar" };
   }
 }
 

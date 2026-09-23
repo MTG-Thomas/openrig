@@ -32,10 +32,13 @@ export interface ResumeTokenCaptureDeps {
     readSessionFile(sessionName: string): { ok: true; sessionFile: string } | { ok: false; reason: string };
   } | null;
   /** Muse session-id reader (the Muse adapter exposes it; backed by
-   *  `muse session-message list` / session JSONL logs — a read, same posture
-   *  as the claude-code status-line sidecar). Absent = silent no-op. */
+   *  session JSONL logs — a read, same posture as the claude-code
+   *  status-line sidecar). Absent = silent no-op. `readSessionIdForCwd`
+   *  is the workspace_root-filtered variant; preferred whenever the
+   *  caller knows the seat cwd. */
   museSessionStore?: {
     readSessionId(sessionName: string): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }>;
+    readSessionIdForCwd?(cwd: string | null): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }>;
   } | null;
   /** OpenCode session-id reader (the OpenCode adapter exposes it; backed by
    *  a read-only query of the opencode.db `session` table — a read, same
@@ -102,7 +105,13 @@ export async function deriveResumeToken(
     else return { outcome: "skipped", reason: "missing_sidecar" };
   } else if (runtime === "muse") {
     if (!deps.museSessionStore) return { outcome: "noop" }; // dep absent — silent no-op
-    const state = await deps.museSessionStore.readSessionId(input.sessionName);
+    // Prefer the workspace_root-filtered read when the caller knows the
+    // seat cwd; without it (or without the method on older wirings), fall
+    // back to the global-newest read.
+    const scopedMuse = input.cwd ? deps.museSessionStore.readSessionIdForCwd : undefined;
+    const state = scopedMuse
+      ? await scopedMuse.call(deps.museSessionStore, input.cwd ?? null)
+      : await deps.museSessionStore.readSessionId(input.sessionName);
     if (!state.ok) {
       return { outcome: "skipped", reason: state.reason === "parse_error" ? "parse_error" : "missing_sidecar" };
     }

@@ -26,6 +26,18 @@ export interface ResumeRefreshSession {
   resumeType: string | null;
   resumeToken: string | null;
   cwd?: string | null;
+  /** sessions.created_at ("YYYY-MM-DD HH:MM:SS" UTC) — bounds store reads
+   *  to rows created after the seat, so a delayed row insert can never
+   *  resolve to a stale previous-generation session. */
+  sessionCreatedAt?: string | null;
+}
+
+/** Parse a sessions.created_at ("YYYY-MM-DD HH:MM:SS", UTC) to epoch ms.
+ *  Returns null when unparseable — the caller skips the bounded read. */
+export function parseSessionCreatedAtMs(value: string | null | undefined): number | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const ms = Date.parse(`${value.trim().replace(" ", "T")}Z`);
+  return Number.isFinite(ms) ? ms : null;
 }
 
 interface ResumeMetadataRefresherDeps {
@@ -53,7 +65,7 @@ interface ResumeMetadataRefresherDeps {
    *  the recurring tick could misattribute across pod-mates — Muse tokens
    *  are captured at fresh-launch time and on the adoption boundary instead. */
   opencodeSessionStore?: {
-    readSessionIdForCwd(cwd: string | null): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }>;
+    readSessionIdForCwd(cwd: string | null, minTimeCreatedMs?: number | null): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }>;
   };
 }
 
@@ -213,16 +225,21 @@ export class ResumeMetadataRefresher {
         const store = this.opencodeSessionStore;
         if (!store) continue; // unwired — silent no-op (older wirings/tests)
         if (!session.cwd) continue; // no cwd → global-latest is not seat-precise
+        // Launch boundary: only rows created after the seat qualify, so a
+        // delayed insert (first prompt) can never resolve to a stale
+        // previous-generation session. Unknown boundary → skip the read.
+        const minTime = parseSessionCreatedAtMs(session.sessionCreatedAt);
+        if (minTime === null) continue;
         if (session.resumeToken) {
           if (fillNullOnly) {
-            const current = await store.readSessionIdForCwd(session.cwd ?? null).catch(() => null);
+            const current = await store.readSessionIdForCwd(session.cwd, minTime).catch(() => null);
             if (current?.ok && current.sessionId === session.resumeToken) {
               this.sessionRegistry.markResumeProbeResult(session.sessionId, "resumable");
             }
           }
           continue;
         }
-        const found = await store.readSessionIdForCwd(session.cwd ?? null).catch(() => null);
+        const found = await store.readSessionIdForCwd(session.cwd, minTime).catch(() => null);
         if (found?.ok && found.sessionId.trim().length > 0) {
           this.sessionRegistry.updateResumeToken(session.sessionId, "opencode_session_id", found.sessionId.trim(), "scrape");
         }

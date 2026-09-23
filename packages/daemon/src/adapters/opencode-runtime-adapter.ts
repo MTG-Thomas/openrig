@@ -70,6 +70,10 @@ export interface OpencodeRuntimeAdapterDeps {
    *  queries the opencode.db `session` table read-only and returns null on
    *  ANY failure — capture is best-effort, never a launch failure). */
   readLatestSessionId?: (cwd: string | null, minTimeCreatedMs?: number | null) => Promise<string | null>;
+  /** Fork-candidate lister override (all ids created at/after a timestamp;
+   *  tests inject; the default queries opencode.db read-only, [] on ANY
+   *  failure). */
+  listSessionIdsSince?: (cwd: string | null, minTimeCreatedMs: number) => Promise<string[]>;
 }
 
 // ── Pure command builders (single source of truth; hermetically tested) ──
@@ -164,6 +168,37 @@ export function queryLatestOpencodeSessionId(
   }
 }
 
+/** All session ids for a directory created at/after a timestamp, newest
+ *  first. The fork waiter uses the full list (not LIMIT 1) so ambiguity —
+ *  two qualifying rows, e.g. a pod-mate's session created inside the fork
+ *  window — resolves to null (loud unresolved) instead of silently
+ *  accepting the wrong conversation. */
+export function queryOpencodeSessionIdsSince(
+  dbPath: string,
+  cwd: string | null,
+  minTimeCreatedMs: number,
+): string[] {
+  try {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const clauses: string[] = ["time_created >= ?"];
+      const params: unknown[] = [minTimeCreatedMs];
+      if (cwd) {
+        clauses.push("directory = ?");
+        params.push(cwd);
+      }
+      const rows = db.prepare(
+        `SELECT id FROM session WHERE ${clauses.join(" AND ")} ORDER BY time_updated DESC`,
+      ).all(...params) as Array<{ id: string }>;
+      return rows.map((r) => r.id?.trim() ?? "").filter((id) => id.length > 0);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
 export class OpencodeRuntimeAdapter implements RuntimeAdapter {
   readonly runtime = "opencode";
   private tmux: TmuxAdapter;
@@ -171,6 +206,7 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
   private sleep: (ms: number) => Promise<void>;
   private opencodeDbPath: string;
   private readLatestSessionId: (cwd: string | null, minTimeCreatedMs?: number | null) => Promise<string | null>;
+  private listSessionIdsSince: (cwd: string | null, minTimeCreatedMs: number) => Promise<string[]>;
 
   constructor(deps: OpencodeRuntimeAdapterDeps) {
     this.tmux = deps.tmux;
@@ -180,6 +216,8 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
     const dbPath = this.opencodeDbPath;
     this.readLatestSessionId = deps.readLatestSessionId
       ?? (async (cwd, minTimeCreatedMs) => queryLatestOpencodeSessionId(dbPath, cwd, minTimeCreatedMs));
+    this.listSessionIdsSince = deps.listSessionIdsSince
+      ?? (async (cwd, minTimeCreatedMs) => queryOpencodeSessionIdsSince(dbPath, cwd, minTimeCreatedMs));
   }
 
   /** Session-id reader shape resume-token-capture consumes
@@ -195,9 +233,11 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
 
   /** Cwd-scoped session-id read (opencode.db `session` rows key on
    *  directory) — seat-precise for multi-seat rigs sharing a HOME store.
-   *  Consumed by the resume-metadata refresher, which knows each seat's cwd. */
-  async readSessionIdForCwd(cwd: string | null): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }> {
-    const id = await this.readLatestSessionId(cwd);
+   *  Consumed by the resume-metadata refresher, which knows each seat's
+   *  cwd, and the launch/fork paths, which pass their start timestamp so
+   *  only rows created at/after launch qualify. */
+  async readSessionIdForCwd(cwd: string | null, minTimeCreatedMs?: number | null): Promise<{ ok: true; sessionId: string } | { ok: false; reason: string }> {
+    const id = await this.readLatestSessionId(cwd, minTimeCreatedMs ?? null);
     if (!id) return { ok: false, reason: "missing_sidecar" };
     return { ok: true, sessionId: id };
   }
@@ -463,9 +503,16 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
     const pollMs = 250;
     const attempts = 20; // ~5s for the forked child to register in opencode.db
     for (let attempt = 0; attempt < attempts; attempt++) {
-      const latest = await this.readLatestSessionId(cwd, minTimeCreatedMs);
+      const candidates = (await this.listSessionIdsSince(cwd, minTimeCreatedMs).catch(() => [] as string[]))
+        .filter((id) => id !== parentId);
+      // Ambiguity (a pod-mate's session created inside the fork window) is
+      // a loud unresolved null — never a silent accept of the wrong
+      // conversation. v1 fork children carry no parent linkage, so
+      // exactly-one-candidate is the only safe accept.
+      if (candidates.length > 1) return null;
+      const latest = candidates[0];
       // The adapter contract requires the NEW post-fork token, never the parent's.
-      if (latest && latest !== parentId) {
+      if (latest) {
         const validation = validateResumeToken("opencode", latest);
         if (validation.ok) return validation.token;
       }

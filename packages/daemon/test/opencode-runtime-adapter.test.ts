@@ -14,6 +14,7 @@ import type { TmuxAdapter, TmuxResult } from "../src/adapters/tmux.js";
 import {
   OpencodeRuntimeAdapter, buildOpencodeFreshCommand, buildOpencodeResumeCommand,
   buildOpencodeForkCommand, assessOpencodePane, queryLatestOpencodeSessionId,
+  queryOpencodeSessionIdsSince,
   defaultOpencodeDbPath, type OpencodeAdapterFsOps,
 } from "../src/adapters/opencode-runtime-adapter.js";
 import { OpencodeResumeAdapter, assessOpencodeResumeProbe } from "../src/adapters/opencode-resume.js";
@@ -69,7 +70,10 @@ function memFs(files: Record<string, string> = {}): OpencodeAdapterFsOps & { fil
 function adapterWith(
   fs: OpencodeAdapterFsOps,
   tmux: TmuxAdapter,
-  extra?: { readLatestSessionId?: (cwd: string | null) => Promise<string | null> },
+  extra?: {
+    readLatestSessionId?: (cwd: string | null, minTime?: number | null) => Promise<string | null>;
+    listSessionIdsSince?: (cwd: string | null, minTime: number) => Promise<string[]>;
+  },
 ) {
   return new OpencodeRuntimeAdapter({ tmux, fsOps: fs, sleep: async () => {}, ...extra });
 }
@@ -180,6 +184,17 @@ describe("queryLatestOpencodeSessionId", () => {
   it("resolves the default db path under XDG_DATA_HOME or ~/.local/share", () => {
     expect(defaultOpencodeDbPath("/home/seat")).toBe("/home/seat/.local/share/opencode/opencode.db");
   });
+
+  it("queryOpencodeSessionIdsSince lists every qualifying row for ambiguity detection", () => {
+    const dbPath = scratchDb([
+      { id: "ses_old", directory: "/work", created: 1000, updated: 9000 },
+      { id: SESSION_ID, directory: "/work", created: 5000, updated: 5000 },
+      { id: "ses_other", directory: "/elsewhere", created: 6000, updated: 6000 },
+    ]);
+    expect(queryOpencodeSessionIdsSince(dbPath, "/work", 4000)).toEqual([SESSION_ID]);
+    expect(queryOpencodeSessionIdsSince(dbPath, "/work", 1000)).toEqual(["ses_old", SESSION_ID]);
+    expect(queryOpencodeSessionIdsSince(dbPath, "/work", 9000)).toEqual([]);
+  });
 });
 
 // ── launchHarness ───────────────────────────────────────────────────────────
@@ -268,7 +283,7 @@ describe("OpencodeRuntimeAdapter.launchHarness", () => {
   it("fork uses --fork and returns the NEW child session id, never the parent", async () => {
     const sendText = vi.fn(async () => ({ ok: true as const }));
     const adapter = adapterWith(memFs(), mockTmux({ sendText }), {
-      readLatestSessionId: async () => CHILD_ID,
+      listSessionIdsSince: async () => [CHILD_ID],
     });
     const result = await adapter.launchHarness(binding, {
       name: SESSION, forkSource: { kind: "native_id", value: SESSION_ID },
@@ -280,7 +295,18 @@ describe("OpencodeRuntimeAdapter.launchHarness", () => {
 
   it("fork FAILS when only the parent id ever surfaces (post-fork token rule)", async () => {
     const adapter = adapterWith(memFs(), mockTmux(), {
-      readLatestSessionId: async () => SESSION_ID, // parent only, never a child
+      listSessionIdsSince: async () => [SESSION_ID], // parent only, never a child
+    });
+    const result = await adapter.launchHarness(binding, {
+      name: SESSION, forkSource: { kind: "native_id", value: SESSION_ID },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/post-fork/);
+  });
+
+  it("fork FAILS on ambiguity: two qualifying rows is loud-unresolved, never first-pick", async () => {
+    const adapter = adapterWith(memFs(), mockTmux(), {
+      listSessionIdsSince: async () => [CHILD_ID, "ses_podmate00000000000000001"],
     });
     const result = await adapter.launchHarness(binding, {
       name: SESSION, forkSource: { kind: "native_id", value: SESSION_ID },

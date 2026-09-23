@@ -225,6 +225,22 @@ describe("muse session-store scan", () => {
     });
     expect(await adapter.readSessionId(SESSION)).toEqual({ ok: false, reason: "missing_sidecar" });
   });
+
+  it("readSessionIdForCwd returns the newest session whose log records the cwd", async () => {
+    const logged = (cwd: string) => `{"payload":{"workspace_root":${JSON.stringify(cwd)}}}`;
+    const fs = memFs(
+      { [log(CHILD)]: logged("/other"), [log(PARENT)]: logged("/work") },
+      tree,
+      { [log(CHILD)]: 200, [log(PARENT)]: 100 },
+    );
+    const adapter = new MuseRuntimeAdapter({
+      tmux: mockTmux(), fsOps: fs, sleep: async () => {}, sessionStoreRoot: ROOT,
+    });
+    // CHILD is newer but belongs to another cwd — PARENT wins for /work.
+    expect(await adapter.readSessionIdForCwd("/work")).toEqual({ ok: true, sessionId: PARENT });
+    expect(await adapter.readSessionIdForCwd("/nowhere")).toEqual({ ok: false, reason: "missing_sidecar" });
+    expect(await adapter.readSessionIdForCwd(null)).toEqual({ ok: false, reason: "missing_sidecar" });
+  });
 });
 
 // ── checkReady ──────────────────────────────────────────────────────────────
@@ -350,6 +366,16 @@ describe("muse capture and preflight", () => {
       museSessionStore: { readSessionId: async () => ({ ok: true, sessionId: SESSION_ID }) },
     });
     expect(captured).toEqual({ outcome: "captured", resumeType: "muse_id", token: SESSION_ID });
+
+    // With a cwd, the workspace_root-filtered read wins over global-newest.
+    const readSessionId = vi.fn(async () => ({ ok: true as const, sessionId: "other-seat-id" }));
+    const readSessionIdForCwd = vi.fn(async () => ({ ok: true as const, sessionId: SESSION_ID }));
+    const scoped = await deriveResumeToken({ runtime: "muse", sessionName: SESSION, cwd: "/work" }, {
+      museSessionStore: { readSessionId, readSessionIdForCwd },
+    });
+    expect(scoped).toEqual({ outcome: "captured", resumeType: "muse_id", token: SESSION_ID });
+    expect(readSessionId).not.toHaveBeenCalled();
+    expect(readSessionIdForCwd).toHaveBeenCalledWith("/work");
 
     const missing = await deriveResumeToken({ runtime: "muse", sessionName: SESSION }, {
       museSessionStore: { readSessionId: async () => ({ ok: false, reason: "missing_sidecar" }) },
