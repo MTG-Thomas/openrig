@@ -69,7 +69,7 @@ export interface OpencodeRuntimeAdapterDeps {
   /** Session-id reader override (cwd-scoped newest; tests inject; the default
    *  queries the opencode.db `session` table read-only and returns null on
    *  ANY failure — capture is best-effort, never a launch failure). */
-  readLatestSessionId?: (cwd: string | null) => Promise<string | null>;
+  readLatestSessionId?: (cwd: string | null, minTimeCreatedMs?: number | null) => Promise<string | null>;
 }
 
 // ── Pure command builders (single source of truth; hermetically tested) ──
@@ -125,23 +125,35 @@ export function defaultOpencodeDbPath(homedir?: string): string {
 }
 
 /** Best-effort newest session id for a directory (or global latest when cwd
- *  is null) from the opencode.db `session` table. Returns null on ANY
- *  failure (missing db, locked db, unknown schema) — capture must never
- *  fail or block its lifecycle op. */
+ *  is null) from the opencode.db `session` table. `minTimeCreatedMs`
+ *  restricts to rows created at/after a launch timestamp: OpenCode may
+ *  delay the session-row insert until the first prompt, so an unfiltered
+ *  read right after launch can return a stale row (previous generation or
+ *  pod-mate). Returns null on ANY failure (missing db, locked db, unknown
+ *  schema) or when no row qualifies — capture must never fail or block its
+ *  lifecycle op. */
 export function queryLatestOpencodeSessionId(
   dbPath: string,
   cwd: string | null,
+  minTimeCreatedMs?: number | null,
 ): string | null {
   try {
     const db = new Database(dbPath, { readonly: true });
     try {
-      const row = (cwd
-        ? db.prepare(
-          "SELECT id FROM session WHERE directory = ? ORDER BY time_updated DESC LIMIT 1",
-        ).get(cwd)
-        : db.prepare(
-          "SELECT id FROM session ORDER BY time_updated DESC LIMIT 1",
-        ).get()) as { id: string } | undefined;
+      const clauses: string[] = [];
+      const params: unknown[] = [];
+      if (cwd) {
+        clauses.push("directory = ?");
+        params.push(cwd);
+      }
+      if (typeof minTimeCreatedMs === "number") {
+        clauses.push("time_created >= ?");
+        params.push(minTimeCreatedMs);
+      }
+      const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+      const row = db.prepare(
+        `SELECT id FROM session ${where} ORDER BY time_updated DESC LIMIT 1`,
+      ).get(...params) as { id: string } | undefined;
       const id = row?.id?.trim() ?? "";
       return id.length > 0 ? id : null;
     } finally {
@@ -158,7 +170,7 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
   private fs: OpencodeAdapterFsOps;
   private sleep: (ms: number) => Promise<void>;
   private opencodeDbPath: string;
-  private readLatestSessionId: (cwd: string | null) => Promise<string | null>;
+  private readLatestSessionId: (cwd: string | null, minTimeCreatedMs?: number | null) => Promise<string | null>;
 
   constructor(deps: OpencodeRuntimeAdapterDeps) {
     this.tmux = deps.tmux;
@@ -167,7 +179,7 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
     this.opencodeDbPath = deps.opencodeDbPath ?? defaultOpencodeDbPath(deps.homedir);
     const dbPath = this.opencodeDbPath;
     this.readLatestSessionId = deps.readLatestSessionId
-      ?? (async (cwd) => queryLatestOpencodeSessionId(dbPath, cwd));
+      ?? (async (cwd, minTimeCreatedMs) => queryLatestOpencodeSessionId(dbPath, cwd, minTimeCreatedMs));
   }
 
   /** Session-id reader shape resume-token-capture consumes
@@ -294,9 +306,18 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
       if (!parentId) {
         return { ok: false, error: "opencode fork: forkSource.value is required (parent opencode session id)" };
       }
+      // Validity floor before we type anything into the pane (same as resume).
+      const parentValidation = validateResumeToken("opencode", parentId);
+      if (!parentValidation.ok) {
+        return { ok: false, error: `opencode fork: ${parentValidation.error}` };
+      }
       const cmd = buildOpencodeForkCommand({
-        parentId, cwd: binding.cwd, model: binding.model, postureArg,
+        parentId: parentValidation.token, cwd: binding.cwd, model: binding.model, postureArg,
       });
+      // Fork timestamp BEFORE typing: the waiter below only accepts rows
+      // created at/after this instant, so a pod-mate's newer pre-existing
+      // row can never be mistaken for the fork child.
+      const forkStartedAt = Date.now();
       const textResult = await this.tmux.sendText(sessionName, cmd);
       if (!textResult.ok) {
         return { ok: false, error: `Failed to send launch command: ${textResult.message}` };
@@ -305,7 +326,7 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
       if (!enterResult.ok) {
         return { ok: false, error: `Failed to send Enter: ${enterResult.message}` };
       }
-      const childId = await this.waitForNewSessionId(binding.cwd, parentId);
+      const childId = await this.waitForNewSessionId(binding.cwd, parentValidation.token, forkStartedAt);
       if (!childId) {
         return { ok: false, error: "opencode fork: could not capture the new post-fork session id", recovery: "attention_required" };
       }
@@ -335,6 +356,10 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
     }
 
     const cmd = buildOpencodeFreshCommand({ cwd: binding.cwd, model: binding.model, postureArg });
+    // Launch timestamp BEFORE typing: the capture below only accepts rows
+    // created at/after this instant, so a delayed row insert (first prompt)
+    // can never resolve to a stale previous-generation or pod-mate session.
+    const launchStartedAt = Date.now();
     const textResult = await this.tmux.sendText(sessionName, cmd);
     if (!textResult.ok) {
       return { ok: false, error: `Failed to send launch command: ${textResult.message}` };
@@ -349,7 +374,7 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
     // on directory, so this is seat-precise even for pod-mates sharing a
     // HOME store). A missed read leaves the token null (honest fresh
     // fallback at restore), never fabricated.
-    const freshId = await this.readLatestSessionId(binding.cwd ?? null).catch(() => null);
+    const freshId = await this.readLatestSessionId(binding.cwd ?? null, launchStartedAt).catch(() => null);
     return {
       ok: true,
       appliedLaunch,
@@ -434,11 +459,11 @@ export class OpencodeRuntimeAdapter implements RuntimeAdapter {
     };
   }
 
-  private async waitForNewSessionId(cwd: string, parentId: string): Promise<string | null> {
+  private async waitForNewSessionId(cwd: string, parentId: string, minTimeCreatedMs: number): Promise<string | null> {
     const pollMs = 250;
     const attempts = 20; // ~5s for the forked child to register in opencode.db
     for (let attempt = 0; attempt < attempts; attempt++) {
-      const latest = await this.readLatestSessionId(cwd);
+      const latest = await this.readLatestSessionId(cwd, minTimeCreatedMs);
       // The adapter contract requires the NEW post-fork token, never the parent's.
       if (latest && latest !== parentId) {
         const validation = validateResumeToken("opencode", latest);
@@ -458,17 +483,27 @@ export function assessOpencodePane(
 ): ReadinessResult {
   const cmd = (paneCommand ?? "").trim().toLowerCase();
   const content = paneContent ?? "";
+  // A dead resume id must win even inside a running TUI (the error renders
+  // in-pane while `opencode` still owns it).
   if (/no (saved )?session found|unknown session|session (id )?not found|no such session/i.test(content)) {
     return { ready: false, reason: "OpenCode reports no saved session for the requested id", code: "no_saved_session" };
+  }
+  const runtimeOwnsPane = cmd === "opencode" || cmd.startsWith("opencode ");
+  // A running runtime is up even when agent output contains error-like text
+  // (test runs print "exit code 1", tracebacks, ...): the generic markers
+  // below apply only when the runtime does NOT own the pane. Narrow auth
+  // phrases still count while it does — an auth-dead TUI is not operable.
+  if (runtimeOwnsPane) {
+    if (/login required|not authenticated|authentication (failed|required)|please run `?opencode (auth|login)`?/i.test(content)) {
+      return { ready: false, reason: "OpenCode reports missing or expired authentication", code: "login_required" };
+    }
+    return { ready: true };
   }
   if (/login required|not authenticated|authentication (failed|required)|please run `?opencode (auth|login)`?/i.test(content)) {
     return { ready: false, reason: "OpenCode reports missing or expired authentication", code: "login_required" };
   }
   if (/\[opencode\] error|opencode: (error|failed)|exit(ed)?( with)? code \d+|traceback/i.test(content)) {
     return { ready: false, reason: "OpenCode reported an error in the pane", code: "opencode_error" };
-  }
-  if (cmd === "opencode" || cmd.startsWith("opencode ")) {
-    return { ready: true };
   }
   if (SHELL_COMMANDS.has(cmd)) {
     return { ready: false, reason: "OpenCode has not started yet (pane is at a shell)", code: "awaiting_runtime" };

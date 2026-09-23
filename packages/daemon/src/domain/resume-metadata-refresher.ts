@@ -212,6 +212,7 @@ export class ResumeMetadataRefresher {
         // clobbers a higher-trust token (the FR-3 rank guard).
         const store = this.opencodeSessionStore;
         if (!store) continue; // unwired — silent no-op (older wirings/tests)
+        if (!session.cwd) continue; // no cwd → global-latest is not seat-precise
         if (session.resumeToken) {
           if (fillNullOnly) {
             const current = await store.readSessionIdForCwd(session.cwd ?? null).catch(() => null);

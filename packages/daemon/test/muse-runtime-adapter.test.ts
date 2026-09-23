@@ -248,8 +248,19 @@ describe("MuseRuntimeAdapter.checkReady", () => {
     const authVerdict = await auth.checkReady(binding);
     expect(authVerdict).toMatchObject({ ready: false, code: "login_required" });
 
-    const err = adapterWith(memFs(), mockTmux({ capturePaneContent: async () => "[muse] ERROR: spawn failed" }));
+    // Crash text after the CLI exited (pane back at a shell) still reports the error.
+    const err = adapterWith(memFs(), mockTmux({
+      getPaneCommand: async () => "bash",
+      capturePaneContent: async () => "[muse] ERROR: spawn failed",
+    }));
     expect((await err.checkReady(binding)).code).toBe("muse_error");
+  });
+
+  it("assessMusePane ignores agent error-like output while muse owns the pane", () => {
+    // A test run printing "exit code 1" + a traceback must not flip a live seat.
+    expect(assessMusePane("muse-bin-1.3.0-R3401.1", "pytest failed: exit code 1\nTraceback (most recent call last): ...").ready).toBe(true);
+    // Narrow auth phrases still count while the runtime owns the pane.
+    expect(assessMusePane("muse", "Error: not authenticated — please run muse login").code).toBe("login_required");
   });
 
   it("assessMusePane never mistakes stale muse scrollback at a shell for ready", () => {
@@ -320,6 +331,8 @@ describe("MuseResumeAdapter", () => {
 
   it("assessMuseResumeProbe is pure and local", () => {
     expect(assessMuseResumeProbe("muse", "")).toBe("resumed");
+    // Live: tmux reports the versioned muse-bin child, not `muse`.
+    expect(assessMuseResumeProbe("muse-bin-1.3.0-R3401.1", "")).toBe("resumed");
     expect(assessMuseResumeProbe("bash", "unknown session xyz")).toBe("no_saved_session");
     expect(assessMuseResumeProbe("muse", "login required")).toBe("attention_required");
     expect(assessMuseResumeProbe("bash", "")).toBe("inconclusive");

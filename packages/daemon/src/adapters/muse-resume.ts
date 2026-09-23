@@ -158,14 +158,23 @@ export function assessMuseResumeProbe(
   const command = (paneCommand ?? "").trim().toLowerCase();
   const content = paneContent ?? "";
 
+  // A dead resume id must win even inside a running TUI.
   if (/no (saved )?session found|unknown session|session (id )?not found/i.test(content)) {
     return "no_saved_session";
   }
+  // The `muse` launcher execs a versioned `muse-bin-<version>` child (same
+  // as the fresh-launch probe): tmux reports e.g. `muse-bin-1.3.0-R3401.1`.
+  // A running runtime counts as resumed even when agent output contains
+  // error-like text; the markers below apply only when it does NOT own the
+  // pane. Narrow auth phrases still count while it does.
+  if (command === "muse" || command.startsWith("muse ") || command.startsWith("muse-bin")) {
+    if (/login required|not authenticated|authentication (failed|required)|please run `?muse login`?/i.test(content)) {
+      return "attention_required";
+    }
+    return "resumed";
+  }
   if (/login required|not authenticated|authentication (failed|required)|please run `?muse login`?/i.test(content)) {
     return "attention_required";
-  }
-  if (command === "muse" || command.startsWith("muse ")) {
-    return "resumed";
   }
   return "inconclusive";
 }

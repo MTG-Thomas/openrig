@@ -159,14 +159,21 @@ export function assessOpencodeResumeProbe(
   const command = (paneCommand ?? "").trim().toLowerCase();
   const content = paneContent ?? "";
 
+  // A dead resume id must win even inside a running TUI.
   if (/no (saved )?session found|unknown session|session (id )?not found|no such session/i.test(content)) {
     return "no_saved_session";
   }
+  // A running runtime counts as resumed even when agent output contains
+  // error-like text; the login markers below apply only when it does NOT
+  // own the pane. Narrow auth phrases still count while it does.
+  if (command === "opencode" || command.startsWith("opencode ")) {
+    if (/login required|not authenticated|authentication (failed|required)|please run `?opencode (auth|login)`?/i.test(content)) {
+      return "attention_required";
+    }
+    return "resumed";
+  }
   if (/login required|not authenticated|authentication (failed|required)|please run `?opencode (auth|login)`?/i.test(content)) {
     return "attention_required";
-  }
-  if (command === "opencode" || command.startsWith("opencode ")) {
-    return "resumed";
   }
   return "inconclusive";
 }

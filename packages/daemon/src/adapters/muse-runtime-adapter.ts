@@ -431,16 +431,25 @@ export function assessMusePane(
 ): ReadinessResult {
   const cmd = (paneCommand ?? "").trim().toLowerCase();
   const content = paneContent ?? "";
+  // The `muse` launcher execs a versioned `muse-bin-<version>` child, so
+  // tmux reports e.g. `muse-bin-1.3.0-R3401.1` as the foreground command.
+  const runtimeOwnsPane = cmd === "muse" || cmd.startsWith("muse ") || cmd.startsWith("muse-bin");
+  // A running runtime is up even when agent output contains error-like text
+  // (test runs print "exit code 1", tracebacks, ...): the generic markers
+  // below apply only when the runtime does NOT own the pane (e.g. the CLI
+  // exited, leaving crash text + a shell). Narrow auth phrases still count
+  // while the runtime owns the pane — an auth-dead TUI is not operable.
+  if (runtimeOwnsPane) {
+    if (/login required|not authenticated|authentication (failed|required)|please run `?muse login`?/i.test(content)) {
+      return { ready: false, reason: "Muse reports missing or expired authentication", code: "login_required" };
+    }
+    return { ready: true };
+  }
   if (/login required|not authenticated|authentication (failed|required)|please run `?muse login`?/i.test(content)) {
     return { ready: false, reason: "Muse reports missing or expired authentication", code: "login_required" };
   }
   if (/\[muse\] error|muse: (error|failed)|exit(ed)?( with)? code \d+|traceback/i.test(content)) {
     return { ready: false, reason: "Muse reported an error in the pane", code: "muse_error" };
-  }
-  // The `muse` launcher execs a versioned `muse-bin-<version>` child, so
-  // tmux reports e.g. `muse-bin-1.3.0-R3401.1` as the foreground command.
-  if (cmd === "muse" || cmd.startsWith("muse ") || cmd.startsWith("muse-bin")) {
-    return { ready: true };
   }
   if (SHELL_COMMANDS.has(cmd)) {
     return { ready: false, reason: "Muse has not started yet (pane is at a shell)", code: "awaiting_runtime" };

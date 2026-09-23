@@ -160,6 +160,48 @@ describe("ClaimService FR-3 — adoption-boundary resume-token capture", () => {
     expect(row.resume_provenance).toBe("adoption");
   });
 
+  it("reconcileSession routes opencode adoption capture through the cwd-scoped read", async () => {
+    const { node } = seedDetachedManagedSeat("opencode", "dev-driver@test-rig");
+    const readSessionId = vi.fn(async () => ({ ok: true as const, sessionId: "ses_globalnewest" }));
+    const readSessionIdForCwd = vi.fn(async (cwd: string | null) => {
+      expect(cwd).toBe("/projects/app");
+      return { ok: true as const, sessionId: "ses_f3bb408d9ffeA9wfnyVhkcmv6C" };
+    });
+
+    const result = await buildService({
+      opencodeSessionStore: { readSessionId, readSessionIdForCwd },
+    }).reconcileSession({ sessionName: "dev-driver@test-rig" });
+    expect(result.ok).toBe(true);
+
+    expect(readSessionId).not.toHaveBeenCalled();
+    expect(readSessionIdForCwd).toHaveBeenCalledOnce();
+    expect(tokenRow(node.id)).toMatchObject({
+      resume_type: "opencode_session_id",
+      resume_token: "ses_f3bb408d9ffeA9wfnyVhkcmv6C",
+      resume_provenance: "adoption",
+    });
+  });
+
+  it("reconcileSession muse adoption is fill-null-only: a recorded node token beats an approximate read", async () => {
+    const { node, session } = seedDetachedManagedSeat("muse", "dev-driver@test-rig");
+    sessionRegistry.updateResumeToken(session.id, "muse_id", "01a0cf56-5e03-7761-b8f4-60ff536fcac3", "scrape");
+    const readSessionId = vi.fn(async () => ({ ok: true as const, sessionId: "ffffffff-ffff-ffff-ffff-ffffffffffff" }));
+
+    const result = await buildService({
+      museSessionStore: { readSessionId },
+    }).reconcileSession({ sessionName: "dev-driver@test-rig" });
+    expect(result.ok).toBe(true);
+
+    // The approximate global-newest read never runs; the new occupant row
+    // stays null instead of binding a pod-mate's conversation.
+    expect(readSessionId).not.toHaveBeenCalled();
+    expect(tokenRow(node.id).resume_token).toBeNull();
+    const ev = latestEvent();
+    expect(ev?.type).toBe("session.resume_token_captured");
+    expect(ev?.payload.outcome).toBe("skipped");
+    expect(ev?.payload.reason).toBe("token_present");
+  });
+
   it("bind honest-skips when the Claude sidecar is missing (no token persisted, skip event with reason)", async () => {
     readSidecar.mockReturnValue({ ok: false, reason: "missing_sidecar" });
     const rig = rigRepo.createRig("test-rig");

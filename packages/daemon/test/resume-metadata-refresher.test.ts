@@ -653,5 +653,21 @@ describe("ResumeMetadataRefresher", () => {
       expect(sessionRegistry.updateResumeToken).not.toHaveBeenCalled();
       expect(sessionRegistry.markResumeProbeResult).not.toHaveBeenCalled();
     });
+
+    it("absent cwd skips both read paths (global-latest is not seat-precise)", async () => {
+      const sessionRegistry = { updateResumeToken: vi.fn(), markResumeProbeResult: vi.fn() } as unknown as SessionRegistry;
+      const readSessionIdForCwd = vi.fn(async () => ({ ok: true as const, sessionId: "ses_live123" }));
+      const refresher = new ResumeMetadataRefresher({
+        sessionRegistry,
+        tmuxAdapter: mockTmux(),
+        opencodeSessionStore: { readSessionIdForCwd },
+        sleep: async () => {},
+      });
+      await refresher.refresh([seat({ cwd: null })], { fillNullOnly: true });
+      await refresher.refresh([seat({ cwd: null, resumeToken: "ses_live123" })], { fillNullOnly: true });
+      expect(readSessionIdForCwd).not.toHaveBeenCalled();
+      expect(sessionRegistry.updateResumeToken).not.toHaveBeenCalled();
+      expect(sessionRegistry.markResumeProbeResult).not.toHaveBeenCalled();
+    });
   });
 });

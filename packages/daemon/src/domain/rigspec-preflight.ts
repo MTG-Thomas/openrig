@@ -404,6 +404,11 @@ export async function preflightValidatedSpec(rigSpec: PodRigSpec, preflightCtx: 
     // launch-time surprise.
     const piErrors = await verifyPiRuntimeAvailable(rigSpec, preflightCtx.exec);
     errors.push(...piErrors);
+    // Muse/OpenCode binary probes (same never-a-launch-time-surprise rule).
+    const museErrors = await verifyMuseRuntimeAvailable(rigSpec, preflightCtx.exec);
+    errors.push(...museErrors);
+    const opencodeErrors = await verifyOpencodeRuntimeAvailable(rigSpec, preflightCtx.exec);
+    errors.push(...opencodeErrors);
   }
 
   // §6 RECONCILIATION — WARNING EMISSION ORDER (PM ruling 2026-08-05): ACTIVITY-HOOK-FIRST,

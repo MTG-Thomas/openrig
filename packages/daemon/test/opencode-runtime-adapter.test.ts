@@ -141,27 +141,40 @@ describe("opencode resume tokens", () => {
 // ── opencode.db session-id query ────────────────────────────────────────────
 
 describe("queryLatestOpencodeSessionId", () => {
-  function scratchDb(rows: Array<{ id: string; directory: string; updated: number }>): string {
+  function scratchDb(rows: Array<{ id: string; directory: string; created: number; updated: number }>): string {
     const dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "opencode-test-"));
     const dbPath = nodePath.join(dir, "opencode.db");
     const db = new Database(dbPath);
     db.exec("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)");
     const stmt = db.prepare("INSERT INTO session (id, directory, time_created, time_updated) VALUES (?, ?, ?, ?)");
-    for (const r of rows) stmt.run(r.id, r.directory, r.updated, r.updated);
+    for (const r of rows) stmt.run(r.id, r.directory, r.created, r.updated);
     db.close();
     return dbPath;
   }
 
   it("returns the newest session for the cwd, null for unknown dirs and broken stores", () => {
     const dbPath = scratchDb([
-      { id: "ses_old", directory: "/work", updated: 1000 },
-      { id: SESSION_ID, directory: "/work", updated: 2000 },
-      { id: "ses_other", directory: "/elsewhere", updated: 3000 },
+      { id: "ses_old", directory: "/work", created: 1000, updated: 1000 },
+      { id: SESSION_ID, directory: "/work", created: 2000, updated: 2000 },
+      { id: "ses_other", directory: "/elsewhere", created: 3000, updated: 3000 },
     ]);
     expect(queryLatestOpencodeSessionId(dbPath, "/work")).toBe(SESSION_ID);
     expect(queryLatestOpencodeSessionId(dbPath, "/nowhere")).toBeNull();
     expect(queryLatestOpencodeSessionId(dbPath, null)).toBe("ses_other"); // global latest
     expect(queryLatestOpencodeSessionId("/definitely/missing/opencode.db", "/work")).toBeNull();
+  });
+
+  it("minTimeCreatedMs excludes rows created before launch (stale generations, pod-mates)", () => {
+    const dbPath = scratchDb([
+      { id: "ses_prevgen", directory: "/work", created: 1000, updated: 9000 },
+      { id: "ses_podmate", directory: "/work", created: 2000, updated: 8000 },
+      { id: SESSION_ID, directory: "/work", created: 5000, updated: 5000 },
+    ]);
+    // Unfiltered, the recently-active stale row wins by time_updated.
+    expect(queryLatestOpencodeSessionId(dbPath, "/work")).toBe("ses_prevgen");
+    // Scoped to the launch instant, only the fresh row qualifies.
+    expect(queryLatestOpencodeSessionId(dbPath, "/work", 4000)).toBe(SESSION_ID);
+    expect(queryLatestOpencodeSessionId(dbPath, "/work", 6000)).toBeNull();
   });
 
   it("resolves the default db path under XDG_DATA_HOME or ~/.local/share", () => {
@@ -200,13 +213,29 @@ describe("OpencodeRuntimeAdapter.launchHarness", () => {
   });
 
   it("fresh launch captures the cwd-scoped session id as the resume token", async () => {
-    const seen: Array<string | null> = [];
+    const seen: Array<[string | null, number | null | undefined]> = [];
+    const before = Date.now();
     const adapter = adapterWith(memFs(), mockTmux(), {
-      readLatestSessionId: async (cwd) => { seen.push(cwd); return "fresh-seat-session-id"; },
+      readLatestSessionId: async (cwd, minTime) => { seen.push([cwd, minTime]); return "fresh-seat-session-id"; },
     });
     const result = await adapter.launchHarness(binding, { name: SESSION });
     expect(result).toEqual({ ok: true, resumeToken: "fresh-seat-session-id", resumeType: "opencode_session_id", appliedLaunch: OPENCODE_FLOOR_EFFECT });
-    expect(seen).toEqual(["/work"]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]![0]).toBe("/work");
+    // The launch timestamp scopes the read: only rows created at/after launch qualify.
+    expect(typeof seen[0]![1]).toBe("number");
+    expect(seen[0]![1]!).toBeGreaterThanOrEqual(before);
+    expect(seen[0]![1]!).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("fork rejects a malformed parent id before typing anything", async () => {
+    const sendText = vi.fn(async () => ({ ok: true as const }));
+    const adapter = adapterWith(memFs(), mockTmux({ sendText }));
+    const result = await adapter.launchHarness(binding, {
+      name: SESSION, forkSource: { kind: "native_id", value: "not a session!!" },
+    });
+    expect(result.ok).toBe(false);
+    expect(sendText).not.toHaveBeenCalled();
   });
 
   it("resume types the exact-id command and returns the SAME token", async () => {
@@ -304,7 +333,11 @@ describe("OpencodeRuntimeAdapter.checkReady", () => {
     const authVerdict = await auth.checkReady(binding);
     expect(authVerdict).toMatchObject({ ready: false, code: "login_required" });
 
-    const err = adapterWith(memFs(), mockTmux({ capturePaneContent: async () => "[opencode] ERROR: spawn failed" }));
+    // Crash text after the CLI exited (pane back at a shell) still reports the error.
+    const err = adapterWith(memFs(), mockTmux({
+      getPaneCommand: async () => "bash",
+      capturePaneContent: async () => "[opencode] ERROR: spawn failed",
+    }));
     expect((await err.checkReady(binding)).code).toBe("opencode_error");
 
     const dead = adapterWith(memFs(), mockTmux({ capturePaneContent: async () => "no such session" }));
@@ -313,6 +346,13 @@ describe("OpencodeRuntimeAdapter.checkReady", () => {
 
   it("assessOpencodePane never mistakes stale opencode scrollback at a shell for ready", () => {
     expect(assessOpencodePane("bash", "opencode output...").ready).toBe(false);
+  });
+
+  it("assessOpencodePane ignores agent error-like output while opencode owns the pane", () => {
+    expect(assessOpencodePane("opencode", "npm test failed: exited code 1\nTraceback (most recent call last): ...").ready).toBe(true);
+    expect(assessOpencodePane("opencode", "Error: not authenticated — please run opencode login").code).toBe("login_required");
+    // A dead resume id still wins inside a running TUI.
+    expect(assessOpencodePane("opencode", "Error: Session not found: ses_dead").code).toBe("no_saved_session");
   });
 });
 
@@ -412,6 +452,25 @@ describe("opencode capture and preflight", () => {
       opencodeSessionStore: { readSessionId: async () => ({ ok: true, sessionId: "bad id!!" }) },
     });
     expect(invalid).toEqual({ outcome: "skipped", reason: "invalid_token" });
+  });
+
+  it("derive prefers the cwd-scoped read when the caller knows the seat cwd", async () => {
+    const readSessionId = vi.fn(async () => ({ ok: true as const, sessionId: "ses_global" }));
+    const readSessionIdForCwd = vi.fn(async (cwd: string | null) => {
+      expect(cwd).toBe("/work");
+      return { ok: true as const, sessionId: SESSION_ID };
+    });
+    const scoped = await deriveResumeToken({ runtime: "opencode", sessionName: SESSION, cwd: "/work" }, {
+      opencodeSessionStore: { readSessionId, readSessionIdForCwd },
+    });
+    expect(scoped).toEqual({ outcome: "captured", resumeType: "opencode_session_id", token: SESSION_ID });
+    expect(readSessionId).not.toHaveBeenCalled();
+
+    const fallback = await deriveResumeToken({ runtime: "opencode", sessionName: SESSION }, {
+      opencodeSessionStore: { readSessionId, readSessionIdForCwd },
+    });
+    expect(fallback).toEqual({ outcome: "captured", resumeType: "opencode_session_id", token: "ses_global" });
+    expect(readSessionId).toHaveBeenCalledOnce();
   });
 
   it("the adapter readSessionId feeds the capture store shape", async () => {
