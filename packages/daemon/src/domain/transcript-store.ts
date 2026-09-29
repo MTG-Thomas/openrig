@@ -201,7 +201,8 @@ export class TranscriptStore {
     // routed all transcripts to the _unsafe fallback (issue #1).
     const rel = relative(this.root, resolved);
     if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      return join(this.root, "_unsafe", `${sessionName}.log`);
+      const safeSessionName = sessionName.replace(/[\\/]/g, "_");
+      return join(this.root, "_unsafe", `${safeSessionName}.log`);
     }
     return resolved;
   }
