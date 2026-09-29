@@ -24,7 +24,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   WorkflowSpecError,
   parseWorkflowSpec,
@@ -155,7 +154,7 @@ export function loadStarterWorkflowSpecs(opts: StarterSpecLoaderOpts): StarterSp
  * root.
  */
 export function defaultBuiltinSpecsDir(): string {
-  const here = path.dirname(fileURLToPath(new URL(import.meta.url)));
+  const here = path.dirname(new URL(import.meta.url).pathname);
   // here = .../{src|dist}/domain/workflow
   // package src/dist root = .../{src|dist}
   return path.resolve(here, "..", "..", "builtins", "workflow-specs");
